@@ -4,6 +4,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import software.amazon.awscdk.*;
+import software.amazon.awscdk.customresources.AwsCustomResource;
+import software.amazon.awscdk.customresources.AwsCustomResourcePolicy;
+import software.amazon.awscdk.customresources.AwsSdkCall;
+import software.amazon.awscdk.customresources.PhysicalResourceId;
 import software.amazon.awscdk.services.events.*;
 import software.amazon.awscdk.services.events.Schedule;
 import software.amazon.awscdk.services.events.targets.SfnStateMachine;
@@ -22,15 +26,17 @@ import software.constructs.Construct;
 /**
  * Ingestion Stack.
  * <p>
- * Pipeline (per docs/requirement.md - four states wired in sequence):
+ * Pipeline (spec sections 4-5):
  *   EventBridge (prod: NSE market hours; dev: every 5 min) -> Step Functions
- *       -> ValidateInput (Pass: shapes the EventBridge payload)
- *       -> FetchMarketData (Lambda: live market data + z-score anomaly gate)
- *       -> AnomalyGate (Choice: anomaly? -> GenerateInsight : InsightSkipped)
- *       -> GenerateInsight (Lambda: Bedrock Claude insight)
+ *       -> ReadWatchset (DynamoDB Query PK=WATCHSET: the distinct ticker union)
+ *       -> FanOutTickers (Distributed Map, bounded concurrency, per-item retry + DLQ)
+ *            each item: FetchMarketData (Lambda + z-score gate)
+ *                       -> AnomalyGate (Choice: anomaly? -> GenerateInsight : InsightSkipped)
  *       -> ExecutionSucceeded
- *   On any state failure: catch -> SendToDlq (SQS) -> ExecutionFailed.
+ *   Per-ticker failure: catch -> TickerToDlq (SQS) -> TickerFailed, isolated by the Map's
+ *   tolerated-failure budget. Read/Map stage failure: catch -> SendToDlq (SQS) -> ExecutionFailed.
  * <p>
+ * WATCHSET is seeded at deploy time (AwsCustomResource) until the watchlist write path maintains it.
  * Roadmap (later modules, each needs its own Lambda): CheckInsightCache, StoreResults, NotifyComplete.
  */
 public class IngestionStack extends Stack {
@@ -66,7 +72,7 @@ public class IngestionStack extends Stack {
                         ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
                 .build();
 
-        // DynamoDB read/write on the two specific tables only.
+        // DynamoDB read/write on the single platform table only.
         foundation.getPlatformTable().grantReadWriteData(ingestionRole);
         // S3 write on the data lake bucket only.
         foundation.getDataLakeBucket().grantWrite(ingestionRole);
@@ -232,16 +238,22 @@ public class IngestionStack extends Stack {
         CatchProps catchToDlq =
                 CatchProps.builder().errors(List.of("States.ALL")).build();
 
-        // State 1: validate the EventBridge payload shape (Pass).
-        Pass validateInput = Pass.Builder.create(this, "ValidateInput")
-                .comment("Validates EventBridge payload shape before any Lambda runs.")
-                .parameters(Map.of(
-                        "ticker.$", "$.ticker",
-                        "requestedAt.$", "$$.Execution.StartTime",
-                        "correlationId.$", "$$.Execution.Id"))
+        // == Per-ticker pipeline (the Distributed Map item processor) ==
+        // Each map iteration runs fetch -> anomaly gate -> (insight | skip) for one ticker. An
+        // item-level failure is isolated: it goes to the DLQ and fails only that ticker, not the run.
+        SqsSendMessage tickerToDlq = SqsSendMessage.Builder.create(this, "TickerToDlq")
+                .queue(dlq)
+                .messageBody(TaskInput.fromJsonPathAt("$"))
+                .comment("Publish a failed ticker's context to the DLQ")
                 .build();
+        tickerToDlq.next(Fail.Builder.create(this, "TickerFailed")
+                .error("TickerError")
+                .comment("One ticker failed after retries; isolated from the rest of the fan-out")
+                .build());
+        CatchProps tickerCatch =
+                CatchProps.builder().errors(List.of("States.ALL")).build();
 
-        // State 2: fetch market data.
+        // Fetch market data for one ticker.
         LambdaInvoke fetchMarketData = LambdaInvoke.Builder.create(this, "FetchMarketData")
                 .lambdaFunction(fetchAlias)
                 .comment("Fetch live market data from provider API")
@@ -249,9 +261,9 @@ public class IngestionStack extends Stack {
                 .retryOnServiceExceptions(false) // replaced by standardRetry
                 .build();
         fetchMarketData.addRetry(standardRetry);
-        fetchMarketData.addCatch(sendToDlq, catchToDlq);
+        fetchMarketData.addCatch(tickerToDlq, tickerCatch);
 
-        // State 3: generate insight.
+        // Generate insight (gated below).
         LambdaInvoke generateInsight = LambdaInvoke.Builder.create(this, "GenerateInsight")
                 .lambdaFunction(insightAlias)
                 .comment("Generate LLM insight via AWS Bedrock")
@@ -259,29 +271,65 @@ public class IngestionStack extends Stack {
                 .retryOnServiceExceptions(false) // replaced by standardRetry
                 .build();
         generateInsight.addRetry(standardRetry);
-        generateInsight.addCatch(sendToDlq, catchToDlq);
+        generateInsight.addCatch(tickerToDlq, tickerCatch);
 
-        // Insight generation, then success.
-        generateInsight.next(executionSucceeded);
-
-        // Anomaly gate: Bedrock is expensive and noisy, so it runs only when FetchMarketData
-        // flagged an anomaly (z-score on return/volume or a 52-week break, spec section 6). With
-        // no anomaly the pipeline skips straight to success, which is the main cost control on the
-        // write path. payloadResponseOnly on FetchMarketData makes its output the Choice input, so
-        // $.anomaly is the boolean set by the ingestion Lambda.
+        // Anomaly gate: Bedrock is expensive and noisy, so it runs only when FetchMarketData flagged
+        // an anomaly (z-score on return/volume or a 52-week break, spec section 6). With no anomaly
+        // the item skips straight to its terminal, the main cost control on the write path.
+        // payloadResponseOnly on FetchMarketData makes its output the Choice input, so $.anomaly is
+        // the boolean set by the ingestion Lambda. Both branches are terminal for the map item.
         Pass insightSkipped = Pass.Builder.create(this, "InsightSkipped")
                 .comment("No anomaly: Bedrock skipped to control cost")
                 .build();
-        insightSkipped.next(executionSucceeded);
-
         Choice anomalyGate = Choice.Builder.create(this, "AnomalyGate")
                 .comment("Generate an insight only on a flagged anomaly")
                 .build();
         anomalyGate.when(Condition.booleanEquals("$.anomaly", true), generateInsight);
         anomalyGate.otherwise(insightSkipped);
 
-        // Wire the chain: validate -> fetch -> gate -> (insight | skip) -> succeed.
-        Chain pipelineChain = Chain.start(validateInput).next(fetchMarketData).next(anomalyGate);
+        Chain perTicker = Chain.start(fetchMarketData).next(anomalyGate);
+
+        // == State 1: read the distinct ticker union (WATCHSET, spec sections 4-5) ==
+        CallAwsService readWatchset = CallAwsService.Builder.create(this, "ReadWatchset")
+                .service("dynamodb")
+                .action("query")
+                .parameters(Map.of(
+                        "TableName", foundation.getPlatformTable().getTableName(),
+                        "KeyConditionExpression", "PK = :pk",
+                        "ExpressionAttributeValues", Map.of(":pk", Map.of("S", "WATCHSET"))))
+                .iamResources(List.of(foundation.getPlatformTable().getTableArn()))
+                .resultPath("$.watchset")
+                .build();
+        readWatchset.addCatch(sendToDlq, catchToDlq);
+
+        // == State 2: Distributed Map fan-out over the tickers ==
+        // Bounded concurrency respects provider rate limits (Alpha Vantage free tier ~5 req/min).
+        // Per-ticker failures are tolerated so one bad ticker never fails the whole run; each failure
+        // still lands in the DLQ via the item catch above. Chosen over a single-Lambda loop (poor
+        // isolation, timeout-bound) for per-item retry and a clean DLQ story (spec section 5).
+        DistributedMap fanOut = DistributedMap.Builder.create(this, "FanOutTickers")
+                .comment("Fan out the per-ticker pipeline across the WATCHSET union")
+                .itemsPath("$.watchset.Items")
+                .maxConcurrency(5)
+                .itemSelector(Map.of(
+                        "ticker.$",
+                        "$$.Map.Item.Value.ticker.S",
+                        "requestedAt.$",
+                        "$$.Execution.StartTime",
+                        "correlationId.$",
+                        "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)"))
+                .toleratedFailurePercentage(100)
+                .build();
+        fanOut.itemProcessor(
+                perTicker,
+                ProcessorConfig.builder()
+                        .mode(ProcessorMode.DISTRIBUTED)
+                        .executionType(ProcessorType.STANDARD)
+                        .build());
+        fanOut.addCatch(sendToDlq, catchToDlq);
+
+        // Wire the chain: read WATCHSET -> fan out per ticker -> succeed.
+        Chain pipelineChain = Chain.start(readWatchset).next(fanOut).next(executionSucceeded);
 
         StateMachine stateMachine = StateMachine.Builder.create(this, "IngestionStateMachine")
                 .stateMachineName("financial-ingestion-pipeline-" + env)
@@ -302,6 +350,46 @@ public class IngestionStack extends Stack {
                         .build())
                 .build();
 
+        // ReadWatchset queries the KMS-encrypted table directly, so the state-machine role needs
+        // decrypt on the platform table's key in addition to the dynamodb:Query that CallAwsService
+        // grants via iamResources.
+        foundation.getEncryptionKey().grantDecrypt(stateMachine);
+
+        // == WATCHSET seed ==
+        // The distinct-ticker union is normally maintained by watchlist writes, but no watchlist API
+        // exists yet, so seed it at deploy time. The physical id embeds the ticker set, so changing
+        // the list re-seeds. Remove this once the watchlist write path maintains WATCHSET.
+        List<String> seedTickers = List.of("RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "^NSEI");
+        List<Object> seedPutRequests = seedTickers.stream()
+                .map(t -> (Object) Map.of(
+                        "PutRequest",
+                        Map.of(
+                                "Item",
+                                Map.of(
+                                        "PK", Map.of("S", "WATCHSET"),
+                                        "SK", Map.of("S", "TICKER#" + t),
+                                        "ticker", Map.of("S", t)))))
+                .toList();
+        AwsCustomResource.Builder.create(this, "WatchsetSeed")
+                .onUpdate(AwsSdkCall.builder()
+                        .service("DynamoDB")
+                        .action("batchWriteItem")
+                        .parameters(Map.of(
+                                "RequestItems",
+                                Map.of(foundation.getPlatformTable().getTableName(), seedPutRequests)))
+                        .physicalResourceId(PhysicalResourceId.of("watchset-seed-" + String.join("-", seedTickers)))
+                        .build())
+                .policy(AwsCustomResourcePolicy.fromStatements(List.of(
+                        PolicyStatement.Builder.create()
+                                .actions(List.of("dynamodb:BatchWriteItem"))
+                                .resources(List.of(foundation.getPlatformTable().getTableArn()))
+                                .build(),
+                        PolicyStatement.Builder.create()
+                                .actions(List.of("kms:GenerateDataKey", "kms:Decrypt"))
+                                .resources(List.of(foundation.getEncryptionKey().getKeyArn()))
+                                .build())))
+                .build();
+
         // == EventBridge Rule ==
         // prod: every minute during NSE market hours (9:15-15:30 IST, the 3-10 UTC window).
         // dev: every 5 minutes.
@@ -310,9 +398,8 @@ public class IngestionStack extends Stack {
                 .description("Triggers the financial data pipeline (prod: NSE market hours; dev: every 5 min)")
                 .schedule(Schedule.expression(env.equals("prod") ? "cron(*/1 3-10 ? * MON-FRI *)" : "rate(5 minutes)"))
                 .targets(List.of(SfnStateMachine.Builder.create(stateMachine)
-                        .input(RuleTargetInput.fromObject(Map.of(
-                                "ticker", "RELIANCE.NS",
-                                "source", "eventbridge-schedule")))
+                        // The pipeline reads tickers from WATCHSET, so the trigger carries no ticker.
+                        .input(RuleTargetInput.fromObject(Map.of("source", "eventbridge-schedule")))
                         .deadLetterQueue(dlq)
                         .retryAttempts(2)
                         .build()))
