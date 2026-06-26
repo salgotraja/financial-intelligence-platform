@@ -46,10 +46,10 @@ class AnomalyDetectionServiceTest {
         MarketDataResponse data =
                 base().changePercent(new BigDecimal("2.0")).volume(1000L).build();
 
-        service.evaluate(data, "corr-1");
+        MarketDataResponse result = service.evaluate(data, "corr-1");
 
-        assertThat(data.isAnomaly()).isFalse();
-        assertThat(data.getAnomalyReason()).isNull();
+        assertThat(result.anomaly()).isFalse();
+        assertThat(result.anomalyReason()).isNull();
 
         ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
         verify(dynamoDb).putItem(captor.capture());
@@ -75,10 +75,10 @@ class AnomalyDetectionServiceTest {
                 .low52Week(new BigDecimal("50"))
                 .build();
 
-        service.evaluate(data, "corr-1");
+        MarketDataResponse result = service.evaluate(data, "corr-1");
 
-        assertThat(data.isAnomaly()).isTrue();
-        assertThat(data.getAnomalyReason()).contains("return z=");
+        assertThat(result.anomaly()).isTrue();
+        assertThat(result.anomalyReason()).contains("return z=");
     }
 
     @Test
@@ -96,10 +96,10 @@ class AnomalyDetectionServiceTest {
                 .low52Week(new BigDecimal("50"))
                 .build();
 
-        service.evaluate(data, "corr-1");
+        MarketDataResponse result = service.evaluate(data, "corr-1");
 
-        assertThat(data.isAnomaly()).isTrue();
-        assertThat(data.getAnomalyReason()).contains("volume z=");
+        assertThat(result.anomaly()).isTrue();
+        assertThat(result.anomalyReason()).contains("volume z=");
     }
 
     @Test
@@ -116,10 +116,10 @@ class AnomalyDetectionServiceTest {
                 .low52Week(new BigDecimal("50"))
                 .build();
 
-        service.evaluate(data, "corr-1");
+        MarketDataResponse result = service.evaluate(data, "corr-1");
 
-        assertThat(data.isAnomaly()).isTrue();
-        assertThat(data.getAnomalyReason()).contains("52-week break");
+        assertThat(result.anomaly()).isTrue();
+        assertThat(result.anomalyReason()).contains("52-week break");
     }
 
     @Test
@@ -136,10 +136,10 @@ class AnomalyDetectionServiceTest {
                 .low52Week(new BigDecimal("50"))
                 .build();
 
-        service.evaluate(data, "corr-1");
+        MarketDataResponse result = service.evaluate(data, "corr-1");
 
-        assertThat(data.isAnomaly()).isFalse();
-        assertThat(data.getAnomalyReason()).isNull();
+        assertThat(result.anomaly()).isFalse();
+        assertThat(result.anomalyReason()).isNull();
 
         ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
         verify(dynamoDb).putItem(captor.capture());
@@ -161,9 +161,9 @@ class AnomalyDetectionServiceTest {
                 .low52Week(new BigDecimal("50"))
                 .build();
 
-        service.evaluate(data, "corr-1");
+        MarketDataResponse result = service.evaluate(data, "corr-1");
 
-        assertThat(data.isAnomaly()).isFalse();
+        assertThat(result.anomaly()).isFalse();
     }
 
     @Test
@@ -173,10 +173,10 @@ class AnomalyDetectionServiceTest {
         MarketDataResponse data =
                 base().changePercent(new BigDecimal("5.0")).volume(1000L).build();
 
-        service.evaluate(data, "corr-1"); // must not throw
+        MarketDataResponse result = service.evaluate(data, "corr-1"); // must not throw
 
-        assertThat(data.isAnomaly()).isFalse();
-        assertThat(data.getAnomalyReason()).isNull();
+        assertThat(result.anomaly()).isFalse();
+        assertThat(result.anomalyReason()).isNull();
     }
 
     private static MarketDataResponse.Builder base() {

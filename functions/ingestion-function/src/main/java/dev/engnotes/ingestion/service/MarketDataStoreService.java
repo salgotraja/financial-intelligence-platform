@@ -67,32 +67,33 @@ public class MarketDataStoreService {
     }
 
     /**
-     * Stores market data in DynamoDB and S3.
-     * Sets stored=true on the response after successful persistence.
+     * Stores market data in DynamoDB and S3, returning a copy with stored=true after successful
+     * persistence.
      */
-    public void store(MarketDataResponse data, String correlationId) {
+    public MarketDataResponse store(MarketDataResponse data, String correlationId) {
         String timestamp = Instant.now().toString();
 
         try {
             storeToDynamoDB(data, timestamp, correlationId);
             storeToS3(data, timestamp, correlationId);
-            data.setStored(true);
 
             log.info(
                     "Market data stored. ticker={} timestamp={} correlationId={}",
-                    data.getTicker(),
+                    data.ticker(),
                     timestamp,
                     correlationId);
+
+            return data.withStored(true);
 
         } catch (Exception e) {
             // Log and rethrow - Step Functions will retry via the retry policy
             log.error(
                     "Failed to store market data. ticker={} correlationId={} error={}",
-                    data.getTicker(),
+                    data.ticker(),
                     correlationId,
                     e.getMessage(),
                     e);
-            throw new MarketDataException("Storage failed for ticker " + data.getTicker(), e);
+            throw new MarketDataException("Storage failed for ticker " + data.ticker(), e);
         }
     }
 
@@ -100,26 +101,24 @@ public class MarketDataStoreService {
         long ttlEpoch = Instant.now().getEpochSecond() + TTL_SECONDS;
 
         Map<String, AttributeValue> item = new HashMap<>();
-        item.put("ticker", str(data.getTicker()));
+        item.put("ticker", str(data.ticker()));
         item.put("timestamp", str(timestamp));
         item.put("ttl", num(String.valueOf(ttlEpoch)));
         item.put("correlationId", str(correlationId));
-        item.put("dataSource", str(data.getDataSource()));
+        item.put("dataSource", str(data.dataSource()));
 
         // Only store non-null price fields
-        if (data.getPrice() != null) item.put("price", num(data.getPrice().toPlainString()));
-        if (data.getPreviousClose() != null)
-            item.put("previousClose", num(data.getPreviousClose().toPlainString()));
-        if (data.getChange() != null) item.put("change", num(data.getChange().toPlainString()));
-        if (data.getChangePercent() != null)
-            item.put("changePercent", num(data.getChangePercent().toPlainString()));
-        if (data.getVolume() != null) item.put("volume", num(String.valueOf(data.getVolume())));
-        if (data.getMarketCap() != null)
-            item.put("marketCap", num(data.getMarketCap().toPlainString()));
-        if (data.getHigh52Week() != null)
-            item.put("high52Week", num(data.getHigh52Week().toPlainString()));
-        if (data.getLow52Week() != null)
-            item.put("low52Week", num(data.getLow52Week().toPlainString()));
+        if (data.price() != null) item.put("price", num(data.price().toPlainString()));
+        if (data.previousClose() != null)
+            item.put("previousClose", num(data.previousClose().toPlainString()));
+        if (data.change() != null) item.put("change", num(data.change().toPlainString()));
+        if (data.changePercent() != null)
+            item.put("changePercent", num(data.changePercent().toPlainString()));
+        if (data.volume() != null) item.put("volume", num(String.valueOf(data.volume())));
+        if (data.marketCap() != null) item.put("marketCap", num(data.marketCap().toPlainString()));
+        if (data.high52Week() != null)
+            item.put("high52Week", num(data.high52Week().toPlainString()));
+        if (data.low52Week() != null) item.put("low52Week", num(data.low52Week().toPlainString()));
 
         dynamoDb.putItem(PutItemRequest.builder()
                 .tableName(marketDataTable)
@@ -137,13 +136,13 @@ public class MarketDataStoreService {
         // Example key: 2025/06/15/RELIANCE_NS/14-30-00.json
         String s3Key = String.format(
                 "%s/%s/%s.json",
-                DATE_FORMATTER.format(now), data.getTicker().replace(".", "_"), FILE_FORMATTER.format(now));
+                DATE_FORMATTER.format(now), data.ticker().replace(".", "_"), FILE_FORMATTER.format(now));
 
         String jsonPayload;
         try {
             jsonPayload = objectMapper.writeValueAsString(buildPayload(data, timestamp, correlationId));
         } catch (Exception e) {
-            throw new MarketDataException("Failed to serialize market data for ticker " + data.getTicker(), e);
+            throw new MarketDataException("Failed to serialize market data for ticker " + data.ticker(), e);
         }
 
         byte[] payload = jsonPayload.getBytes(StandardCharsets.UTF_8);
@@ -155,25 +154,25 @@ public class MarketDataStoreService {
                         .contentType("application/json")
                         .contentLength((long) payload.length)
                         // Tag for lifecycle management and cost attribution
-                        .tagging("ticker=" + data.getTicker() + "&env=" + System.getenv("ENVIRONMENT"))
+                        .tagging("ticker=" + data.ticker() + "&env=" + System.getenv("ENVIRONMENT"))
                         .build(),
                 RequestBody.fromBytes(payload));
     }
 
     private Map<String, Object> buildPayload(MarketDataResponse data, String timestamp, String correlationId) {
         Map<String, Object> payload = new HashMap<>();
-        payload.put("ticker", data.getTicker());
-        payload.put("price", data.getPrice());
-        payload.put("previousClose", data.getPreviousClose());
-        payload.put("change", data.getChange());
-        payload.put("changePercent", data.getChangePercent());
-        payload.put("volume", data.getVolume());
-        payload.put("marketCap", data.getMarketCap());
-        payload.put("high52Week", data.getHigh52Week());
-        payload.put("low52Week", data.getLow52Week());
+        payload.put("ticker", data.ticker());
+        payload.put("price", data.price());
+        payload.put("previousClose", data.previousClose());
+        payload.put("change", data.change());
+        payload.put("changePercent", data.changePercent());
+        payload.put("volume", data.volume());
+        payload.put("marketCap", data.marketCap());
+        payload.put("high52Week", data.high52Week());
+        payload.put("low52Week", data.low52Week());
         payload.put("timestamp", timestamp);
         payload.put("correlationId", correlationId);
-        payload.put("dataSource", data.getDataSource());
+        payload.put("dataSource", data.dataSource());
         return payload;
     }
 

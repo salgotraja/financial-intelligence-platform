@@ -4,115 +4,68 @@ import java.math.BigDecimal;
 
 /**
  * Market data for a single ticker, and the pipeline's output to the next state.
- * Built via {@link #builder()}; the mutable {@code stored} flag is flipped to true
- * by MarketDataStoreService after persistence. Serialized to JSON via its getters.
+ *
+ * <p>Immutable record. Built via {@link #builder()} during the fetch, then refined through the
+ * write path with copy-on-write helpers: {@link #withAnomaly(boolean, String)} after the anomaly
+ * gate and {@link #withStored(boolean)} after persistence. Serialized to JSON by component name, so
+ * the wire shape (notably {@code anomaly}, read by the Step Functions Choice) is unchanged.
  */
-public class MarketDataResponse {
-
-    private String ticker;
-    private BigDecimal price;
-    private BigDecimal previousClose;
-    private BigDecimal change;
-    private BigDecimal changePercent;
-    private Long volume;
-    private BigDecimal marketCap;
-    private BigDecimal high52Week;
-    private BigDecimal low52Week;
-    private String correlationId;
-    private String dataSource;
-    private boolean stored;
-    private boolean anomaly;
-    private String anomalyReason;
-
-    public MarketDataResponse() {}
-
-    private MarketDataResponse(Builder b) {
-        this.ticker = b.ticker;
-        this.price = b.price;
-        this.previousClose = b.previousClose;
-        this.change = b.change;
-        this.changePercent = b.changePercent;
-        this.volume = b.volume;
-        this.marketCap = b.marketCap;
-        this.high52Week = b.high52Week;
-        this.low52Week = b.low52Week;
-        this.correlationId = b.correlationId;
-        this.dataSource = b.dataSource;
-        this.stored = b.stored;
-        this.anomaly = b.anomaly;
-        this.anomalyReason = b.anomalyReason;
-    }
+public record MarketDataResponse(
+        String ticker,
+        BigDecimal price,
+        BigDecimal previousClose,
+        BigDecimal change,
+        BigDecimal changePercent,
+        Long volume,
+        BigDecimal marketCap,
+        BigDecimal high52Week,
+        BigDecimal low52Week,
+        String correlationId,
+        String dataSource,
+        boolean stored,
+        boolean anomaly,
+        String anomalyReason) {
 
     public static Builder builder() {
         return new Builder();
     }
 
-    public String getTicker() {
-        return ticker;
+    /** Returns a copy with the anomaly verdict set (after the anomaly gate). */
+    public MarketDataResponse withAnomaly(boolean anomaly, String anomalyReason) {
+        return new MarketDataResponse(
+                ticker,
+                price,
+                previousClose,
+                change,
+                changePercent,
+                volume,
+                marketCap,
+                high52Week,
+                low52Week,
+                correlationId,
+                dataSource,
+                stored,
+                anomaly,
+                anomalyReason);
     }
 
-    public BigDecimal getPrice() {
-        return price;
-    }
-
-    public BigDecimal getPreviousClose() {
-        return previousClose;
-    }
-
-    public BigDecimal getChange() {
-        return change;
-    }
-
-    public BigDecimal getChangePercent() {
-        return changePercent;
-    }
-
-    public Long getVolume() {
-        return volume;
-    }
-
-    public BigDecimal getMarketCap() {
-        return marketCap;
-    }
-
-    public BigDecimal getHigh52Week() {
-        return high52Week;
-    }
-
-    public BigDecimal getLow52Week() {
-        return low52Week;
-    }
-
-    public String getCorrelationId() {
-        return correlationId;
-    }
-
-    public String getDataSource() {
-        return dataSource;
-    }
-
-    public boolean isStored() {
-        return stored;
-    }
-
-    public void setStored(boolean stored) {
-        this.stored = stored;
-    }
-
-    public boolean isAnomaly() {
-        return anomaly;
-    }
-
-    public void setAnomaly(boolean anomaly) {
-        this.anomaly = anomaly;
-    }
-
-    public String getAnomalyReason() {
-        return anomalyReason;
-    }
-
-    public void setAnomalyReason(String anomalyReason) {
-        this.anomalyReason = anomalyReason;
+    /** Returns a copy with the stored flag set (after persistence). */
+    public MarketDataResponse withStored(boolean stored) {
+        return new MarketDataResponse(
+                ticker,
+                price,
+                previousClose,
+                change,
+                changePercent,
+                volume,
+                marketCap,
+                high52Week,
+                low52Week,
+                correlationId,
+                dataSource,
+                stored,
+                anomaly,
+                anomalyReason);
     }
 
     public static final class Builder {
@@ -202,7 +155,21 @@ public class MarketDataResponse {
         }
 
         public MarketDataResponse build() {
-            return new MarketDataResponse(this);
+            return new MarketDataResponse(
+                    ticker,
+                    price,
+                    previousClose,
+                    change,
+                    changePercent,
+                    volume,
+                    marketCap,
+                    high52Week,
+                    low52Week,
+                    correlationId,
+                    dataSource,
+                    stored,
+                    anomaly,
+                    anomalyReason);
         }
     }
 }

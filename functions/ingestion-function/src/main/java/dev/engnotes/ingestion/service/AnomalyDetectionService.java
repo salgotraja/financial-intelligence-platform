@@ -57,19 +57,18 @@ public class AnomalyDetectionService {
     }
 
     /**
-     * Evaluates the point against the ticker's baseline, updates the baseline, and sets the
-     * anomaly flag and reason on {@code data}.
+     * Evaluates the point against the ticker's baseline, updates the baseline, and returns a copy of
+     * {@code data} carrying the anomaly verdict.
      */
-    public void evaluate(MarketDataResponse data, String correlationId) {
-        String ticker = data.getTicker();
+    public MarketDataResponse evaluate(MarketDataResponse data, String correlationId) {
+        String ticker = data.ticker();
         try {
             Map<String, AttributeValue> baseline = readBaseline(ticker);
             RunningStats returnStats = readStats(baseline, "return");
             RunningStats volumeStats = readStats(baseline, "volume");
 
-            Double returnObs = toDouble(data.getChangePercent());
-            Double volumeObs =
-                    data.getVolume() == null ? null : data.getVolume().doubleValue();
+            Double returnObs = toDouble(data.changePercent());
+            Double volumeObs = data.volume() == null ? null : data.volume().doubleValue();
 
             double returnZ = warmZScore(returnStats, returnObs);
             double volumeZ = warmZScore(volumeStats, volumeObs);
@@ -86,9 +85,6 @@ public class AnomalyDetectionService {
             RunningStats updatedVolume = volumeObs == null ? volumeStats : volumeStats.accept(volumeObs);
             writeBaseline(ticker, updatedReturn, updatedVolume);
 
-            data.setAnomaly(anomaly);
-            data.setAnomalyReason(reason);
-
             log.info(
                     "Anomaly evaluation. ticker={} anomaly={} reason={} returnZ={} volumeZ={} returnCount={} correlationId={}",
                     ticker,
@@ -99,6 +95,8 @@ public class AnomalyDetectionService {
                     updatedReturn.count(),
                     correlationId);
 
+            return data.withAnomaly(anomaly, reason);
+
         } catch (Exception e) {
             // Best-effort: never let the gate fail ingestion or spend Bedrock on a degraded path.
             log.error(
@@ -107,8 +105,7 @@ public class AnomalyDetectionService {
                     correlationId,
                     e.getMessage(),
                     e);
-            data.setAnomaly(false);
-            data.setAnomalyReason(null);
+            return data.withAnomaly(false, null);
         }
     }
 
@@ -121,12 +118,12 @@ public class AnomalyDetectionService {
     }
 
     private boolean fiftyTwoWeekBreak(MarketDataResponse data) {
-        BigDecimal price = data.getPrice();
+        BigDecimal price = data.price();
         if (price == null) {
             return false;
         }
-        boolean aboveHigh = data.getHigh52Week() != null && price.compareTo(data.getHigh52Week()) > 0;
-        boolean belowLow = data.getLow52Week() != null && price.compareTo(data.getLow52Week()) < 0;
+        boolean aboveHigh = data.high52Week() != null && price.compareTo(data.high52Week()) > 0;
+        boolean belowLow = data.low52Week() != null && price.compareTo(data.low52Week()) < 0;
         return aboveHigh || belowLow;
     }
 

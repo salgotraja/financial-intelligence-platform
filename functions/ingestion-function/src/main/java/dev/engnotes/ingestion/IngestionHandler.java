@@ -50,14 +50,14 @@ public class IngestionHandler {
             log.info("Starting market data fetch. ticker={} correlationId={}", ticker, correlationId);
 
             MarketDataResponse marketData = fetchService.fetch(ticker, correlationId);
-            anomalyService.evaluate(marketData, correlationId);
-            storeService.store(marketData, correlationId);
+            marketData = anomalyService.evaluate(marketData, correlationId);
+            marketData = storeService.store(marketData, correlationId);
 
             log.info(
                     "Market data fetch complete. ticker={} price={} anomaly={} correlationId={}",
                     ticker,
-                    marketData.getPrice(),
-                    marketData.isAnomaly(),
+                    marketData.price(),
+                    marketData.anomaly(),
                     correlationId);
 
             return marketData;
