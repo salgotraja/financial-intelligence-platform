@@ -15,6 +15,10 @@
     <name>insight-function</name>
     <description>Spring Cloud Function Lambda: Bedrock insight generation</description>
 
+    <properties>
+        <start-class>dev.engnotes.insight.InsightHandler</start-class>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -61,8 +65,8 @@
         <finalName>insight-function</finalName>
         <plugins>
             <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
             </plugin>
         </plugins>
     </build>

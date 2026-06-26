@@ -90,19 +90,33 @@
     </dependencyManagement>
 
     <build>
-        <!-- spring-boot-maven-plugin config lives in pluginManagement so only the Boot
-             fat-JAR modules (the functions) that declare the plugin pick it up. The CDK
-             `infrastructure` module never declares it, so it is never repackaged.
-             The repackage execution itself is provided by the spring-boot-starter-parent. -->
+        <!-- Lambda packaging lives in pluginManagement so only the function modules that declare
+             the plugin pick it up; the CDK `infrastructure` module never does.
+             The Lambda Java runtime loads the handler
+             (org.springframework.cloud.function.adapter.aws.FunctionInvoker) from the classpath
+             root, which a Spring Boot fat JAR hides under BOOT-INF/. So functions ship a flat shaded
+             uber-JAR instead. A shaded JAR has no Boot Start-Class manifest entry, so each function
+             sets MAIN_CLASS (its @SpringBootApplication) in the CDK for FunctionInvoker to find. -->
         <pluginManagement>
             <plugins>
+                <!-- Inherits spring-boot-starter-parent's shade transformer config (merges
+                     spring.factories, META-INF/services, etc.); we only bind the execution and keep
+                     the dependency-reduced pom off. Each function sets <start-class> so the uber-JAR
+                     manifest names the @SpringBootApplication. -->
                 <plugin>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
                     <configuration>
-                        <!-- Thin JAR for Lambda - dependencies provided by layer -->
-                        <layout>ZIP</layout>
+                        <createDependencyReducedPom>false</createDependencyReducedPom>
                     </configuration>
+                    <executions>
+                        <execution>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>shade</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                 </plugin>
             </plugins>
         </pluginManagement>

@@ -15,6 +15,10 @@
     <name>query-function</name>
     <description>Spring Cloud Function Lambda: API query serving</description>
 
+    <properties>
+        <start-class>dev.engnotes.query.QueryHandler</start-class>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -51,8 +55,8 @@
         <finalName>query-function</finalName>
         <plugins>
             <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
             </plugin>
         </plugins>
     </build>

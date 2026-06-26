@@ -119,6 +119,9 @@ public class IngestionStack extends Stack {
         // SnapStart removes Spring Boot cold start (3-8s -> <200ms) on published versions.
         Map<String, String> fetchEnv = new HashMap<>(commonEnvVars);
         fetchEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "fetchMarketData");
+        // FunctionInvoker locates the @SpringBootApplication via MAIN_CLASS (the shaded uber-JAR has
+        // no Boot Start-Class manifest entry).
+        fetchEnv.put("MAIN_CLASS", "dev.engnotes.ingestion.IngestionHandler");
         fetchEnv.put("MARKET_DATA_API_SECRET", "financial-platform/market-data-api-key");
         // Anomaly-gate tunables (spec section 6), set to the AnomalyDetectionService code defaults so
         // they are operable without a redeploy. ANOMALY_MIN_SAMPLES gates the z-score until the
@@ -158,6 +161,7 @@ public class IngestionStack extends Stack {
         // Invoked only when the anomaly gate routes here (see the Choice state below).
         Map<String, String> insightEnv = new HashMap<>(commonEnvVars);
         insightEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "generateInsight");
+        insightEnv.put("MAIN_CLASS", "dev.engnotes.insight.InsightHandler");
         // Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1; invoke the global profile id,
         // not the bare foundation-model id (the latter returns ValidationException on demand).
         insightEnv.put("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");

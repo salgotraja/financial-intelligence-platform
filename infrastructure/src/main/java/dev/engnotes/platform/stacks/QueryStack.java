@@ -72,6 +72,8 @@ public class QueryStack extends Stack {
                         env,
                         "SPRING_CLOUD_FUNCTION_DEFINITION",
                         "queryHandler",
+                        "MAIN_CLASS",
+                        "dev.engnotes.query.QueryHandler",
                         "LOG_LEVEL",
                         env.equals("prod") ? "INFO" : "DEBUG"))
                 .vpc(foundation.getVpc())
