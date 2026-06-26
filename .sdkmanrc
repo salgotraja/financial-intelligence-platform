@@ -1,0 +1,5 @@
+# SDKMAN per-project toolchain pin.
+# Apply with `sdk env` (or `sdk env install` to install anything missing).
+# Auto-applies on `cd` only when sdkman_auto_env=true in ~/.sdkman/etc/config.
+java=25.0.2-tem
+maven=3.9.16

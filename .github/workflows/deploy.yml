@@ -1,0 +1,248 @@
+name: Financial Intelligence Platform CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: ap-south-1
+  JAVA_VERSION: '25'
+
+jobs:
+  # ── Job 1: Build and Test ─────────────────────────────────────────────────
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'corretto'  # Amazon Corretto — same JVM as the Lambda java25 runtime
+          cache: maven
+
+      - name: Build all modules
+        run: mvn clean package -DskipTests --batch-mode
+
+      - name: Run unit tests
+        run: mvn test --batch-mode
+
+      - name: Run integration tests
+        run: mvn verify -P integration-tests --batch-mode
+
+      - name: Upload test reports
+        if: always()  # upload even on failure — you need the report to debug
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: '**/target/surefire-reports/'
+          retention-days: 30
+
+      - name: Upload Lambda JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-jars
+          path: |
+            functions/ingestion-function/target/ingestion-function.jar
+            functions/insight-function/target/insight-function.jar
+            functions/query-function/target/query-function.jar
+          retention-days: 7
+
+  # ── Job 2: CDK Diff (on PR) ───────────────────────────────────────────────
+  # Shows infrastructure changes before they are deployed.
+  # Prevents surprise resource deletions in production.
+  cdk-diff:
+    name: CDK Diff
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Set up Node.js (CDK CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk@latest
+
+      - name: Download Lambda JARs
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-jars
+
+      - name: Configure AWS credentials (dev account)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_DEV }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEV }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK diff against dev
+        working-directory: infrastructure
+        run: |
+          mvn package -DskipTests --batch-mode
+          cdk diff --all --context env=dev 2>&1 | tee cdk-diff.txt
+
+      - name: Post CDK diff to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const diff = fs.readFileSync('infrastructure/cdk-diff.txt', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## CDK Diff\n\`\`\`\n${diff.slice(0, 60000)}\n\`\`\``
+            });
+
+  # ── Job 3: Deploy to Dev ──────────────────────────────────────────────────
+  # Runs automatically on every merge to main.
+  deploy-dev:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Set up Node.js (CDK CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk@latest
+
+      - name: Download Lambda JARs
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-jars
+
+      - name: Configure AWS credentials (dev)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_DEV }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEV }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK deploy to dev
+        working-directory: infrastructure
+        run: |
+          mvn package -DskipTests --batch-mode
+          cdk deploy --all \
+            --context env=dev \
+            --require-approval never \
+            --outputs-file cdk-outputs-dev.json
+
+      - name: Run smoke tests against dev
+        run: |
+          API_URL=$(cat infrastructure/cdk-outputs-dev.json | \
+            python3 -c "import sys,json; \
+            d=json.load(sys.stdin); \
+            print([v for k,v in d.items() if 'Query' in k][0].get('ApiEndpoint',''))")
+          echo "API_URL=$API_URL"
+          curl -sf "${API_URL}health" || exit 1
+          echo "Smoke test passed"
+
+      - name: Upload CDK outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs-dev
+          path: infrastructure/cdk-outputs-dev.json
+
+  # ── Job 4: Deploy to Prod (manual approval) ───────────────────────────────
+  # Requires a human to approve in GitHub Environments settings.
+  # This is the gate that prevents accidental production deployments.
+  deploy-prod:
+    name: Deploy to Prod
+    runs-on: ubuntu-latest
+    needs: deploy-dev
+    environment: prod  # GitHub environment with required reviewers configured
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'corretto'
+          cache: maven
+
+      - name: Set up Node.js (CDK CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk@latest
+
+      - name: Download Lambda JARs
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-jars
+
+      - name: Configure AWS credentials (prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK diff before prod deploy
+        working-directory: infrastructure
+        run: |
+          mvn package -DskipTests --batch-mode
+          cdk diff --all --context env=prod
+
+      - name: CDK deploy to prod
+        working-directory: infrastructure
+        run: |
+          cdk deploy --all \
+            --context env=prod \
+            --require-approval never \
+            --outputs-file cdk-outputs-prod.json
+
+      - name: Run smoke tests against prod
+        run: |
+          API_URL=$(cat infrastructure/cdk-outputs-prod.json | \
+            python3 -c "import sys,json; \
+            d=json.load(sys.stdin); \
+            print([v for k,v in d.items() if 'Query' in k][0].get('ApiEndpoint',''))")
+          curl -sf "${API_URL}health" || exit 1
+          echo "Production smoke test passed"
+
+      - name: Upload prod CDK outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs-prod
+          path: infrastructure/cdk-outputs-prod.json

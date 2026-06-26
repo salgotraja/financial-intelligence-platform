@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath/> <!-- lookup parent from repository -->
+    </parent>
+
+    <groupId>dev.engnotes</groupId>
+    <artifactId>financial-intelligence-platform</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>financial-intelligence-platform</name>
+    <description>Serverless financial intelligence platform (parent aggregator)</description>
+
+    <modules>
+        <module>infrastructure</module>
+        <module>functions/ingestion-function</module>
+        <module>functions/insight-function</module>
+        <module>functions/query-function</module>
+    </modules>
+
+    <properties>
+        <java.version>25</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- Spring Cloud (release train aligned to Spring Boot 4.1.x; it manages
+             spring-cloud-function + the AWS adapter - do not pin those yourself) -->
+        <spring-cloud.version>2025.1.2</spring-cloud.version>
+
+        <!-- AWS SDK v2 -->
+        <aws-sdk.version>2.46.17</aws-sdk.version>
+        <aws-lambda-java.version>1.4.0</aws-lambda-java.version>
+        <aws-lambda-events.version>3.16.1</aws-lambda-events.version>
+        <aws-xray.version>2.21.0</aws-xray.version>
+    </properties>
+
+    <!--
+      This is a pure parent/aggregator POM: it declares NO concrete dependencies so that
+      each module (Lambda functions, CDK app) only pulls what it actually needs. It provides
+      shared dependency/version management and the Java version to every module.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <!-- Boot's own dependency management comes from the spring-boot-starter-parent
+                 parent above; no spring-boot-dependencies import needed here. -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- AWS SDK v2 BOM -->
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws-sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Lambda runtime -->
+            <dependency>
+                <groupId>com.amazonaws</groupId>
+                <artifactId>aws-lambda-java-core</artifactId>
+                <version>${aws-lambda-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.amazonaws</groupId>
+                <artifactId>aws-lambda-java-events</artifactId>
+                <version>${aws-lambda-events.version}</version>
+            </dependency>
+
+            <!-- X-Ray SDK -->
+            <dependency>
+                <groupId>com.amazonaws</groupId>
+                <artifactId>aws-xray-recorder-sdk-core</artifactId>
+                <version>${aws-xray.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.amazonaws</groupId>
+                <artifactId>aws-xray-recorder-sdk-aws-sdk-v2-instrumentor</artifactId>
+                <version>${aws-xray.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <!-- spring-boot-maven-plugin config lives in pluginManagement so only the Boot
+             fat-JAR modules (the functions) that declare the plugin pick it up. The CDK
+             `infrastructure` module never declares it, so it is never repackaged.
+             The repackage execution itself is provided by the spring-boot-starter-parent. -->
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <configuration>
+                        <!-- Thin JAR for Lambda - dependencies provided by layer -->
+                        <layout>ZIP</layout>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <!-- Spotless enforces consistent Java formatting across every module.
+                 Fix locally with `./mvnw spotless:apply`; `spotless:check` runs at the verify phase
+                 (and so gates CI, which runs `mvn verify`). -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>3.7.0</version>
+                <configuration>
+                    <java>
+                        <removeUnusedImports/>
+                        <palantirJavaFormat/>
+                    </java>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <phase>verify</phase>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

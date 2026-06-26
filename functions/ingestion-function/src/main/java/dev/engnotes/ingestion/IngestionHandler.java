@@ -1,0 +1,60 @@
+package dev.engnotes.ingestion;
+
+import dev.engnotes.ingestion.model.MarketDataRequest;
+import dev.engnotes.ingestion.model.MarketDataResponse;
+import dev.engnotes.ingestion.service.MarketDataFetchService;
+import dev.engnotes.ingestion.service.MarketDataStoreService;
+import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+
+/**
+ * Ingestion Lambda - Spring Cloud Function entry point.
+ *
+ * <p>Spring Cloud Function maps a Java Function&lt;I, O&gt; to a Lambda handler. The bean name
+ * ("fetchMarketData") must match SPRING_CLOUD_FUNCTION_DEFINITION in the CDK stack.
+ *
+ * <p>SnapStart: the Spring context is initialised once during snapshot creation; subsequent
+ * invocations restore from the snapshot, so cold start is effectively eliminated.
+ *
+ * <p>Correlation IDs: every log line carries the correlation id derived from the Step Functions
+ * execution id, so a single CloudWatch Logs Insights filter shows the full request flow.
+ */
+@SpringBootApplication
+public class IngestionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(IngestionHandler.class);
+
+    public static void main(String[] args) {
+        SpringApplication.run(IngestionHandler.class, args);
+    }
+
+    /**
+     * Fetches live market data for a ticker, then stores it in DynamoDB (hot) and S3 (cold).
+     * The Step Functions state machine passes this output straight into the next state.
+     */
+    @Bean
+    public Function<MarketDataRequest, MarketDataResponse> fetchMarketData(
+            MarketDataFetchService fetchService, MarketDataStoreService storeService) {
+        return request -> {
+            String correlationId = request.getCorrelationId();
+            String ticker = request.getTicker();
+
+            log.info("Starting market data fetch. ticker={} correlationId={}", ticker, correlationId);
+
+            MarketDataResponse marketData = fetchService.fetch(ticker, correlationId);
+            storeService.store(marketData, correlationId);
+
+            log.info(
+                    "Market data fetch complete. ticker={} price={} correlationId={}",
+                    ticker,
+                    marketData.getPrice(),
+                    correlationId);
+
+            return marketData;
+        };
+    }
+}
