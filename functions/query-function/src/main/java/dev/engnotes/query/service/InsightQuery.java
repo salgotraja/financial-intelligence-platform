@@ -14,9 +14,10 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 /**
  * Read-only serving of the latest stored insight for a ticker (CQRS read path, spec section 10).
  *
- * <p>Design: insights are stored with PK=ticker, SK=generatedAt (ISO-8601). "Latest insight for
- * ticker" is a query on PK=ticker, sorted descending, Limit 1. This path never invokes Bedrock and
- * never writes, matching the read-only IAM grant on the query Lambda.
+ * <p>Design: insights are stored with PK=TICKER#{ticker}, SK=INSIGHT#{generatedAt} (ISO-8601).
+ * "Latest insight for ticker" is a query on PK=TICKER#{ticker}, SK begins_with INSIGHT#, sorted
+ * descending, Limit 1. This path never invokes Bedrock and never writes, matching the read-only IAM
+ * grant on the query Lambda.
  *
  * <p>The ticker is validated against a strict allowlist before it reaches the DynamoDB key
  * expression (spec section 12), so a malformed value is rejected at the trust boundary rather than
@@ -31,12 +32,12 @@ public class InsightQuery {
     private static final Pattern TICKER_PATTERN = Pattern.compile("^[A-Z0-9.^-]{1,15}$");
 
     private final DynamoDbClient dynamoDb;
-    private final String insightTable;
+    private final String platformTable;
 
     public InsightQuery(
-            DynamoDbClient dynamoDb, @Value("${INSIGHT_TABLE:financial-insights-dev}") String insightTable) {
+            DynamoDbClient dynamoDb, @Value("${PLATFORM_TABLE:financial-platform-dev}") String platformTable) {
         this.dynamoDb = dynamoDb;
-        this.insightTable = insightTable;
+        this.platformTable = platformTable;
     }
 
     public QueryResponse findLatestInsight(String ticker) {
@@ -44,11 +45,15 @@ public class InsightQuery {
             throw new IllegalArgumentException("Invalid ticker: " + ticker);
         }
 
+        // Single-table read (spec section 4): the ticker partition also holds TS#/BASELINE items, so
+        // constrain the sort key to INSIGHT# and take the newest. PK=TICKER#{ticker}, SK begins_with
+        // INSIGHT#{generatedAt}, descending, Limit 1.
         var request = software.amazon.awssdk.services.dynamodb.model.QueryRequest.builder()
-                .tableName(insightTable)
-                .keyConditionExpression("ticker = :t")
-                .expressionAttributeValues(
-                        Map.of(":t", AttributeValue.builder().s(ticker).build()))
+                .tableName(platformTable)
+                .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
+                .expressionAttributeValues(Map.of(
+                        ":pk", AttributeValue.builder().s("TICKER#" + ticker).build(),
+                        ":sk", AttributeValue.builder().s("INSIGHT#").build()))
                 .scanIndexForward(false) // newest generatedAt first
                 .limit(1)
                 .build();

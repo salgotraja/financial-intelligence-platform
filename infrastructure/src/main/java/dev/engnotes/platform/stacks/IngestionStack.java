@@ -67,8 +67,7 @@ public class IngestionStack extends Stack {
                 .build();
 
         // DynamoDB read/write on the two specific tables only.
-        foundation.getMarketDataTable().grantReadWriteData(ingestionRole);
-        foundation.getInsightTable().grantReadWriteData(ingestionRole);
+        foundation.getPlatformTable().grantReadWriteData(ingestionRole);
         // S3 write on the data lake bucket only.
         foundation.getDataLakeBucket().grantWrite(ingestionRole);
         // KMS encrypt/decrypt for DynamoDB and S3.
@@ -99,10 +98,8 @@ public class IngestionStack extends Stack {
         // == Common Lambda environment ==
         // Keys must NOT start with AWS_ - Lambda reserves that prefix and rejects the deploy.
         Map<String, String> commonEnvVars = Map.of(
-                "MARKET_DATA_TABLE",
-                foundation.getMarketDataTable().getTableName(),
-                "INSIGHT_TABLE",
-                foundation.getInsightTable().getTableName(),
+                "PLATFORM_TABLE",
+                foundation.getPlatformTable().getTableName(),
                 "DATA_LAKE_BUCKET",
                 foundation.getDataLakeBucket().getBucketName(),
                 "ENVIRONMENT",

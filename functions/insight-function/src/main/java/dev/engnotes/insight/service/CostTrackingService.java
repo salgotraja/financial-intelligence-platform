@@ -27,8 +27,8 @@ import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
  * {@link RuleBasedInsightGenerator} fallback until the UTC date rolls over (the partition key changes,
  * so the new day starts at zero with no cleanup).
  *
- * <p>Cost records share the insight table (PK/SK are strings, like the insight rows) and the role's
- * existing read/write grant, so no extra table or IAM is needed. The breaker read is eventually
+ * <p>Cost records live in the single platform table (PK/SK are strings, like every other entity) and
+ * use the role's existing read/write grant, so no extra table or IAM is needed. The breaker read is eventually
  * consistent: a soft guardrail that may overshoot slightly under burst concurrency, which is the
  * correct trade for a test-window cost cap. A counter-read failure leaves the breaker closed so a
  * DynamoDB hiccup never blocks insight generation.
@@ -45,19 +45,19 @@ public class CostTrackingService {
     private static final long TTL_SECONDS = 7L * 24 * 60 * 60;
 
     private final DynamoDbClient dynamoDb;
-    private final String insightTable;
+    private final String platformTable;
     private final BigDecimal dailyCapUsd;
     private final BigDecimal inputPricePer1k;
     private final BigDecimal outputPricePer1k;
 
     public CostTrackingService(
             DynamoDbClient dynamoDb,
-            @Value("${INSIGHT_TABLE:financial-insights-dev}") String insightTable,
+            @Value("${PLATFORM_TABLE:financial-platform-dev}") String platformTable,
             @Value("${COST_DAILY_CAP_USD:5.0}") double dailyCapUsd,
             @Value("${BEDROCK_INPUT_PRICE_PER_1K:0.003}") double inputPricePer1k,
             @Value("${BEDROCK_OUTPUT_PRICE_PER_1K:0.015}") double outputPricePer1k) {
         this.dynamoDb = dynamoDb;
-        this.insightTable = insightTable;
+        this.platformTable = platformTable;
         this.dailyCapUsd = BigDecimal.valueOf(dailyCapUsd);
         this.inputPricePer1k = BigDecimal.valueOf(inputPricePer1k);
         this.outputPricePer1k = BigDecimal.valueOf(outputPricePer1k);
@@ -103,8 +103,8 @@ public class CostTrackingService {
         String dayKey = dayPartitionKey();
         try {
             Map<String, AttributeValue> item = dynamoDb.getItem(GetItemRequest.builder()
-                            .tableName(insightTable)
-                            .key(Map.of("ticker", str(dayKey), "generatedAt", str(TOTAL_SK)))
+                            .tableName(platformTable)
+                            .key(Map.of("PK", str(dayKey), "SK", str(TOTAL_SK)))
                             .projectionExpression("spendUsd")
                             .build())
                     .item();
@@ -130,8 +130,8 @@ public class CostTrackingService {
     private void writeInvocationItem(
             String dayKey, String correlationId, long inputTokens, long outputTokens, BigDecimal cost) {
         Map<String, AttributeValue> item = new HashMap<>();
-        item.put("ticker", str(dayKey));
-        item.put("generatedAt", str("INVOKE#" + Instant.now() + "#" + System.nanoTime()));
+        item.put("PK", str(dayKey));
+        item.put("SK", str("INVOKE#" + Instant.now() + "#" + System.nanoTime()));
         item.put("inputTokens", num(Long.toString(inputTokens)));
         item.put("outputTokens", num(Long.toString(outputTokens)));
         item.put("costUsd", num(cost.toPlainString()));
@@ -140,13 +140,13 @@ public class CostTrackingService {
             item.put("correlationId", str(correlationId));
         }
         dynamoDb.putItem(
-                PutItemRequest.builder().tableName(insightTable).item(item).build());
+                PutItemRequest.builder().tableName(platformTable).item(item).build());
     }
 
     private void incrementDailyTotal(String dayKey, BigDecimal cost) {
         dynamoDb.updateItem(UpdateItemRequest.builder()
-                .tableName(insightTable)
-                .key(Map.of("ticker", str(dayKey), "generatedAt", str(TOTAL_SK)))
+                .tableName(platformTable)
+                .key(Map.of("PK", str(dayKey), "SK", str(TOTAL_SK)))
                 .updateExpression("ADD spendUsd :delta SET #ttl = if_not_exists(#ttl, :ttl)")
                 .expressionAttributeNames(Map.of("#ttl", "ttl"))
                 .expressionAttributeValues(Map.of(

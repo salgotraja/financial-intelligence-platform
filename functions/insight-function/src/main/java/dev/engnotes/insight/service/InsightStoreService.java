@@ -17,10 +17,11 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 /**
  * Persists a generated insight to DynamoDB.
  *
- * Design: PK=ticker, SK=generatedAt (ISO-8601). "Latest insight for ticker" is a query on
- * PK=ticker, sort descending, Limit 1 (the query Lambda's read pattern). TTL expires rows
- * after 7 days, matching the InsightTable definition in FoundationStack; historical data
- * lives in the S3 lake. Flips the response's stored flag to true after a successful write.
+ * Design: PK=TICKER#{ticker}, SK=INSIGHT#{generatedAt} (ISO-8601). "Latest insight for ticker"
+ * is a query on PK=TICKER#{ticker}, SK begins_with INSIGHT#, sort descending, Limit 1 (the query
+ * Lambda's read pattern). TTL expires rows after 7 days, matching the single-table definition in
+ * FoundationStack; historical data lives in the S3 lake. Flips the response's stored flag to true
+ * after a successful write.
  */
 @Service
 public class InsightStoreService {
@@ -32,8 +33,8 @@ public class InsightStoreService {
 
     private final DynamoDbClient dynamoDb;
 
-    @Value("${INSIGHT_TABLE:financial-insights-dev}")
-    private String insightTable;
+    @Value("${PLATFORM_TABLE:financial-platform-dev}")
+    private String platformTable;
 
     public InsightStoreService(DynamoDbClient dynamoDb) {
         this.dynamoDb = dynamoDb;
@@ -43,6 +44,10 @@ public class InsightStoreService {
         long ttlEpoch = Instant.now().getEpochSecond() + TTL_SECONDS;
 
         Map<String, AttributeValue> item = new HashMap<>();
+        // Single-table keys (spec section 4): PK=TICKER#{ticker}, SK=INSIGHT#{generatedAt}. The plain
+        // ticker/generatedAt attributes are kept for the read path's response mapping.
+        item.put("PK", str("TICKER#" + insight.getTicker()));
+        item.put("SK", str("INSIGHT#" + insight.getGeneratedAt()));
         item.put("ticker", str(insight.getTicker()));
         item.put("generatedAt", str(insight.getGeneratedAt()));
         item.put("insightText", str(insight.getInsightText()));
@@ -63,7 +68,7 @@ public class InsightStoreService {
 
         try {
             dynamoDb.putItem(
-                    PutItemRequest.builder().tableName(insightTable).item(item).build());
+                    PutItemRequest.builder().tableName(platformTable).item(item).build());
             insight.setStored(true);
 
             log.info(

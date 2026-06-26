@@ -54,8 +54,8 @@ class CostTrackingServiceTest {
         verify(dynamoDb).putItem(put.capture());
         Map<String, AttributeValue> item = put.getValue().item();
         assertThat(put.getValue().tableName()).isEqualTo(TABLE);
-        assertThat(item.get("ticker").s()).startsWith("COST#");
-        assertThat(item.get("generatedAt").s()).startsWith("INVOKE#");
+        assertThat(item.get("PK").s()).startsWith("COST#");
+        assertThat(item.get("SK").s()).startsWith("INVOKE#");
         assertThat(item.get("inputTokens").n()).isEqualTo("1000");
         assertThat(item.get("outputTokens").n()).isEqualTo("1000");
         assertThat(new BigDecimal(item.get("costUsd").n())).isEqualByComparingTo("0.018");
@@ -66,8 +66,8 @@ class CostTrackingServiceTest {
         verify(dynamoDb).updateItem(update.capture());
         UpdateItemRequest req = update.getValue();
         assertThat(req.tableName()).isEqualTo(TABLE);
-        assertThat(req.key().get("ticker").s()).startsWith("COST#");
-        assertThat(req.key().get("generatedAt").s()).isEqualTo("TOTAL");
+        assertThat(req.key().get("PK").s()).startsWith("COST#");
+        assertThat(req.key().get("SK").s()).isEqualTo("TOTAL");
         assertThat(req.updateExpression()).contains("ADD");
         assertThat(new BigDecimal(req.expressionAttributeValues().get(":delta").n()))
                 .isEqualByComparingTo("0.018");

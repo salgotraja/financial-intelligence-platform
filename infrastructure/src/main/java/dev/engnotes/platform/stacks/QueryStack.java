@@ -50,8 +50,7 @@ public class QueryStack extends Stack {
                 .build();
 
         // Read-only grants
-        foundation.getMarketDataTable().grantReadData(queryRole);
-        foundation.getInsightTable().grantReadData(queryRole);
+        foundation.getPlatformTable().grantReadData(queryRole);
         foundation.getEncryptionKey().grantDecrypt(queryRole);
 
         // Query Lambda
@@ -67,10 +66,8 @@ public class QueryStack extends Stack {
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
                 .environment(Map.of(
-                        "MARKET_DATA_TABLE",
-                        foundation.getMarketDataTable().getTableName(),
-                        "INSIGHT_TABLE",
-                        foundation.getInsightTable().getTableName(),
+                        "PLATFORM_TABLE",
+                        foundation.getPlatformTable().getTableName(),
                         "ENVIRONMENT",
                         env,
                         "SPRING_CLOUD_FUNCTION_DEFINITION",

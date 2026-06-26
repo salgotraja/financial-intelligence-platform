@@ -26,7 +26,7 @@ import tools.jackson.databind.ObjectMapper;
  * Tier 1 - DynamoDB (hot path, TTL 24h)
  *   Fast reads for the query Lambda. Expires automatically via DynamoDB TTL.
  *   Why TTL not delete: TTL is free, eventual, and does not consume write capacity.
- *   Design: PK=ticker, SK=timestamp. Last N records per ticker always available.
+ *   Design: PK=TICKER#{ticker}, SK=TS#{timestamp}. Last N records per ticker always available.
  * <p>
  * Tier 2 - S3 data lake (cold path, permanent)
  *   Date-partitioned for Athena queries: yyyy/MM/dd/ticker/HH-mm-ss.json
@@ -54,8 +54,8 @@ public class MarketDataStoreService {
     private final S3Client s3;
     private final ObjectMapper objectMapper;
 
-    @Value("${MARKET_DATA_TABLE:financial-market-data-dev}")
-    private String marketDataTable;
+    @Value("${PLATFORM_TABLE:financial-platform-dev}")
+    private String platformTable;
 
     @Value("${DATA_LAKE_BUCKET:financial-platform-datalake-dev}")
     private String dataLakeBucket;
@@ -101,6 +101,9 @@ public class MarketDataStoreService {
         long ttlEpoch = Instant.now().getEpochSecond() + TTL_SECONDS;
 
         Map<String, AttributeValue> item = new HashMap<>();
+        // Single-table keys (spec section 4): PK=TICKER#{ticker}, SK=TS#{iso8601}.
+        item.put("PK", str("TICKER#" + data.ticker()));
+        item.put("SK", str("TS#" + timestamp));
         item.put("ticker", str(data.ticker()));
         item.put("timestamp", str(timestamp));
         item.put("ttl", num(String.valueOf(ttlEpoch)));
@@ -121,11 +124,10 @@ public class MarketDataStoreService {
         if (data.low52Week() != null) item.put("low52Week", num(data.low52Week().toPlainString()));
 
         dynamoDb.putItem(PutItemRequest.builder()
-                .tableName(marketDataTable)
+                .tableName(platformTable)
                 .item(item)
-                // Idempotency: skip if same ticker+timestamp already exists
-                .conditionExpression("attribute_not_exists(ticker) AND attribute_not_exists(#ts)")
-                .expressionAttributeNames(Map.of("#ts", "timestamp"))
+                // Idempotency: skip if the same PK+SK (ticker + timestamp) already exists
+                .conditionExpression("attribute_not_exists(PK) AND attribute_not_exists(SK)")
                 .build());
     }
 

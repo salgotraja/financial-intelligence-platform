@@ -81,7 +81,9 @@ class InsightQueryTest {
         assertThat(sent.tableName()).isEqualTo(TABLE);
         assertThat(sent.scanIndexForward()).isFalse();
         assertThat(sent.limit()).isEqualTo(1);
-        assertThat(sent.expressionAttributeValues()).containsValue(str("TCS.NS"));
+        assertThat(sent.keyConditionExpression()).isEqualTo("PK = :pk AND begins_with(SK, :sk)");
+        assertThat(sent.expressionAttributeValues()).containsValue(str("TICKER#TCS.NS"));
+        assertThat(sent.expressionAttributeValues()).containsValue(str("INSIGHT#"));
     }
 
     @Test

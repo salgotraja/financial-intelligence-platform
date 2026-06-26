@@ -24,7 +24,7 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
  * {@code k} on either signal, or when price breaks the 52-week range. The flag is written onto the
  * {@link MarketDataResponse} so the Step Functions Choice can route to insight generation or skip it.
  *
- * <p>Storage: the baseline overloads the market-data table as {@code PK=ticker, SK=BASELINE}; it
+ * <p>Storage: the baseline overloads the single table as {@code PK=TICKER#{ticker}, SK=BASELINE}; it
  * carries no {@code ttl} so it is not auto-expired. The z-score is computed against the prior
  * baseline before the new point is folded in, so a point is judged against history, not itself.
  *
@@ -41,17 +41,17 @@ public class AnomalyDetectionService {
     private static final String BASELINE_SK = "BASELINE";
 
     private final DynamoDbClient dynamoDb;
-    private final String marketDataTable;
+    private final String platformTable;
     private final double zThreshold;
     private final int minSamples;
 
     public AnomalyDetectionService(
             DynamoDbClient dynamoDb,
-            @Value("${MARKET_DATA_TABLE:financial-market-data-dev}") String marketDataTable,
+            @Value("${PLATFORM_TABLE:financial-platform-dev}") String platformTable,
             @Value("${ANOMALY_Z_THRESHOLD:3.0}") double zThreshold,
             @Value("${ANOMALY_MIN_SAMPLES:5}") int minSamples) {
         this.dynamoDb = dynamoDb;
-        this.marketDataTable = marketDataTable;
+        this.platformTable = platformTable;
         this.zThreshold = zThreshold;
         this.minSamples = minSamples;
     }
@@ -144,8 +144,8 @@ public class AnomalyDetectionService {
 
     private Map<String, AttributeValue> readBaseline(String ticker) {
         var response = dynamoDb.getItem(GetItemRequest.builder()
-                .tableName(marketDataTable)
-                .key(Map.of("ticker", str(ticker), "timestamp", str(BASELINE_SK)))
+                .tableName(platformTable)
+                .key(Map.of("PK", str("TICKER#" + ticker), "SK", str(BASELINE_SK)))
                 .consistentRead(true)
                 .build());
         return response.hasItem() ? response.item() : Map.of();
@@ -163,8 +163,8 @@ public class AnomalyDetectionService {
 
     private void writeBaseline(String ticker, RunningStats returnStats, RunningStats volumeStats) {
         Map<String, AttributeValue> item = new HashMap<>();
-        item.put("ticker", str(ticker));
-        item.put("timestamp", str(BASELINE_SK));
+        item.put("PK", str("TICKER#" + ticker));
+        item.put("SK", str(BASELINE_SK));
         item.put("returnCount", num(returnStats.count()));
         item.put("returnMean", num(returnStats.mean()));
         item.put("returnM2", num(returnStats.m2()));
@@ -174,7 +174,7 @@ public class AnomalyDetectionService {
         item.put("updatedAt", str(Instant.now().toString()));
 
         dynamoDb.putItem(
-                PutItemRequest.builder().tableName(marketDataTable).item(item).build());
+                PutItemRequest.builder().tableName(platformTable).item(item).build());
     }
 
     private double readNumber(Map<String, AttributeValue> item, String key) {

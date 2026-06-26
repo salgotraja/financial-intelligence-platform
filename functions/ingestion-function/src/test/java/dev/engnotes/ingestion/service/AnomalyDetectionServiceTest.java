@@ -54,7 +54,8 @@ class AnomalyDetectionServiceTest {
         ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
         verify(dynamoDb).putItem(captor.capture());
         Map<String, AttributeValue> item = captor.getValue().item();
-        assertThat(item.get("timestamp").s()).isEqualTo("BASELINE");
+        assertThat(item.get("PK").s()).isEqualTo("TICKER#RELIANCE.NS");
+        assertThat(item.get("SK").s()).isEqualTo("BASELINE");
         assertThat(item.get("returnCount").n()).isEqualTo("1");
         assertThat(item.get("volumeCount").n()).isEqualTo("1");
         assertThat(item).doesNotContainKey("ttl"); // baseline must persist
@@ -186,8 +187,8 @@ class AnomalyDetectionServiceTest {
     private static Map<String, AttributeValue> baselineItem(
             long rCount, double rMean, double rM2, long vCount, double vMean, double vM2) {
         Map<String, AttributeValue> item = new HashMap<>();
-        item.put("ticker", str("RELIANCE.NS"));
-        item.put("timestamp", str("BASELINE"));
+        item.put("PK", str("TICKER#RELIANCE.NS"));
+        item.put("SK", str("BASELINE"));
         item.put("returnCount", num(Long.toString(rCount)));
         item.put("returnMean", num(Double.toString(rMean)));
         item.put("returnM2", num(Double.toString(rM2)));
