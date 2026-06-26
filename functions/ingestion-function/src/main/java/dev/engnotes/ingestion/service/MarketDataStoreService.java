@@ -22,16 +22,16 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * Stores market data in two tiers:
- *
+ * <p>
  * Tier 1 - DynamoDB (hot path, TTL 24h)
  *   Fast reads for the query Lambda. Expires automatically via DynamoDB TTL.
  *   Why TTL not delete: TTL is free, eventual, and does not consume write capacity.
  *   Design: PK=ticker, SK=timestamp. Last N records per ticker always available.
- *
+ * <p>
  * Tier 2 - S3 data lake (cold path, permanent)
  *   Date-partitioned for Athena queries: yyyy/MM/dd/ticker/HH-mm-ss.json
  *   Enables historical analysis, backtesting, and audit.
- *
+ * <p>
  * Idempotency:
  *   DynamoDB PutItem with a condition expression prevents double-writes.
  *   S3 key includes timestamp to the second - duplicate events within the same
