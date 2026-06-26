@@ -2,6 +2,7 @@ package dev.engnotes.ingestion;
 
 import dev.engnotes.ingestion.model.MarketDataRequest;
 import dev.engnotes.ingestion.model.MarketDataResponse;
+import dev.engnotes.ingestion.service.AnomalyDetectionService;
 import dev.engnotes.ingestion.service.MarketDataFetchService;
 import dev.engnotes.ingestion.service.MarketDataStoreService;
 import java.util.function.Function;
@@ -33,25 +34,30 @@ public class IngestionHandler {
     }
 
     /**
-     * Fetches live market data for a ticker, then stores it in DynamoDB (hot) and S3 (cold).
-     * The Step Functions state machine passes this output straight into the next state.
+     * Fetches live market data for a ticker, evaluates it against the rolling baseline to flag
+     * anomalies (the Bedrock gate, spec section 6), then stores it in DynamoDB (hot) and S3 (cold).
+     * The Step Functions Choice routes to insight generation only when {@code anomaly} is true.
      */
     @Bean
     public Function<MarketDataRequest, MarketDataResponse> fetchMarketData(
-            MarketDataFetchService fetchService, MarketDataStoreService storeService) {
+            MarketDataFetchService fetchService,
+            AnomalyDetectionService anomalyService,
+            MarketDataStoreService storeService) {
         return request -> {
-            String correlationId = request.getCorrelationId();
-            String ticker = request.getTicker();
+            String correlationId = request.correlationId();
+            String ticker = request.ticker();
 
             log.info("Starting market data fetch. ticker={} correlationId={}", ticker, correlationId);
 
             MarketDataResponse marketData = fetchService.fetch(ticker, correlationId);
+            anomalyService.evaluate(marketData, correlationId);
             storeService.store(marketData, correlationId);
 
             log.info(
-                    "Market data fetch complete. ticker={} price={} correlationId={}",
+                    "Market data fetch complete. ticker={} price={} anomaly={} correlationId={}",
                     ticker,
                     marketData.getPrice(),
+                    marketData.isAnomaly(),
                     correlationId);
 
             return marketData;

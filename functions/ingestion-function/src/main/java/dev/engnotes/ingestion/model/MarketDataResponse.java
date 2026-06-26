@@ -21,6 +21,8 @@ public class MarketDataResponse {
     private String correlationId;
     private String dataSource;
     private boolean stored;
+    private boolean anomaly;
+    private String anomalyReason;
 
     public MarketDataResponse() {}
 
@@ -37,6 +39,8 @@ public class MarketDataResponse {
         this.correlationId = b.correlationId;
         this.dataSource = b.dataSource;
         this.stored = b.stored;
+        this.anomaly = b.anomaly;
+        this.anomalyReason = b.anomalyReason;
     }
 
     public static Builder builder() {
@@ -95,6 +99,22 @@ public class MarketDataResponse {
         this.stored = stored;
     }
 
+    public boolean isAnomaly() {
+        return anomaly;
+    }
+
+    public void setAnomaly(boolean anomaly) {
+        this.anomaly = anomaly;
+    }
+
+    public String getAnomalyReason() {
+        return anomalyReason;
+    }
+
+    public void setAnomalyReason(String anomalyReason) {
+        this.anomalyReason = anomalyReason;
+    }
+
     public static final class Builder {
         private String ticker;
         private BigDecimal price;
@@ -108,6 +128,8 @@ public class MarketDataResponse {
         private String correlationId;
         private String dataSource;
         private boolean stored;
+        private boolean anomaly;
+        private String anomalyReason;
 
         public Builder ticker(String ticker) {
             this.ticker = ticker;
@@ -166,6 +188,16 @@ public class MarketDataResponse {
 
         public Builder stored(boolean stored) {
             this.stored = stored;
+            return this;
+        }
+
+        public Builder anomaly(boolean anomaly) {
+            this.anomaly = anomaly;
+            return this;
+        }
+
+        public Builder anomalyReason(String anomalyReason) {
+            this.anomalyReason = anomalyReason;
             return this;
         }
 

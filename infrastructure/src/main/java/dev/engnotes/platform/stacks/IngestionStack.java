@@ -25,7 +25,8 @@ import software.constructs.Construct;
  * Pipeline (per docs/requirement.md - four states wired in sequence):
  *   EventBridge (prod: NSE market hours; dev: every 5 min) -> Step Functions
  *       -> ValidateInput (Pass: shapes the EventBridge payload)
- *       -> FetchMarketData (Lambda: live market data from provider API)
+ *       -> FetchMarketData (Lambda: live market data + z-score anomaly gate)
+ *       -> AnomalyGate (Choice: anomaly? -> GenerateInsight : InsightSkipped)
  *       -> GenerateInsight (Lambda: Bedrock Claude insight)
  *       -> ExecutionSucceeded
  *   On any state failure: catch -> SendToDlq (SQS) -> ExecutionFailed.
@@ -146,7 +147,7 @@ public class IngestionStack extends Stack {
 
         // == Generate Insight Lambda ==
         // Higher memory: Bedrock response parsing benefits from it.
-        // TODO(module-4): the insight-function still needs its `generateInsight` bean.
+        // Invoked only when the anomaly gate routes here (see the Choice state below).
         Map<String, String> insightEnv = new HashMap<>(commonEnvVars);
         insightEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "generateInsight");
         // Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1; invoke the global profile id,
@@ -247,11 +248,27 @@ public class IngestionStack extends Stack {
         generateInsight.addRetry(standardRetry);
         generateInsight.addCatch(sendToDlq, catchToDlq);
 
-        // Wire the success chain.
-        Chain pipelineChain = Chain.start(validateInput)
-                .next(fetchMarketData)
-                .next(generateInsight)
-                .next(executionSucceeded);
+        // Insight generation, then success.
+        generateInsight.next(executionSucceeded);
+
+        // Anomaly gate: Bedrock is expensive and noisy, so it runs only when FetchMarketData
+        // flagged an anomaly (z-score on return/volume or a 52-week break, spec section 6). With
+        // no anomaly the pipeline skips straight to success, which is the main cost control on the
+        // write path. payloadResponseOnly on FetchMarketData makes its output the Choice input, so
+        // $.anomaly is the boolean set by the ingestion Lambda.
+        Pass insightSkipped = Pass.Builder.create(this, "InsightSkipped")
+                .comment("No anomaly: Bedrock skipped to control cost")
+                .build();
+        insightSkipped.next(executionSucceeded);
+
+        Choice anomalyGate = Choice.Builder.create(this, "AnomalyGate")
+                .comment("Generate an insight only on a flagged anomaly")
+                .build();
+        anomalyGate.when(Condition.booleanEquals("$.anomaly", true), generateInsight);
+        anomalyGate.otherwise(insightSkipped);
+
+        // Wire the chain: validate -> fetch -> gate -> (insight | skip) -> succeed.
+        Chain pipelineChain = Chain.start(validateInput).next(fetchMarketData).next(anomalyGate);
 
         StateMachine stateMachine = StateMachine.Builder.create(this, "IngestionStateMachine")
                 .stateMachineName("financial-ingestion-pipeline-" + env)
