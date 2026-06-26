@@ -1,5 +1,7 @@
 package dev.engnotes.ingestion.config;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,6 +26,12 @@ public class AwsClientConfig {
 
     @Value("${aws.region:ap-south-1}")
     private String region;
+
+    /** Shared JDK HttpClient for market-data providers; one per Lambda instance, reused across calls. */
+    @Bean
+    public HttpClient marketDataHttpClient() {
+        return HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+    }
 
     @Bean
     public SecretsManagerClient secretsManagerClient() {
