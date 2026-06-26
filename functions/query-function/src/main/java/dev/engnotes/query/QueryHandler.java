@@ -13,9 +13,12 @@ import org.springframework.context.annotation.Bean;
 /**
  * Query Lambda - Spring Cloud Function entry point (read path).
  *
- * <p>The bean name ("queryHandler") must match SPRING_CLOUD_FUNCTION_DEFINITION in QueryStack.
- * API Gateway maps {@code GET /insights/{ticker}} to this function via its integration request
- * template (ticker from the path, correlationId from the request id).
+ * <p>The bean name ("serveInsight") must match SPRING_CLOUD_FUNCTION_DEFINITION in QueryStack. It is
+ * deliberately not "queryHandler": component scanning already registers this
+ * {@code @SpringBootApplication} class as a bean named "queryHandler", so a same-named {@code @Bean}
+ * method collides (BeanDefinitionOverrideException). API Gateway maps {@code GET /insights/{ticker}}
+ * to this function via its integration request template (ticker from the path, correlationId from
+ * the request id).
  *
  * <p>Read-only and Bedrock-free: it serves the latest cached insight straight from DynamoDB, which
  * keeps the read path's p99 low and decoupled from the write path (CQRS, spec section 10).
@@ -31,7 +34,7 @@ public class QueryHandler {
 
     /** Returns the latest stored insight for the requested ticker. */
     @Bean
-    public Function<QueryRequest, QueryResponse> queryHandler(InsightQuery insightQuery) {
+    public Function<QueryRequest, QueryResponse> serveInsight(InsightQuery insightQuery) {
         return request -> {
             String ticker = request.ticker();
             String correlationId = request.correlationId();

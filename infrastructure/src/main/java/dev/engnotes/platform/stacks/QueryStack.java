@@ -71,7 +71,7 @@ public class QueryStack extends Stack {
                         "ENVIRONMENT",
                         env,
                         "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "queryHandler",
+                        "serveInsight",
                         "MAIN_CLASS",
                         "dev.engnotes.query.QueryHandler",
                         "LOG_LEVEL",

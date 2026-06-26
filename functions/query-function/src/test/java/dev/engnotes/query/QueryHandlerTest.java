@@ -19,7 +19,7 @@ class QueryHandlerTest {
     private InsightQuery insightQuery;
 
     @Test
-    void queryHandlerDelegatesToInsightQuery() {
+    void serveInsightDelegatesToInsightQuery() {
         QueryResponse expected = new QueryResponse(
                 "RELIANCE.NS",
                 "2026-06-26T10:00:00Z",
@@ -34,7 +34,7 @@ class QueryHandlerTest {
         when(insightQuery.findLatestInsight("RELIANCE.NS")).thenReturn(expected);
 
         QueryResponse actual =
-                new QueryHandler().queryHandler(insightQuery).apply(new QueryRequest("RELIANCE.NS", "corr-1"));
+                new QueryHandler().serveInsight(insightQuery).apply(new QueryRequest("RELIANCE.NS", "corr-1"));
 
         assertThat(actual).isEqualTo(expected);
     }
