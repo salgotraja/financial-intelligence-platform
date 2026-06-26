@@ -39,8 +39,8 @@ import tools.jackson.databind.node.ObjectNode;
  * repeatedly invalid output, the service falls back to a deterministic {@link RuleBasedInsightGenerator}
  * insight built from the same data, in the same schema. So unlike the previous free-text version, a
  * throttle no longer fails the state into the DLQ; the platform always returns an insight, tagged
- * with its {@code source} (BEDROCK or RULE_BASED). The cost circuit breaker (spec section 9) is a
- * future addition that would route to the same fallback when the daily spend cap is reached.
+ * with its {@code source} (BEDROCK or RULE_BASED). The cost circuit breaker (spec section 9), via
+ * {@link CostTrackingService}, routes to the same fallback when the daily Bedrock spend cap is hit.
  *
  * <p>Model: Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1, so BEDROCK_MODEL_ID is the global
  * inference-profile id, not the bare foundation-model id (set in IngestionStack).
@@ -60,6 +60,7 @@ public class BedrockInsightService {
     private final ObjectMapper objectMapper;
     private final FinancialInsightPrompt prompt;
     private final RuleBasedInsightGenerator fallback;
+    private final CostTrackingService costTracker;
 
     @Value("${BEDROCK_MODEL_ID:global.anthropic.claude-sonnet-4-5-20250929-v1:0}")
     private String modelId;
@@ -71,11 +72,13 @@ public class BedrockInsightService {
             BedrockRuntimeClient bedrock,
             ObjectMapper objectMapper,
             FinancialInsightPrompt prompt,
-            RuleBasedInsightGenerator fallback) {
+            RuleBasedInsightGenerator fallback,
+            CostTrackingService costTracker) {
         this.bedrock = bedrock;
         this.objectMapper = objectMapper;
         this.prompt = prompt;
         this.fallback = fallback;
+        this.costTracker = costTracker;
     }
 
     public InsightResponse generate(InsightRequest data) {
@@ -85,7 +88,16 @@ public class BedrockInsightService {
         }
 
         long startMs = System.currentTimeMillis();
-        Optional<StructuredInsight> bedrockResult = tryBedrock(data);
+        // Cost circuit breaker (spec section 9): once the day's Bedrock spend reaches the cap, skip
+        // the model entirely and serve the deterministic fallback until the UTC date rolls over.
+        boolean breakerOpen = costTracker.isBreakerOpen();
+        if (breakerOpen) {
+            log.warn(
+                    "Cost circuit breaker open, skipping Bedrock for rule-based fallback. ticker={} correlationId={}",
+                    ticker,
+                    data.getCorrelationId());
+        }
+        Optional<StructuredInsight> bedrockResult = breakerOpen ? Optional.empty() : tryBedrock(data);
         boolean fromBedrock = bedrockResult.isPresent();
         StructuredInsight insight = bedrockResult.orElseGet(() -> fallback.generate(data));
         String source = fromBedrock ? SOURCE_BEDROCK : SOURCE_RULE_BASED;
@@ -115,7 +127,11 @@ public class BedrockInsightService {
                         .body(SdkBytes.fromUtf8String(requestBody))
                         .build());
 
-                StructuredInsight insight = parseToolUse(response.body().asUtf8String());
+                // Tokens are billed whether or not the output parses, so record before validating.
+                String responseBody = response.body().asUtf8String();
+                recordCost(data, responseBody);
+
+                StructuredInsight insight = parseToolUse(responseBody);
                 return Optional.of(insight);
 
             } catch (ThrottlingException | ModelTimeoutException e) {
@@ -198,6 +214,20 @@ public class BedrockInsightService {
         body.putArray("messages").add(message);
 
         return objectMapper.writeValueAsString(body);
+    }
+
+    /** Reads token usage from the Bedrock response and records the invocation's cost. */
+    private void recordCost(InsightRequest data, String responseJson) {
+        long inputTokens = 0;
+        long outputTokens = 0;
+        try {
+            JsonNode usage = objectMapper.readTree(responseJson).path("usage");
+            inputTokens = usage.path("input_tokens").asLong(0);
+            outputTokens = usage.path("output_tokens").asLong(0);
+        } catch (Exception e) {
+            log.warn("Could not read Bedrock token usage, recording zero. ticker={}", data.getTicker());
+        }
+        costTracker.record(data.getCorrelationId(), inputTokens, outputTokens);
     }
 
     /** Extracts and validates the forced tool_use block. Throws IllegalArgumentException if invalid. */

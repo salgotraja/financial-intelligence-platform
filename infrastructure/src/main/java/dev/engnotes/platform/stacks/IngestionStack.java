@@ -154,6 +154,12 @@ public class IngestionStack extends Stack {
         // not the bare foundation-model id (the latter returns ValidationException on demand).
         insightEnv.put("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");
         insightEnv.put("BEDROCK_MAX_TOKENS", "1024");
+        // Cost tracking + daily-spend circuit breaker (spec section 9). Sonnet 4.5 list pricing
+        // (USD per 1K tokens); the breaker opens once a day's spend reaches the cap and routes to
+        // the rule-based fallback. Cost records share the insight table (already granted to the role).
+        insightEnv.put("COST_DAILY_CAP_USD", "5.0");
+        insightEnv.put("BEDROCK_INPUT_PRICE_PER_1K", "0.003");
+        insightEnv.put("BEDROCK_OUTPUT_PRICE_PER_1K", "0.015");
 
         Function generateInsightFn = Function.Builder.create(this, "GenerateInsightFn")
                 .functionName("financial-generate-insight-" + env)

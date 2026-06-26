@@ -3,6 +3,9 @@ package dev.engnotes.insight.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -36,13 +39,20 @@ class BedrockInsightServiceTest {
     @Mock
     private BedrockRuntimeClient bedrock;
 
+    @Mock
+    private CostTrackingService costTracker;
+
     private BedrockInsightService service;
 
     @BeforeEach
     void setUp() {
         ObjectMapper objectMapper = JsonMapper.builder().build();
         service = new BedrockInsightService(
-                bedrock, objectMapper, new FinancialInsightPrompt(), new RuleBasedInsightGenerator(1.0, 0.4));
+                bedrock,
+                objectMapper,
+                new FinancialInsightPrompt(),
+                new RuleBasedInsightGenerator(1.0, 0.4),
+                costTracker);
         ReflectionTestUtils.setField(service, "modelId", "test-model");
         ReflectionTestUtils.setField(service, "maxTokens", 512);
     }
@@ -115,6 +125,27 @@ class BedrockInsightServiceTest {
     }
 
     @Test
+    void openCircuitBreakerSkipsBedrockAndServesRuleBasedFallback() {
+        when(costTracker.isBreakerOpen()).thenReturn(true);
+
+        InsightResponse response = service.generate(request("RELIANCE.NS", "5.0"));
+
+        assertThat(response.getSource()).isEqualTo("RULE_BASED");
+        assertThat(response.getSignal()).isEqualTo("BULLISH"); // derived from +5% change
+        verify(bedrock, never()).invokeModel(any(InvokeModelRequest.class));
+        verify(costTracker, never()).record(any(), anyLong(), anyLong());
+    }
+
+    @Test
+    void successfulBedrockCallRecordsTokenCost() {
+        when(bedrock.invokeModel(any(InvokeModelRequest.class))).thenReturn(modelResponse(VALID));
+
+        service.generate(request("RELIANCE.NS", "3.2"));
+
+        verify(costTracker).record(eq("corr-1"), eq(1200L), eq(300L));
+    }
+
+    @Test
     void missingTickerThrows() {
         assertThatThrownBy(() -> service.generate(new InsightRequest())).isInstanceOf(InsightException.class);
     }
@@ -137,6 +168,7 @@ class BedrockInsightServiceTest {
                 + "\"signal\":\"" + signal + "\","
                 + "\"confidence\":" + confidence + ","
                 + "\"rationale\":\"" + rationale + "\","
-                + "\"drivers\":[\"change percent\",\"volume\"]}}]}";
+                + "\"drivers\":[\"change percent\",\"volume\"]}}],"
+                + "\"usage\":{\"input_tokens\":1200,\"output_tokens\":300}}";
     }
 }
