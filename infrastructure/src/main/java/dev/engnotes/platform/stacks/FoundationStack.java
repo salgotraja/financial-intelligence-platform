@@ -180,9 +180,13 @@ public class FoundationStack extends Stack {
                 .masterKey(encryptionKey)
                 .build();
 
-        // Add email subscription - replace with your email
-        alertTopic.addSubscription(
-                EmailSubscription.Builder.create("alerts@engnotes.dev").build());
+        // Email subscription for operational alerts. SNS emails the endpoint a confirmation link
+        // that the recipient must click; CDK/CloudFormation cannot auto-confirm email subscriptions
+        // (a deliberate opt-in mechanism), so it stays "Pending confirmation" until then. Point it at
+        // an inbox you control with `--context alertEmail=you@example.com`.
+        Object alertEmailContext = this.getNode().tryGetContext("alertEmail");
+        String alertEmail = alertEmailContext != null ? alertEmailContext.toString() : "alerts@engnotes.dev";
+        alertTopic.addSubscription(EmailSubscription.Builder.create(alertEmail).build());
 
         // CloudFormation Outputs
         // Other stacks import these values by name - no hardcoded ARNs.
