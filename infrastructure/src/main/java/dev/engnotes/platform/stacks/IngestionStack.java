@@ -73,13 +73,18 @@ public class IngestionStack extends Stack {
         // KMS encrypt/decrypt for DynamoDB and S3.
         foundation.getEncryptionKey().grantEncryptDecrypt(ingestionRole);
 
-        // Bedrock invoke - specific Claude Sonnet model only, not a wildcard.
-        // TODO(module-4): Sonnet 4.5 on Bedrock may require an inference-profile ARN
-        //                 in addition to the foundation-model ARN below.
+        // Bedrock invoke. Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1 (verified):
+        // the bare foundation-model id is not invocable on demand. We call the global
+        // cross-region profile, so the policy must allow BOTH the inference-profile ARN
+        // and the underlying foundation-model ARN (note the -v1:0 version suffix). Global
+        // profiles can route to any region, hence the * region on the foundation-model.
         ingestionRole.addToPolicy(PolicyStatement.Builder.create()
                 .effect(Effect.ALLOW)
                 .actions(List.of("bedrock:InvokeModel"))
-                .resources(List.of("arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929"))
+                .resources(List.of(
+                        "arn:aws:bedrock:" + this.getRegion() + ":" + this.getAccount()
+                                + ":inference-profile/global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"))
                 .build());
 
         // Secrets Manager read - market data provider API key path only.
@@ -144,7 +149,9 @@ public class IngestionStack extends Stack {
         // TODO(module-4): the insight-function still needs its `generateInsight` bean.
         Map<String, String> insightEnv = new HashMap<>(commonEnvVars);
         insightEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "generateInsight");
-        insightEnv.put("BEDROCK_MODEL_ID", "anthropic.claude-sonnet-4-5-20250929");
+        // Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1; invoke the global profile id,
+        // not the bare foundation-model id (the latter returns ValidationException on demand).
+        insightEnv.put("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");
         insightEnv.put("BEDROCK_MAX_TOKENS", "1024");
 
         Function generateInsightFn = Function.Builder.create(this, "GenerateInsightFn")
@@ -159,6 +166,9 @@ public class IngestionStack extends Stack {
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
                 .environment(insightEnv)
+                // Run in the VPC so Bedrock is reached over the PrivateLink interface
+                // endpoint (FoundationStack BedrockRuntimeEndpoint), not the public internet.
+                .vpc(foundation.getVpc())
                 .build();
 
         Alias insightAlias = Alias.Builder.create(this, "GenerateInsightAlias")

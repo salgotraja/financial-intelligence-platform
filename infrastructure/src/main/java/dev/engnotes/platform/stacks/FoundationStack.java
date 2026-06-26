@@ -97,6 +97,20 @@ public class FoundationStack extends Stack {
                         .service(GatewayVpcEndpointAwsService.DYNAMODB)
                         .build());
 
+        // Bedrock Runtime interface endpoint. The insight Lambda invokes Bedrock over
+        // PrivateLink instead of the public internet. Verified available in ap-south-1
+        // across all three AZs. Private DNS lets the SDK resolve
+        // bedrock-runtime.<region>.amazonaws.com to this endpoint with no code change.
+        vpc.addInterfaceEndpoint(
+                "BedrockRuntimeEndpoint",
+                InterfaceVpcEndpointOptions.builder()
+                        .service(new InterfaceVpcEndpointAwsService("bedrock-runtime"))
+                        .privateDnsEnabled(true)
+                        .subnets(SubnetSelection.builder()
+                                .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
+                                .build())
+                        .build());
+
         // DynamoDB: Market Data (hot, TTL 24h)
         // Partition key: ticker (e.g. RELIANCE.NS)
         // Sort key: timestamp (ISO-8601)
