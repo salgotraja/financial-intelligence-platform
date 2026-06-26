@@ -5,6 +5,7 @@ import dev.engnotes.ingestion.model.MarketDataResponse;
 import dev.engnotes.ingestion.service.AnomalyDetectionService;
 import dev.engnotes.ingestion.service.MarketDataFetchService;
 import dev.engnotes.ingestion.service.MarketDataStoreService;
+import dev.engnotes.ingestion.validation.TickerValidator;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,7 +46,9 @@ public class IngestionHandler {
             MarketDataStoreService storeService) {
         return request -> {
             String correlationId = request.correlationId();
-            String ticker = request.ticker();
+            // Validate at the trust boundary (spec section 12) before the ticker reaches the
+            // provider URL, S3 keys/tags, or DynamoDB writes downstream.
+            String ticker = TickerValidator.validate(request.ticker());
 
             log.info("Starting market data fetch. ticker={} correlationId={}", ticker, correlationId);
 
