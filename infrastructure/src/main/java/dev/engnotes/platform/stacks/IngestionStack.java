@@ -46,11 +46,13 @@ public class IngestionStack extends Stack {
             final String id,
             final StackProps props,
             final String env,
-            final FoundationStack foundation) {
+            final NetworkStack network,
+            final DataStack data) {
         super(scope, id, props);
 
-        // Deploy Foundation (VPC, KMS, tables, bucket) before this stack.
-        this.addDependency(foundation);
+        // Deploy the VPC (network) and the table/key (data) before this stack.
+        this.addDependency(network);
+        this.addDependency(data);
 
         // == Dead Letter Queue ==
         // The catch path publishes failed executions here; the EventBridge target
@@ -58,7 +60,7 @@ public class IngestionStack extends Stack {
         Queue dlq = Queue.Builder.create(this, "IngestionDLQ")
                 .queueName("financial-ingestion-dlq-" + env)
                 .encryption(QueueEncryption.KMS)
-                .encryptionMasterKey(foundation.getEncryptionKey())
+                .encryptionMasterKey(data.getEncryptionKey())
                 .retentionPeriod(Duration.days(14))
                 .build();
 
@@ -73,11 +75,11 @@ public class IngestionStack extends Stack {
                 .build();
 
         // DynamoDB read/write on the single platform table only.
-        foundation.getPlatformTable().grantReadWriteData(ingestionRole);
+        data.getPlatformTable().grantReadWriteData(ingestionRole);
         // S3 write on the data lake bucket only.
-        foundation.getDataLakeBucket().grantWrite(ingestionRole);
+        data.getDataLakeBucket().grantWrite(ingestionRole);
         // KMS encrypt/decrypt for DynamoDB and S3.
-        foundation.getEncryptionKey().grantEncryptDecrypt(ingestionRole);
+        data.getEncryptionKey().grantEncryptDecrypt(ingestionRole);
 
         // Bedrock invoke. Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1 (verified):
         // the bare foundation-model id is not invocable on demand. We call the global
@@ -105,9 +107,9 @@ public class IngestionStack extends Stack {
         // Keys must NOT start with AWS_ - Lambda reserves that prefix and rejects the deploy.
         Map<String, String> commonEnvVars = Map.of(
                 "PLATFORM_TABLE",
-                foundation.getPlatformTable().getTableName(),
+                data.getPlatformTable().getTableName(),
                 "DATA_LAKE_BUCKET",
-                foundation.getDataLakeBucket().getBucketName(),
+                data.getDataLakeBucket().getBucketName(),
                 "ENVIRONMENT",
                 env,
                 "POWERTOOLS_SERVICE_NAME",
@@ -141,7 +143,7 @@ public class IngestionStack extends Stack {
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
                 .environment(fetchEnv)
-                .vpc(foundation.getVpc())
+                .vpc(network.getVpc())
                 .build();
 
         // SnapStart applies only to a published version, so invoke an alias - not $LATEST.
@@ -192,7 +194,7 @@ public class IngestionStack extends Stack {
                 .environment(insightEnv)
                 // Run in the VPC so Bedrock is reached over the PrivateLink interface
                 // endpoint (FoundationStack BedrockRuntimeEndpoint), not the public internet.
-                .vpc(foundation.getVpc())
+                .vpc(network.getVpc())
                 .build();
 
         Alias insightAlias = Alias.Builder.create(this, "GenerateInsightAlias")
@@ -298,10 +300,10 @@ public class IngestionStack extends Stack {
                 .service("dynamodb")
                 .action("query")
                 .parameters(Map.of(
-                        "TableName", foundation.getPlatformTable().getTableName(),
+                        "TableName", data.getPlatformTable().getTableName(),
                         "KeyConditionExpression", "PK = :pk",
                         "ExpressionAttributeValues", Map.of(":pk", Map.of("S", "WATCHSET"))))
-                .iamResources(List.of(foundation.getPlatformTable().getTableArn()))
+                .iamResources(List.of(data.getPlatformTable().getTableArn()))
                 .resultPath("$.watchset")
                 .build();
         readWatchset.addCatch(sendToDlq, catchToDlq);
@@ -357,7 +359,7 @@ public class IngestionStack extends Stack {
         // ReadWatchset queries the KMS-encrypted table directly, so the state-machine role needs
         // decrypt on the platform table's key in addition to the dynamodb:Query that CallAwsService
         // grants via iamResources.
-        foundation.getEncryptionKey().grantDecrypt(stateMachine);
+        data.getEncryptionKey().grantDecrypt(stateMachine);
 
         // == WATCHSET seed ==
         // The distinct-ticker union is normally maintained by watchlist writes, but no watchlist API
@@ -379,18 +381,17 @@ public class IngestionStack extends Stack {
                         .service("DynamoDB")
                         .action("batchWriteItem")
                         .parameters(Map.of(
-                                "RequestItems",
-                                Map.of(foundation.getPlatformTable().getTableName(), seedPutRequests)))
+                                "RequestItems", Map.of(data.getPlatformTable().getTableName(), seedPutRequests)))
                         .physicalResourceId(PhysicalResourceId.of("watchset-seed-" + String.join("-", seedTickers)))
                         .build())
                 .policy(AwsCustomResourcePolicy.fromStatements(List.of(
                         PolicyStatement.Builder.create()
                                 .actions(List.of("dynamodb:BatchWriteItem"))
-                                .resources(List.of(foundation.getPlatformTable().getTableArn()))
+                                .resources(List.of(data.getPlatformTable().getTableArn()))
                                 .build(),
                         PolicyStatement.Builder.create()
                                 .actions(List.of("kms:GenerateDataKey", "kms:Decrypt"))
-                                .resources(List.of(foundation.getEncryptionKey().getKeyArn()))
+                                .resources(List.of(data.getEncryptionKey().getKeyArn()))
                                 .build())))
                 .build();
 

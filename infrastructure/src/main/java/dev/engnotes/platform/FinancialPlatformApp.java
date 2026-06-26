@@ -1,15 +1,19 @@
 package dev.engnotes.platform;
 
-import dev.engnotes.platform.stacks.FoundationStack;
+import dev.engnotes.platform.stacks.DataStack;
 import dev.engnotes.platform.stacks.IngestionStack;
+import dev.engnotes.platform.stacks.NetworkStack;
 import dev.engnotes.platform.stacks.QueryStack;
 import software.amazon.awscdk.App;
 import software.amazon.awscdk.Environment;
 import software.amazon.awscdk.StackProps;
 
 /**
- * CDK application entry point. Stacks (FoundationStack, IngestionStack, QueryStack) are
- * wired here as each infrastructure module is built out per the platform roadmap.
+ * CDK application entry point.
+ *
+ * <p>Stacks are split stateful-vs-ephemeral so the costly infra can be torn down between sessions
+ * without losing data: DataStack (KMS, DynamoDB, S3, SNS) stays deployed; NetworkStack (VPC, NAT,
+ * endpoints), IngestionStack, and QueryStack are the teardown set. See USER-GUIDE.md "Cost control".
  */
 public class FinancialPlatformApp {
 
@@ -26,16 +30,17 @@ public class FinancialPlatformApp {
 
         StackProps props = StackProps.builder().env(awsEnv).build();
 
-        // Stack 1 - Foundation (VPC, KMS, DynamoDB, S3, IAM)
-        FoundationStack foundation = new FoundationStack(app, "FinancialPlatform-Foundation-" + env, props, env);
+        // Stateful stack - stays deployed across sessions (KMS, DynamoDB, S3, SNS).
+        DataStack data = new DataStack(app, "FinancialPlatform-Data-" + env, props, env);
 
-        // Stack 2 - Ingestion (EventBridge, Step Functions, Lambda)
-        IngestionStack ingestion =
-                new IngestionStack(app, "FinancialPlatform-Ingestion-" + env, props, env, foundation);
+        // Ephemeral stack - VPC, NAT, endpoints. Torn down between sessions to save idle cost.
+        NetworkStack network = new NetworkStack(app, "FinancialPlatform-Network-" + env, props, env);
 
-        // Stack 3 - Query (API Gateway, query Lambda, DAX)
-        QueryStack query = new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, foundation);
-        query.addDependency(foundation);
+        // Ingestion (EventBridge, Step Functions, Lambda) - depends on both halves.
+        new IngestionStack(app, "FinancialPlatform-Ingestion-" + env, props, env, network, data);
+
+        // Query (API Gateway, query Lambda) - depends on both halves.
+        new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, network, data);
 
         app.synth();
     }

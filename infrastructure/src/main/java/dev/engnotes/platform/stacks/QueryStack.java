@@ -35,8 +35,12 @@ public class QueryStack extends Stack {
             final String id,
             final StackProps props,
             final String env,
-            final FoundationStack foundation) {
+            final NetworkStack network,
+            final DataStack data) {
         super(scope, id, props);
+
+        this.addDependency(network);
+        this.addDependency(data);
 
         // IAM Role for query Lambda
         // Read-only: query Lambda never writes to DynamoDB.
@@ -50,8 +54,8 @@ public class QueryStack extends Stack {
                 .build();
 
         // Read-only grants
-        foundation.getPlatformTable().grantReadData(queryRole);
-        foundation.getEncryptionKey().grantDecrypt(queryRole);
+        data.getPlatformTable().grantReadData(queryRole);
+        data.getEncryptionKey().grantDecrypt(queryRole);
 
         // Query Lambda
         var queryFn = Function.Builder.create(this, "QueryFn")
@@ -67,7 +71,7 @@ public class QueryStack extends Stack {
                 .tracing(Tracing.ACTIVE)
                 .environment(Map.of(
                         "PLATFORM_TABLE",
-                        foundation.getPlatformTable().getTableName(),
+                        data.getPlatformTable().getTableName(),
                         "ENVIRONMENT",
                         env,
                         "SPRING_CLOUD_FUNCTION_DEFINITION",
@@ -76,7 +80,7 @@ public class QueryStack extends Stack {
                         "dev.engnotes.query.QueryHandler",
                         "LOG_LEVEL",
                         env.equals("prod") ? "INFO" : "DEBUG"))
-                .vpc(foundation.getVpc())
+                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "QueryFnLogs")
@@ -160,7 +164,7 @@ public class QueryStack extends Stack {
                 .treatMissingData(TreatMissingData.NOT_BREACHING)
                 .build();
 
-        p99LatencyAlarm.addAlarmAction(new SnsAction(foundation.getAlertTopic()));
+        p99LatencyAlarm.addAlarmAction(new SnsAction(data.getAlertTopic()));
 
         // CloudFormation Outputs
         new CfnOutput(

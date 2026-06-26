@@ -3,7 +3,6 @@ package dev.engnotes.platform.stacks;
 import java.util.List;
 import software.amazon.awscdk.*;
 import software.amazon.awscdk.services.dynamodb.*;
-import software.amazon.awscdk.services.ec2.*;
 import software.amazon.awscdk.services.kms.Key;
 import software.amazon.awscdk.services.kms.KeySpec;
 import software.amazon.awscdk.services.kms.KeyUsage;
@@ -13,102 +12,43 @@ import software.amazon.awscdk.services.sns.subscriptions.EmailSubscription;
 import software.constructs.Construct;
 
 /**
- * Foundation Stack.
+ * Data Stack - the stateful, persistent half of the platform.
  *
- * Creates shared infrastructure used by all other stacks:
- *   - VPC with private subnets (Lambda runs here, no public internet)
- *   - KMS key for encryption at rest
- *   - DynamoDB table with TTL, point-in-time recovery, KMS encryption
- *   - S3 data lake bucket with versioning, lifecycle rules, KMS encryption
- *   - SNS topic for operational alerts
- *   - Budget alarm at 80% of monthly limit
+ * <p>Holds everything that must survive across deploys: the KMS key, the single DynamoDB table, the
+ * S3 data lake, and the SNS alert topic (so the email subscription is confirmed once, not on every
+ * redeploy). It carries no NAT, endpoints, or compute, so it costs almost nothing at rest and is
+ * meant to stay deployed while {@link NetworkStack}, {@link IngestionStack}, and {@link QueryStack}
+ * are torn down between work sessions to avoid idle NAT/endpoint/provisioned-concurrency cost.
  *
- * Security decisions:
- *   - All data encrypted with customer-managed KMS key
- *   - DynamoDB in private subnet via VPC endpoint (traffic never leaves AWS)
- *   - S3 bucket policy blocks public access unconditionally
- *   - CloudTrail-ready: all KMS key usage is auditable
+ * <p>The KMS key encrypts the table, the bucket, and the topic, so all four live together here. In
+ * dev the table/bucket/key are {@code DESTROY} (throwaway data, clean teardown); in prod they are
+ * {@code RETAIN}.
  */
-public class FoundationStack extends Stack {
+public class DataStack extends Stack {
 
-    // Exported for use by other stacks
-    private final Vpc vpc;
     private final Key encryptionKey;
     private final Table platformTable;
     private final IBucket dataLakeBucket;
     private final Topic alertTopic;
 
-    public FoundationStack(final Construct scope, final String id, final StackProps props, final String env) {
+    public DataStack(final Construct scope, final String id, final StackProps props, final String env) {
         super(scope, id, props);
 
-        // KMS Key
-        // One key for all resources. Rotation enabled - AWS rotates annually.
-        // In production use separate keys per data classification.
+        boolean prod = env.equals("prod");
+        RemovalPolicy statefulRemoval = prod ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
+
+        // KMS Key - one customer-managed key for all data at rest. Rotation enabled (annual).
         this.encryptionKey = Key.Builder.create(this, "PlatformKey")
                 .description("Encryption key for Financial Intelligence Platform - " + env)
                 .keySpec(KeySpec.SYMMETRIC_DEFAULT)
                 .keyUsage(KeyUsage.ENCRYPT_DECRYPT)
                 .enableKeyRotation(true)
-                .removalPolicy(RemovalPolicy.RETAIN) // never delete in prod
+                // dev DESTROY avoids orphaned keys piling up across teardown cycles.
+                .removalPolicy(statefulRemoval)
                 .build();
 
         Tags.of(encryptionKey).add("component", "security");
         Tags.of(encryptionKey).add("env", env);
-
-        // VPC
-        // Public subnet holds the NAT gateway(s); private-with-egress runs the Lambdas
-        // (egress to the internet, e.g. Yahoo Finance, via NAT); isolated is reserved for
-        // databases. A PRIVATE_WITH_EGRESS subnet REQUIRES a PUBLIC subnet for the NAT.
-        // S3 and DynamoDB use gateway endpoints (no NAT). A Bedrock interface endpoint is
-        // added with the insight Lambda's VPC placement (see eng-review task T2).
-        this.vpc = Vpc.Builder.create(this, "PlatformVpc")
-                .vpcName("financial-platform-vpc-" + env)
-                .maxAzs(2)
-                .natGateways(env.equals("prod") ? 2 : 1)
-                .subnetConfiguration(List.of(
-                        SubnetConfiguration.builder()
-                                .name("public")
-                                .subnetType(SubnetType.PUBLIC)
-                                .cidrMask(24)
-                                .build(),
-                        SubnetConfiguration.builder()
-                                .name("private")
-                                .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
-                                .cidrMask(24)
-                                .build(),
-                        SubnetConfiguration.builder()
-                                .name("isolated")
-                                .subnetType(SubnetType.PRIVATE_ISOLATED)
-                                .cidrMask(28)
-                                .build()))
-                .build();
-
-        // VPC endpoints - Lambda can reach AWS services without NAT gateway
-        vpc.addGatewayEndpoint(
-                "S3Endpoint",
-                GatewayVpcEndpointOptions.builder()
-                        .service(GatewayVpcEndpointAwsService.S3)
-                        .build());
-
-        vpc.addGatewayEndpoint(
-                "DynamoDbEndpoint",
-                GatewayVpcEndpointOptions.builder()
-                        .service(GatewayVpcEndpointAwsService.DYNAMODB)
-                        .build());
-
-        // Bedrock Runtime interface endpoint. The insight Lambda invokes Bedrock over
-        // PrivateLink instead of the public internet. Verified available in ap-south-1
-        // across all three AZs. Private DNS lets the SDK resolve
-        // bedrock-runtime.<region>.amazonaws.com to this endpoint with no code change.
-        vpc.addInterfaceEndpoint(
-                "BedrockRuntimeEndpoint",
-                InterfaceVpcEndpointOptions.builder()
-                        .service(new InterfaceVpcEndpointAwsService("bedrock-runtime"))
-                        .privateDnsEnabled(true)
-                        .subnets(SubnetSelection.builder()
-                                .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
-                                .build())
-                        .build());
 
         // DynamoDB: single-table design (spec section 4)
         // One table overloads every operational entity onto generic PK/SK:
@@ -132,7 +72,7 @@ public class FoundationStack extends Stack {
                 .encryptionKey(encryptionKey)
                 .pointInTimeRecovery(true) // PITR for disaster recovery
                 .timeToLiveAttribute("ttl") // auto-expire hot data
-                .removalPolicy(env.equals("prod") ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY)
+                .removalPolicy(statefulRemoval)
                 .build();
 
         // GSI1 (insight-by-ticker): reserved for the by-ticker insight feed once correlation
@@ -150,10 +90,7 @@ public class FoundationStack extends Stack {
                 .projectionType(ProjectionType.ALL)
                 .build());
 
-        // S3 Data Lake
-        // Raw market data archived from DynamoDB (via Lambda on TTL expiry).
-        // Partitioned by: year/month/day/ticker for Athena queries.
-        // Lifecycle: move to Intelligent-Tiering after 30 days.
+        // S3 Data Lake - raw market data archived from DynamoDB, partitioned for Athena.
         this.dataLakeBucket = Bucket.Builder.create(this, "DataLakeBucket")
                 .bucketName("financial-platform-datalake-" + env + "-" + this.getAccount())
                 .versioned(true)
@@ -168,36 +105,25 @@ public class FoundationStack extends Stack {
                                 .transitionAfter(Duration.days(30))
                                 .build()))
                         .build()))
-                .removalPolicy(env.equals("prod") ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY)
-                .autoDeleteObjects(!env.equals("prod"))
+                .removalPolicy(statefulRemoval)
+                .autoDeleteObjects(!prod)
                 .build();
 
-        // SNS Alert Topic
-        // All CloudWatch alarms publish here.
-        // In production, add PagerDuty or Slack integration via Lambda subscriber.
+        // SNS Alert Topic - all CloudWatch alarms publish here. Lives in the persistent stack so the
+        // email subscription is confirmed once and survives compute/network teardowns.
         this.alertTopic = Topic.Builder.create(this, "AlertTopic")
                 .topicName("financial-platform-alerts-" + env)
                 .masterKey(encryptionKey)
                 .build();
 
-        // Email subscription for operational alerts. SNS emails the endpoint a confirmation link
-        // that the recipient must click; CDK/CloudFormation cannot auto-confirm email subscriptions
-        // (a deliberate opt-in mechanism), so it stays "Pending confirmation" until then. Point it at
-        // an inbox you control with `--context alertEmail=you@example.com`.
+        // SNS emails the endpoint a confirmation link that the recipient must click; CDK cannot
+        // auto-confirm email subscriptions. Point it at an inbox you control with
+        // `--context alertEmail=you@example.com`.
         Object alertEmailContext = this.getNode().tryGetContext("alertEmail");
         String alertEmail = alertEmailContext != null ? alertEmailContext.toString() : "alerts@engnotes.dev";
         alertTopic.addSubscription(EmailSubscription.Builder.create(alertEmail).build());
 
-        // CloudFormation Outputs
-        // Other stacks import these values by name - no hardcoded ARNs.
-        new CfnOutput(
-                this,
-                "VpcId",
-                CfnOutputProps.builder()
-                        .exportName("platform-vpc-id-" + env)
-                        .value(vpc.getVpcId())
-                        .build());
-
+        // Outputs - dependent stacks import these by name.
         new CfnOutput(
                 this,
                 "EncryptionKeyArn",
@@ -221,11 +147,6 @@ public class FoundationStack extends Stack {
                         .exportName("platform-datalake-bucket-" + env)
                         .value(dataLakeBucket.getBucketName())
                         .build());
-    }
-
-    // Getters for use by dependent stacks
-    public Vpc getVpc() {
-        return vpc;
     }
 
     public Key getEncryptionKey() {
