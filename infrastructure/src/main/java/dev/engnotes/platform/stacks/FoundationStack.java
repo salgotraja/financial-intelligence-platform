@@ -57,14 +57,21 @@ public class FoundationStack extends Stack {
         Tags.of(encryptionKey).add("env", env);
 
         // VPC
-        // Two private subnets, two isolated subnets (databases).
-        // No public subnets - Lambda never needs a public IP.
-        // VPC endpoints for DynamoDB, S3, Bedrock: traffic never hits internet.
+        // Public subnet holds the NAT gateway(s); private-with-egress runs the Lambdas
+        // (egress to the internet, e.g. Yahoo Finance, via NAT); isolated is reserved for
+        // databases. A PRIVATE_WITH_EGRESS subnet REQUIRES a PUBLIC subnet for the NAT.
+        // S3 and DynamoDB use gateway endpoints (no NAT). A Bedrock interface endpoint is
+        // added with the insight Lambda's VPC placement (see eng-review task T2).
         this.vpc = Vpc.Builder.create(this, "PlatformVpc")
                 .vpcName("financial-platform-vpc-" + env)
                 .maxAzs(2)
                 .natGateways(env.equals("prod") ? 2 : 1)
                 .subnetConfiguration(List.of(
+                        SubnetConfiguration.builder()
+                                .name("public")
+                                .subnetType(SubnetType.PUBLIC)
+                                .cidrMask(24)
+                                .build(),
                         SubnetConfiguration.builder()
                                 .name("private")
                                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)

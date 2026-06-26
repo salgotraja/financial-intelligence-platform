@@ -60,7 +60,7 @@ public class QueryStack extends Stack {
                 .description("Serves insight and market data API requests")
                 .runtime(Runtime.JAVA_25)
                 .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
-                .code(Code.fromAsset("../functions/query-function/target/query-function-0.0.1-SNAPSHOT.jar"))
+                .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
                 .role(queryRole)
                 .memorySize(512)
                 .timeout(Duration.seconds(10))
