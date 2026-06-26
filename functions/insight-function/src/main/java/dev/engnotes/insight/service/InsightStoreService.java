@@ -4,6 +4,7 @@ import dev.engnotes.insight.exception.InsightException;
 import dev.engnotes.insight.model.InsightResponse;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,14 @@ public class InsightStoreService {
         item.put("modelId", str(insight.getModelId()));
         item.put("promptVersion", str(insight.getPromptVersion()));
         item.put("ttl", num(String.valueOf(ttlEpoch)));
+        // Structured contract (spec section 9): persisted so the read path can serve it.
+        item.put("signal", str(insight.getSignal()));
+        item.put("confidence", num(String.valueOf(insight.getConfidence())));
+        item.put("rationale", str(insight.getRationale()));
+        item.put("source", str(insight.getSource()));
+        if (insight.getDrivers() != null && !insight.getDrivers().isEmpty()) {
+            item.put("drivers", strList(insight.getDrivers()));
+        }
         if (insight.getCorrelationId() != null) {
             item.put("correlationId", str(insight.getCorrelationId()));
         }
@@ -80,5 +89,11 @@ public class InsightStoreService {
 
     private AttributeValue num(String value) {
         return AttributeValue.builder().n(value).build();
+    }
+
+    private AttributeValue strList(List<String> values) {
+        return AttributeValue.builder()
+                .l(values.stream().map(this::str).toList())
+                .build();
     }
 }

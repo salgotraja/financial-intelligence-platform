@@ -11,11 +11,16 @@ import org.springframework.stereotype.Component;
  * only variability at runtime is the model itself. Grounded: the prompt instructs the
  * model to use only the supplied numbers and to avoid speculation or financial advice.
  * The version string is persisted with each insight so a prompt change is traceable.
+ *
+ * The structured contract (signal/confidence/rationale/drivers) is enforced by the tool
+ * schema in BedrockInsightService, not by the prose here; this prompt supplies the grounded
+ * facts and tells the model to emit its judgment through that tool.
  */
 @Component
 public class FinancialInsightPrompt {
 
-    private static final String VERSION = "v1";
+    // v2: structured tool-use output (signal/confidence/rationale/drivers), supersedes the v1 free text.
+    private static final String VERSION = "v2";
 
     public String version() {
         return VERSION;
@@ -34,12 +39,17 @@ public class FinancialInsightPrompt {
         if (data.getVolume() != null) {
             facts.append("Volume: ").append(data.getVolume()).append('\n');
         }
+        if (data.getAnomalyReason() != null && !data.getAnomalyReason().isBlank()) {
+            facts.append("Anomaly that triggered this insight: ")
+                    .append(data.getAnomalyReason().strip())
+                    .append('\n');
+        }
 
-        return "You are a financial analyst. Using ONLY the market data below, write a concise "
-                + "2 to 3 sentence plain-English insight about this stock's latest move. State what "
-                + "changed and one plausible reason it could matter. Do not invent numbers, do not give "
-                + "financial advice, and do not speculate beyond what the data supports. If a field is "
-                + "missing, simply omit it.\n\nMarket data:\n"
+        return "You are a financial analyst. Using ONLY the market data below, assess this stock's "
+                + "latest move and call the emit_insight tool with: a signal (BULLISH, BEARISH, or "
+                + "NEUTRAL), a confidence between 0 and 1, a concise 1 to 2 sentence rationale, and the "
+                + "key drivers behind your call. Do not invent numbers, do not give financial advice, and "
+                + "do not speculate beyond what the data supports.\n\nMarket data:\n"
                 + facts;
     }
 

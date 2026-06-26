@@ -22,6 +22,8 @@ public class InsightRequest {
     private String correlationId;
     private String dataSource;
     private boolean stored;
+    private boolean anomaly;
+    private String anomalyReason;
 
     public InsightRequest() {}
 
@@ -119,5 +121,21 @@ public class InsightRequest {
 
     public void setStored(boolean stored) {
         this.stored = stored;
+    }
+
+    public boolean isAnomaly() {
+        return anomaly;
+    }
+
+    public void setAnomaly(boolean anomaly) {
+        this.anomaly = anomaly;
+    }
+
+    public String getAnomalyReason() {
+        return anomalyReason;
+    }
+
+    public void setAnomalyReason(String anomalyReason) {
+        this.anomalyReason = anomalyReason;
     }
 }
