@@ -117,6 +117,11 @@ public class IngestionStack extends Stack {
         Map<String, String> fetchEnv = new HashMap<>(commonEnvVars);
         fetchEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "fetchMarketData");
         fetchEnv.put("MARKET_DATA_API_SECRET", "financial-platform/market-data-api-key");
+        // Anomaly-gate tunables (spec section 6), set to the AnomalyDetectionService code defaults so
+        // they are operable without a redeploy. ANOMALY_MIN_SAMPLES gates the z-score until the
+        // baseline has enough history; ANOMALY_Z_THRESHOLD is the standard-deviation trip point.
+        fetchEnv.put("ANOMALY_Z_THRESHOLD", "3.0");
+        fetchEnv.put("ANOMALY_MIN_SAMPLES", "5");
 
         Function fetchMarketDataFn = Function.Builder.create(this, "FetchMarketDataFn")
                 .functionName("financial-fetch-market-data-" + env)
@@ -160,6 +165,11 @@ public class IngestionStack extends Stack {
         insightEnv.put("COST_DAILY_CAP_USD", "5.0");
         insightEnv.put("BEDROCK_INPUT_PRICE_PER_1K", "0.003");
         insightEnv.put("BEDROCK_OUTPUT_PRICE_PER_1K", "0.015");
+        // Rule-based fallback tunables (spec section 9), set to the RuleBasedInsightGenerator code
+        // defaults so the static-threshold signal and its (deliberately lower) confidence are
+        // operable without a redeploy.
+        insightEnv.put("RULE_BULLISH_THRESHOLD_PERCENT", "1.0");
+        insightEnv.put("RULE_FALLBACK_CONFIDENCE", "0.4");
 
         Function generateInsightFn = Function.Builder.create(this, "GenerateInsightFn")
                 .functionName("financial-generate-insight-" + env)
