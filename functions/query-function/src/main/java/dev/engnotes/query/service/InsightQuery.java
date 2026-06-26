@@ -62,11 +62,33 @@ public class InsightQuery {
 
         Map<String, AttributeValue> item = items.getFirst();
         return new QueryResponse(
-                ticker, attr(item, "generatedAt"), attr(item, "insightText"), attr(item, "modelId"), true);
+                ticker,
+                attr(item, "generatedAt"),
+                attr(item, "signal"),
+                number(item, "confidence"),
+                attr(item, "rationale"),
+                stringList(item, "drivers"),
+                attr(item, "source"),
+                attr(item, "insightText"),
+                attr(item, "modelId"),
+                true);
     }
 
     private static String attr(Map<String, AttributeValue> item, String key) {
         AttributeValue value = item.get(key);
         return value == null ? null : value.s();
+    }
+
+    private static double number(Map<String, AttributeValue> item, String key) {
+        AttributeValue value = item.get(key);
+        return value == null || value.n() == null ? 0.0 : Double.parseDouble(value.n());
+    }
+
+    private static List<String> stringList(Map<String, AttributeValue> item, String key) {
+        AttributeValue value = item.get(key);
+        if (value == null || !value.hasL()) {
+            return List.of();
+        }
+        return value.l().stream().map(AttributeValue::s).toList();
     }
 }
