@@ -20,8 +20,14 @@ class RoutePolicyTest {
     void premiumGetsReadAndWriteRules() {
         List<RoutePolicy.Rule> rules = RoutePolicy.allowedRules(Set.of("premium"));
         assertThat(rules)
-                .extracting(RoutePolicy.Rule::resourcePattern)
-                .containsExactlyInAnyOrder("insights/*", "market/*", "watchlist", "watchlist/*", "ingest/*");
+                .extracting(rule -> rule.httpMethod() + " " + rule.resourcePattern())
+                .containsExactlyInAnyOrder(
+                        "GET insights/*",
+                        "GET market/*",
+                        "GET watchlist",
+                        "POST watchlist/*",
+                        "DELETE watchlist/*",
+                        "POST ingest/*");
     }
 
     @Test
