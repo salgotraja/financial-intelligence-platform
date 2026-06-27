@@ -36,11 +36,13 @@ public class QueryStack extends Stack {
             final StackProps props,
             final String env,
             final NetworkStack network,
-            final DataStack data) {
+            final DataStack data,
+            final IngestionStack ingestion) {
         super(scope, id, props);
 
         this.addDependency(network);
         this.addDependency(data);
+        this.addDependency(ingestion);
 
         // IAM Role for query Lambda
         // Read-only: query Lambda never writes to DynamoDB.
@@ -89,6 +91,51 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        // Watchlist Lambda (write path). Separate read-write role so the read path stays read-only.
+        var watchlistRole = Role.Builder.create(this, "WatchlistLambdaRole")
+                .roleName("financial-watchlist-lambda-role-" + env)
+                .description("IAM role for financial watchlist Lambda")
+                .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
+                .managedPolicies(List.of(
+                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
+                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .build();
+        data.getPlatformTable().grantReadWriteData(watchlistRole);
+        data.getEncryptionKey().grantEncryptDecrypt(watchlistRole);
+
+        var watchlistFn = Function.Builder.create(this, "WatchlistFn")
+                .functionName("financial-watchlist-" + env)
+                .description("Watchlist CRUD and WATCHSET maintenance")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/watchlist-function/target/watchlist-function.jar"))
+                .role(watchlistRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
+                        "ENVIRONMENT",
+                        env,
+                        "DEFAULT_OWNER_SUB",
+                        "dev-user",
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "watchlist",
+                        "MAIN_CLASS",
+                        "dev.engnotes.watchlist.WatchlistHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "WatchlistFnLogs")
+                .logGroupName("/aws/lambda/" + watchlistFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
         // Provisioned concurrency on the published version.
         // Why: eliminate cold starts for user-facing requests.
         // Cost: pay for provisioned concurrency even when idle
@@ -127,7 +174,7 @@ public class QueryStack extends Stack {
                         .build())
                 .defaultCorsPreflightOptions(CorsOptions.builder()
                         .allowOrigins(List.of(env.equals("prod") ? "https://engnotes.dev" : "*"))
-                        .allowMethods(List.of("GET", "OPTIONS"))
+                        .allowMethods(List.of("GET", "POST", "DELETE", "OPTIONS"))
                         .build())
                 .build();
 
@@ -155,6 +202,106 @@ public class QueryStack extends Stack {
                                 .requestParameters(Map.of("method.request.path.ticker", true))
                                 .methodResponses(List.of(MethodResponse.builder()
                                         .statusCode("200")
+                                        .build()))
+                                .build());
+
+        // Watchlist routes (non-proxy): the integration template sets the operation per HTTP method
+        // and maps the path ticker onto WatchlistRequest. POST/DELETE carry {ticker}; GET lists.
+        var watchlistResource = api.getRoot().addResource("watchlist");
+        var watchlistTickerResource = watchlistResource.addResource("{ticker}");
+
+        watchlistTickerResource.addMethod(
+                "POST",
+                LambdaIntegration.Builder.create(watchlistFn)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"ADD\","
+                                        + "  \"ticker\": \"$input.params('ticker')\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        .integrationResponses(List.of(
+                                IntegrationResponse.builder().statusCode("200").build()))
+                        .build(),
+                MethodOptions.builder()
+                        .requestParameters(Map.of("method.request.path.ticker", true))
+                        .methodResponses(List.of(
+                                MethodResponse.builder().statusCode("200").build()))
+                        .build());
+
+        watchlistTickerResource.addMethod(
+                "DELETE",
+                LambdaIntegration.Builder.create(watchlistFn)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"REMOVE\","
+                                        + "  \"ticker\": \"$input.params('ticker')\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        .integrationResponses(List.of(
+                                IntegrationResponse.builder().statusCode("200").build()))
+                        .build(),
+                MethodOptions.builder()
+                        .requestParameters(Map.of("method.request.path.ticker", true))
+                        .methodResponses(List.of(
+                                MethodResponse.builder().statusCode("200").build()))
+                        .build());
+
+        watchlistResource.addMethod(
+                "GET",
+                LambdaIntegration.Builder.create(watchlistFn)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"LIST\"," + "  \"correlationId\": \"$context.requestId\" }"))
+                        .integrationResponses(List.of(
+                                IntegrationResponse.builder().statusCode("200").build()))
+                        .build(),
+                MethodOptions.builder()
+                        .methodResponses(List.of(
+                                MethodResponse.builder().statusCode("200").build()))
+                        .build());
+
+        // On-demand ingest (spec section 5): POST /ingest/{ticker} -> Step Functions StartExecution.
+        // A dedicated API GW role gets StartExecution; the request template passes the ticker as the
+        // execution input so the state machine's TriggerType Choice runs the single-ticker branch.
+        var ingestApiRole = Role.Builder.create(this, "IngestApiRole")
+                .roleName("financial-ingest-api-role-" + env)
+                .description("Lets API Gateway start the ingestion state machine on demand")
+                .assumedBy(new ServicePrincipal("apigateway.amazonaws.com"))
+                .build();
+        ingestion.getStateMachine().grantStartExecution(ingestApiRole);
+
+        var ingestIntegration = AwsIntegration.Builder.create()
+                .service("states")
+                .action("StartExecution")
+                .integrationHttpMethod("POST")
+                .options(IntegrationOptions.builder()
+                        .credentialsRole(ingestApiRole)
+                        .requestTemplates(
+                                Map.of(
+                                        "application/json",
+                                        "{\"stateMachineArn\":\""
+                                                + ingestion.getStateMachine().getStateMachineArn()
+                                                + "\",\"input\":\"{\\\"ticker\\\":\\\"$util.escapeJavaScript($input.params('ticker'))\\\",\\\"source\\\":\\\"on-demand\\\"}\"}"))
+                        .integrationResponses(List.of(IntegrationResponse.builder()
+                                .statusCode("202")
+                                .responseTemplates(Map.of(
+                                        "application/json",
+                                        "{\"status\":\"accepted\",\"ticker\":\"$input.params('ticker')\"}"))
+                                .build()))
+                        .build())
+                .build();
+
+        api.getRoot()
+                .addResource("ingest")
+                .addResource("{ticker}")
+                .addMethod(
+                        "POST",
+                        ingestIntegration,
+                        MethodOptions.builder()
+                                .requestParameters(Map.of("method.request.path.ticker", true))
+                                .methodResponses(List.of(MethodResponse.builder()
+                                        .statusCode("202")
                                         .build()))
                                 .build());
 
