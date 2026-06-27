@@ -131,14 +131,20 @@ public class QueryStack extends Stack {
                         .build())
                 .build();
 
+        // Non-proxy: the request template maps the path ticker + request id onto the function's
+        // QueryRequest record. With the default proxy integration the template is ignored and the
+        // raw event arrives, so the ticker resolves to null.
         var queryIntegration = LambdaIntegration.Builder.create(queryFn)
+                .proxy(false)
                 .requestTemplates(Map.of(
                         "application/json",
                         "{ \"ticker\": \"$input.params('ticker')\", "
                                 + "  \"correlationId\": \"$context.requestId\" }"))
+                .integrationResponses(
+                        List.of(IntegrationResponse.builder().statusCode("200").build()))
                 .build();
 
-        // /health
+        // /insights/{ticker}
         api.getRoot()
                 .addResource("insights")
                 .addResource("{ticker}")
@@ -147,6 +153,9 @@ public class QueryStack extends Stack {
                         queryIntegration,
                         MethodOptions.builder()
                                 .requestParameters(Map.of("method.request.path.ticker", true))
+                                .methodResponses(List.of(MethodResponse.builder()
+                                        .statusCode("200")
+                                        .build()))
                                 .build());
 
         // CloudWatch Alarms
