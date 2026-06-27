@@ -1,0 +1,42 @@
+<mxGraphModel dx="1100" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1120" pageHeight="500" math="0" shadow="0" adaptiveColors="auto">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="title" value="Stack Topology (CDK Java)" style="text;html=1;fontSize=17;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="30" y="10" width="500" height="28" as="geometry"/>
+    </mxCell>
+    <mxCell id="note" value="Foundation deploys first. The other four take Foundation as a constructor arg and call addDependency(foundation), so cdk deploy --all sequences correctly." style="text;html=1;fontSize=11;fontColor=#888888;align=left;" vertex="1" parent="1">
+      <mxGeometry x="30" y="38" width="900" height="18" as="geometry"/>
+    </mxCell>
+    <mxCell id="foundation" value="&lt;b&gt;FoundationStack&lt;/b&gt;&#160;&#160;(deploys first)&lt;br&gt;VPC&#160;&#160;-&#160;&#160;KMS CMK&#160;&#160;-&#160;&#160;single DynamoDB table&#160;&#160;-&#160;&#160;append-only audit table&#160;&#160;-&#160;&#160;S3 data lake&#160;&#160;-&#160;&#160;SNS&#160;&#160;-&#160;&#160;Cognito user pool" style="rounded=1;whiteSpace=wrap;html=1;align=center;verticalAlign=middle;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="290" y="70" width="540" height="80" as="geometry"/>
+    </mxCell>
+    <mxCell id="ingestion" value="&lt;b&gt;IngestionStack&lt;/b&gt;&lt;br&gt;- EventBridge schedule&lt;br&gt;- Ingestion state machine&lt;br&gt;&#160;&#160;(Distributed Map)&lt;br&gt;- Fetch/store Lambda&lt;br&gt;- DLQ" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="30" y="290" width="250" height="150" as="geometry"/>
+    </mxCell>
+    <mxCell id="insight" value="&lt;b&gt;InsightStack&lt;/b&gt;&lt;br&gt;- Anomaly Lambda&lt;br&gt;- Correlation Lambda&lt;br&gt;- Bedrock insight Lambda&lt;br&gt;- Insight store&lt;br&gt;- Cost circuit breaker" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#FFD6E7;strokeColor=#CC6699;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="300" y="290" width="250" height="150" as="geometry"/>
+    </mxCell>
+    <mxCell id="api" value="&lt;b&gt;ApiStack&lt;/b&gt;&lt;br&gt;- REST API GW (watchlist,&lt;br&gt;&#160;&#160;ingest, query, account/PII)&lt;br&gt;- WebSocket API GW&lt;br&gt;- Cognito group authorizers&lt;br&gt;- WAF" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="570" y="290" width="250" height="150" as="geometry"/>
+    </mxCell>
+    <mxCell id="security" value="&lt;b&gt;SecurityStack&lt;/b&gt;&lt;br&gt;- Cognito groups + MFA&lt;br&gt;&#160;&#160;+ password policy&lt;br&gt;- Consent Lambda triggers&lt;br&gt;&#160;&#160;(PreAuth / PostConfirmation /&lt;br&gt;&#160;&#160;PreTokenGeneration)&lt;br&gt;- Erasure state machine&lt;br&gt;- Account/PII endpoints&lt;br&gt;- Audit-table writers" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="840" y="290" width="250" height="150" as="geometry"/>
+    </mxCell>
+    <mxCell id="d1" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="ingestion" target="foundation">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="d2" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="insight" target="foundation">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="d2l" value="addDependency" style="edgeLabel;html=1;fontSize=10;fontColor=#888888;labelBackgroundColor=#FFFFFF;" connectable="0" vertex="1" parent="d2">
+      <mxGeometry x="-0.1" relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="d3" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="api" target="foundation">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="d4" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="security" target="foundation">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+  </root>
+</mxGraphModel>

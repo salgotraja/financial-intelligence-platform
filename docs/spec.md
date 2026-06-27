@@ -50,36 +50,11 @@ windows, then torn down to control cost.
 Two ingestion entry points with distinct purposes, and a CQRS-style split between the write
 path (generation) and the read path (serving).
 
-```
-                         AUTH: Cognito User Pools (JWT)
-                                     |
-  Next.js UI (SSR)  ── REST ──> API Gateway ──> Watchlist Lambda ──> DynamoDB (single table)
-        |                          |
-        |                          ├─ on-demand ingest (POST /ingest/{ticker})  ─┐
-        |                          └─ query (GET /insights, /market/{ticker})    │ read-only
-        |                                                                         │ cache reads
-        └────────── WebSocket (API Gateway) <── push insights ──┐                │
-                                                                 │                ▼
-  EventBridge (schedule) ─> Ingestion State Machine             │          DynamoDB + S3
-     (dev rate 5m / prod cron market hours)                     │          (hot)     (cold lake)
-            │                                                    │
-            ▼  Distributed Map over distinct watchlist tickers   │
-     Fetch+Store (per ticker) ─> DynamoDB hot returns + S3 lake  │
-            │                                                     │
-            ▼ (write path, decoupled)                            │
-     Anomaly scan (z-score) ── anomaly? ──> Correlation grouping │
-                                                  │              │
-                                                  ▼              │
-                          Bedrock Insight (cross-region profile) │
-                          structured JSON + rule-based fallback  │
-                                                  │              │
-                                          store insight ─────────┘
-                                          + WebSocket push to affected users
+![System diagram: auth, CQRS read/write split, write-path insight pipeline](./assets/financial_intelligence_platform_system_diagram.drawio.png)
 
-  Cross-cutting: CloudWatch (structured logs, dashboards), X-Ray (tracing),
-                 SNS (ops alerts), KMS (encryption), Secrets Manager, WAF on API GW,
-                 AWS Budgets + Bedrock spend circuit breaker.
-```
+> Source: [`financial_intelligence_platform_system_diagram.drawio`](./assets/financial_intelligence_platform_system_diagram.drawio)
+> is the canonical editable diagram (shared with [`architecture.md`](./architecture.md)). The PNG above and the
+> [SVG](./assets/financial_intelligence_platform_system_diagram.drawio.svg) are exports that embed the XML.
 
 Region: ap-south-1 (Mumbai) for all stateful and compute resources. Bedrock is reached from
 ap-south-1 via a cross-region inference profile (section 9).

@@ -11,43 +11,18 @@ ap-south-1 via a cross-region inference profile.
 > Source: [`financial_intelligence_platform_architecture.drawio`](./assets/financial_intelligence_platform_architecture.drawio)
 > is the canonical editable diagram (diffs cleanly in git). The PNG above and the
 > [SVG](./assets/financial_intelligence_platform_architecture.drawio.svg) are exports and also embed the XML.
-> Edit the `.drawio`, then re-export both via the draw.io CLI. The ASCII version below is kept in sync for plain-text diffs.
+> Edit the `.drawio`, then re-export both via the draw.io CLI.
 
 ## System Diagram
 
 Two ingestion entry points with distinct purposes, and a CQRS-style split between the write
 path (insight generation) and the read path (serving cached insights).
 
-```
-                         AUTH: Cognito User Pools (JWT)
-                                     |
-  Next.js UI (SSR)  ── REST ──> API Gateway ──> Watchlist Lambda ──> DynamoDB (single table)
-        |                          |
-        |                          ├─ on-demand ingest (POST /ingest/{ticker})  ─┐
-        |                          └─ query (GET /insights, /market/{ticker})    │ read-only
-        |                                                                         │ cache reads
-        └────────── WebSocket (API Gateway) <── push insights ──┐                │
-                                                                 │                ▼
-  EventBridge (schedule) ─> Ingestion State Machine             │          DynamoDB + S3
-     (dev rate 5m / prod cron market hours)                     │          (hot)     (cold lake)
-            │                                                    │
-            ▼  Distributed Map over distinct watchlist tickers   │
-     Fetch+Store (per ticker) ─> DynamoDB hot returns + S3 lake  │
-            │                                                     │
-            ▼ (write path, decoupled)                            │
-     Anomaly scan (z-score) ── anomaly? ──> Correlation grouping │
-                                                  │              │
-                                                  ▼              │
-                          Bedrock Insight (cross-region profile) │
-                          structured JSON + rule-based fallback  │
-                                                  │              │
-                                          store insight ─────────┘
-                                          + WebSocket push to affected users
+![System diagram: auth, CQRS read/write split, write-path insight pipeline](./assets/financial_intelligence_platform_system_diagram.drawio.png)
 
-  Cross-cutting: CloudWatch (structured logs, dashboards), X-Ray (tracing),
-                 SNS (ops alerts), KMS (encryption), Secrets Manager, WAF on API GW,
-                 AWS Budgets + Bedrock spend circuit breaker.
-```
+> Source: [`financial_intelligence_platform_system_diagram.drawio`](./assets/financial_intelligence_platform_system_diagram.drawio)
+> is the canonical editable diagram. The PNG above and the
+> [SVG](./assets/financial_intelligence_platform_system_diagram.drawio.svg) are exports that embed the XML.
 
 ## Request Flows
 
@@ -87,19 +62,11 @@ profile.
 Foundation deploys first. Ingestion, Insight, and API stacks take Foundation as a constructor
 argument and call `addDependency(foundation)`, so `cdk deploy --all` sequences correctly.
 
-```
-FoundationStack ── VPC, KMS CMK, single DynamoDB table, append-only audit table,
-      ▲              S3 data lake, SNS, Cognito user pool
-      ├── IngestionStack ── EventBridge schedule, ingestion state machine (Distributed Map),
-      │                     fetch/store Lambda, DLQ
-      ├── InsightStack   ── anomaly Lambda, correlation Lambda, Bedrock insight Lambda,
-      │                     insight store, cost circuit breaker
-      ├── ApiStack       ── REST API GW (watchlist, ingest, query, account/PII), WebSocket
-      │                     API GW, Cognito group authorizers, WAF
-      └── SecurityStack  ── Cognito groups + MFA + password policy, consent Lambda triggers
-                            (PreAuth / PostConfirmation / PreTokenGeneration), erasure state
-                            machine, account/PII endpoints, audit-table writers
-```
+![Stack topology: FoundationStack with Ingestion, Insight, Api and Security stacks depending on it](./assets/financial_intelligence_platform_stack_topology.drawio.png)
+
+> Source: [`financial_intelligence_platform_stack_topology.drawio`](./assets/financial_intelligence_platform_stack_topology.drawio)
+> is the canonical editable diagram. The PNG above and the
+> [SVG](./assets/financial_intelligence_platform_stack_topology.drawio.svg) are exports that embed the XML.
 
 ## Data Governance (DPDP) Flow
 
