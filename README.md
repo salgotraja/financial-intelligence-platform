@@ -93,5 +93,4 @@ cdk deploy --all --context env=dev
 ## Documentation
 - [`docs/spec.md`](docs/spec.md): authoritative specification
 - [`docs/architecture.md`](docs/architecture.md): diagrams and request flows
-- [`docs/security.md`](docs/security.md): DPDP data governance
-- [`docs/requirement.md`](docs/requirement.md): original roadmap (superseded)
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): how to build, test, and contribute
