@@ -2,6 +2,7 @@ package dev.engnotes.watchlist.service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -73,7 +74,7 @@ public class WatchlistStoreService {
                 .build();
         return dynamoDb.query(request).items().stream()
                 .map(item -> item.get("ticker"))
-                .filter(value -> value != null)
+                .filter(Objects::nonNull)
                 .map(AttributeValue::s)
                 .toList();
     }
