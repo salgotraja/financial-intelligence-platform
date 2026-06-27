@@ -6,7 +6,6 @@ import com.amazonaws.services.lambda.runtime.events.IamPolicyResponse.Statement;
 import dev.engnotes.authorizer.jwt.JwtVerifier;
 import dev.engnotes.authorizer.jwt.Principal;
 import dev.engnotes.authorizer.policy.RoutePolicy;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -42,7 +41,7 @@ public class AuthorizerHandler {
             try {
                 Principal principal = verifier.verify(stripBearer(event.getAuthorizationToken()));
                 List<RoutePolicy.Rule> allowed = RoutePolicy.allowedRules(principal.groups());
-                if (allowed.isEmpty() || !requestedRouteAllowed(methodArn, allowed)) {
+                if (allowed.isEmpty()) {
                     log.info("Deny (no permitted routes). sub={}", principal.sub());
                     return policy(principal.sub(), deny(methodArn), principal.sub());
                 }
@@ -56,21 +55,6 @@ public class AuthorizerHandler {
                 return policy("unknown", deny(methodArn), "unknown");
             }
         };
-    }
-
-    /**
-     * Returns true if the specific route embedded in the method-ARN is covered by at least one
-     * allowed rule. The ARN path after {apiId}/{stage} is {HTTP_METHOD}/{resource/path...}, so
-     * pathParts[2] is the verb and pathParts[3..] is the resource path.
-     */
-    private static boolean requestedRouteAllowed(String methodArn, List<RoutePolicy.Rule> allowed) {
-        String[] colon = methodArn.split(":", 6);
-        String[] pathParts = colon[5].split("/");
-        String requestedMethod = pathParts[2];
-        String requestedPath = String.join("/", Arrays.copyOfRange(pathParts, 3, pathParts.length));
-        return allowed.stream()
-                .anyMatch(rule -> rule.httpMethod().equals(requestedMethod)
-                        && requestedPath.matches(rule.resourcePattern().replace("*", ".*")));
     }
 
     private static String stripBearer(String token) {

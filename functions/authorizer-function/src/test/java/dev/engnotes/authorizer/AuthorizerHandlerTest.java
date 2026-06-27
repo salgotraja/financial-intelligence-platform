@@ -40,6 +40,10 @@ class AuthorizerHandlerTest {
         return stmts[0];
     }
 
+    private static List<String> resourceList(Map<String, Object> statement) {
+        return Arrays.asList((String[]) statement.get("Resource"));
+    }
+
     @Test
     void premiumGetsAllowPolicyWithSubContext() {
         when(verifier.verify("some.jwt.token")).thenReturn(new Principal("user-abc", List.of("premium")));
@@ -54,12 +58,18 @@ class AuthorizerHandlerTest {
     }
 
     @Test
-    void readerGetsDenyForWatchlistRoute() {
+    void readerPolicyAllowsReadsButExcludesWatchlist() {
         when(verifier.verify("some.jwt.token")).thenReturn(new Principal("user-reader", List.of("readers")));
 
         IamPolicyResponse response = new AuthorizerHandler().authorize(verifier).apply(event());
 
-        assertThat(firstStatement(response).get("Effect")).isEqualTo("Deny");
+        // Cache-safe: policy is route-independent. Reader gets an Allow listing only read resources;
+        // API Gateway then denies the POST /watchlist methodArn because it is not in the resource list.
+        Map<String, Object> statement = firstStatement(response);
+        assertThat(statement.get("Effect")).isEqualTo("Allow");
+        List<String> resources = resourceList(statement);
+        assertThat(resources).anyMatch(r -> r.contains("/GET/insights/*"));
+        assertThat(resources).noneMatch(r -> r.contains("watchlist"));
     }
 
     @Test
