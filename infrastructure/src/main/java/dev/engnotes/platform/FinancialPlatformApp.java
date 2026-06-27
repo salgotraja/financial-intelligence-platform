@@ -44,8 +44,8 @@ public class FinancialPlatformApp {
         IngestionStack ingestion =
                 new IngestionStack(app, "FinancialPlatform-Ingestion-" + env, props, env, network, data);
 
-        // Query (API Gateway, query + watchlist Lambdas) - depends on network, data, and ingestion.
-        new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, network, data, ingestion);
+        // Query (API Gateway, query + watchlist + authorizer Lambdas) - depends on all halves.
+        new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, network, data, ingestion, security);
 
         app.synth();
     }
