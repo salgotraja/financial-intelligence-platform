@@ -60,7 +60,10 @@ public class AlphaVantageProvider implements MarketDataProvider {
 
     @Override
     public MarketDataResponse fetch(String ticker, String correlationId) {
-        String url = String.format(URL, URLEncoder.encode(ticker, StandardCharsets.UTF_8), apiKey());
+        String url = String.format(
+                URL,
+                URLEncoder.encode(ticker, StandardCharsets.UTF_8),
+                URLEncoder.encode(apiKey(), StandardCharsets.UTF_8));
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -126,15 +129,22 @@ public class AlphaVantageProvider implements MarketDataProvider {
         return key;
     }
 
-    /** Supports a raw secret string or a JSON secret carrying an {@code apiKey} field. */
+    /**
+     * Supports a raw secret string or a JSON secret carrying the key under {@code api-key} (the
+     * Secrets Manager schema this platform provisions) or {@code apiKey}.
+     */
     private String extractKey(String secret) {
         if (secret == null || secret.isBlank()) {
             throw new MarketDataException("Alpha Vantage API key secret is empty");
         }
         try {
             JsonNode node = objectMapper.readTree(secret);
-            if (node.isObject() && node.has("apiKey")) {
-                return node.get("apiKey").asText();
+            if (node.isObject()) {
+                for (String field : new String[] {"api-key", "apiKey"}) {
+                    if (node.hasNonNull(field)) {
+                        return node.get(field).asText().strip();
+                    }
+                }
             }
         } catch (Exception ignored) {
             // Not JSON; treat the secret as the raw key.

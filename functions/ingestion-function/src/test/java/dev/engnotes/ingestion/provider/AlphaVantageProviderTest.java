@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
@@ -99,6 +100,28 @@ class AlphaVantageProviderTest {
         MarketDataResponse data = provider.fetch("RELIANCE.NS", "corr-1");
 
         assertThat(data.price()).isEqualByComparingTo("2950.5");
+    }
+
+    @Test
+    void supportsJsonSecretWithKebabApiKeyField() throws Exception {
+        stubSecret("{\"api-key\":\"DEMOKEY\"}");
+        stubResponse(200, "application/json", QUOTE);
+
+        MarketDataResponse data = provider.fetch("RELIANCE.NS", "corr-1");
+
+        assertThat(data.price()).isEqualByComparingTo("2950.5");
+    }
+
+    @Test
+    void urlEncodesApiKeyInQuery() throws Exception {
+        stubSecret("a/b+c");
+        stubResponse(200, "application/json", QUOTE);
+        ArgumentCaptor<HttpRequest> captor = ArgumentCaptor.forClass(HttpRequest.class);
+
+        provider.fetch("RELIANCE.NS", "corr-1");
+
+        verify(httpClient).send(captor.capture(), any());
+        assertThat(captor.getValue().uri().toString()).contains("apikey=a%2Fb%2Bc");
     }
 
     @Test

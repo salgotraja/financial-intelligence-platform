@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.engnotes.ingestion.exception.MarketDataException;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -60,6 +62,17 @@ class YahooFinanceProviderTest {
         assertThat(data.high52Week()).isEqualByComparingTo("3100.0");
         assertThat(data.low52Week()).isEqualByComparingTo("2200.0");
         assertThat(data.correlationId()).isEqualTo("corr-1");
+    }
+
+    @Test
+    void urlEncodesCaretPrefixedIndexTickerInPath() throws Exception {
+        stubResponse(200, "application/json", QUOTE);
+        ArgumentCaptor<HttpRequest> captor = ArgumentCaptor.forClass(HttpRequest.class);
+
+        provider.fetch("^NSEI", "corr-1");
+
+        verify(httpClient).send(captor.capture(), any());
+        assertThat(captor.getValue().uri().toString()).contains("/chart/%5ENSEI?");
     }
 
     @Test

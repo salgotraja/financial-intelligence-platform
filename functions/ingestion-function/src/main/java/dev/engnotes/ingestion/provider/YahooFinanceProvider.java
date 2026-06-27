@@ -5,7 +5,9 @@ import dev.engnotes.ingestion.model.MarketDataResponse;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpRequest;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +49,7 @@ public class YahooFinanceProvider implements MarketDataProvider {
     @Override
     public MarketDataResponse fetch(String ticker, String correlationId) {
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(String.format(URL, ticker)))
+                .uri(URI.create(String.format(URL, URLEncoder.encode(ticker, StandardCharsets.UTF_8))))
                 .timeout(HTTP_TIMEOUT)
                 .header("Accept", "application/json")
                 .header("User-Agent", "financial-intelligence-platform/1.0")
