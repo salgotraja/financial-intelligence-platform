@@ -158,6 +158,24 @@ public class QueryStack extends Stack {
                                         .build()))
                                 .build());
 
+        // /health - Lambda-free health check (mock integration) for smoke tests and uptime monitors
+        api.getRoot()
+                .addResource("health")
+                .addMethod(
+                        "GET",
+                        MockIntegration.Builder.create()
+                                .requestTemplates(Map.of("application/json", "{\"statusCode\": 200}"))
+                                .integrationResponses(List.of(IntegrationResponse.builder()
+                                        .statusCode("200")
+                                        .responseTemplates(Map.of("application/json", "{\"status\":\"ok\"}"))
+                                        .build()))
+                                .build(),
+                        MethodOptions.builder()
+                                .methodResponses(List.of(MethodResponse.builder()
+                                        .statusCode("200")
+                                        .build()))
+                                .build());
+
         // CloudWatch Alarms
         // p99 > 500ms: user experience degraded
         var p99LatencyAlarm = Alarm.Builder.create(this, "p99LatencyAlarm")
