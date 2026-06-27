@@ -156,9 +156,19 @@ public class MarketDataStoreService {
                         .contentType("application/json")
                         .contentLength((long) payload.length)
                         // Tag for lifecycle management and cost attribution
-                        .tagging("ticker=" + data.ticker() + "&env=" + System.getenv("ENVIRONMENT"))
+                        .tagging("ticker=" + sanitizeTagValue(data.ticker()) + "&env="
+                                + sanitizeTagValue(System.getenv("ENVIRONMENT")))
                         .build(),
                 RequestBody.fromBytes(payload));
+    }
+
+    /**
+     * S3 object tag values reject characters like {@code ^} (e.g. the index ticker {@code ^NSEI}),
+     * returning a 400. Map anything outside a conservative, tag-legal and header-safe subset to
+     * {@code _}; the exact ticker is preserved in the object key and JSON body.
+     */
+    private static String sanitizeTagValue(String value) {
+        return value == null ? "" : value.replaceAll("[^A-Za-z0-9_.-]", "_");
     }
 
     private Map<String, Object> buildPayload(MarketDataResponse data, String timestamp, String correlationId) {
