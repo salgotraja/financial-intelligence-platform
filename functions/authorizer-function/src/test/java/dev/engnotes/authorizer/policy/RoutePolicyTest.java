@@ -18,7 +18,9 @@ class RoutePolicyTest {
                         "GET market/*",
                         "GET user/consent",
                         "POST user/consent",
-                        "DELETE user/consent");
+                        "DELETE user/consent",
+                        "GET user/export",
+                        "DELETE user/account");
     }
 
     @Test
@@ -35,18 +37,30 @@ class RoutePolicyTest {
                         "POST ingest/*",
                         "GET user/consent",
                         "POST user/consent",
-                        "DELETE user/consent");
+                        "DELETE user/consent",
+                        "GET user/export",
+                        "DELETE user/account");
     }
 
     @Test
     void adminsGetEverything() {
         List<RoutePolicy.Rule> rules = RoutePolicy.allowedRules(Set.of("admins"));
-        assertThat(rules).hasSize(9);
+        assertThat(rules).hasSize(11);
     }
 
     @Test
     void unknownOrEmptyGroupsGetNothing() {
         assertThat(RoutePolicy.allowedRules(Set.of())).isEmpty();
         assertThat(RoutePolicy.allowedRules(Set.of("guests"))).isEmpty();
+    }
+
+    @Test
+    void dsrRoutesAllowedForEveryGroup() {
+        for (String group : java.util.List.of("readers", "premium", "admins")) {
+            java.util.List<RoutePolicy.Rule> rules = RoutePolicy.allowedRules(java.util.Set.of(group));
+            assertThat(rules)
+                    .extracting(r -> r.httpMethod() + " " + r.resourcePattern())
+                    .contains("GET user/export", "DELETE user/account");
+        }
     }
 }
