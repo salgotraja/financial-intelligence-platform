@@ -21,6 +21,7 @@
         <module>functions/ingestion-function</module>
         <module>functions/insight-function</module>
         <module>functions/query-function</module>
+        <module>functions/watchlist-function</module>
     </modules>
 
     <properties>

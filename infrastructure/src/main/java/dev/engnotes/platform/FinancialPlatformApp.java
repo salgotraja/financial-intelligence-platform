@@ -37,10 +37,11 @@ public class FinancialPlatformApp {
         NetworkStack network = new NetworkStack(app, "FinancialPlatform-Network-" + env, props, env);
 
         // Ingestion (EventBridge, Step Functions, Lambda) - depends on both halves.
-        new IngestionStack(app, "FinancialPlatform-Ingestion-" + env, props, env, network, data);
+        IngestionStack ingestion =
+                new IngestionStack(app, "FinancialPlatform-Ingestion-" + env, props, env, network, data);
 
-        // Query (API Gateway, query Lambda) - depends on both halves.
-        new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, network, data);
+        // Query (API Gateway, query + watchlist Lambdas) - depends on network, data, and ingestion.
+        new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, network, data, ingestion);
 
         app.synth();
     }

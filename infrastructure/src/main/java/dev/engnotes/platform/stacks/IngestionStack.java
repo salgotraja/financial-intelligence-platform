@@ -41,6 +41,8 @@ import software.constructs.Construct;
  */
 public class IngestionStack extends Stack {
 
+    private final StateMachine stateMachine;
+
     public IngestionStack(
             final Construct scope,
             final String id,
@@ -334,8 +336,27 @@ public class IngestionStack extends Stack {
                         .build());
         fanOut.addCatch(sendToDlq, catchToDlq);
 
-        // Wire the chain: read WATCHSET -> fan out per ticker -> succeed.
-        Chain pipelineChain = Chain.start(readWatchset).next(fanOut).next(executionSucceeded);
+        // On-demand (spec section 5): POST /ingest/{ticker} starts this machine with a ticker in the
+        // input. A top-level Choice skips ReadWatchset and wraps the single ticker as the Map's one
+        // item, so on-demand runs the identical Fetch -> AnomalyGate -> Insight chain as scheduled.
+        Pass singleTickerItem = Pass.Builder.create(this, "SingleTickerItem")
+                .comment("On-demand: wrap the requested ticker as a one-item list for the Map")
+                .parameters(Map.of("Items", List.of(Map.of("ticker", Map.of("S.$", "$.ticker")))))
+                .resultPath("$.watchset")
+                .build();
+
+        Choice triggerType = Choice.Builder.create(this, "TriggerType")
+                .comment("On-demand (ticker present) skips ReadWatchset; scheduled reads the WATCHSET union")
+                .build();
+        triggerType.when(Condition.isPresent("$.ticker"), singleTickerItem);
+        triggerType.otherwise(readWatchset);
+
+        // Both branches converge on the existing Distributed Map, then succeed.
+        singleTickerItem.next(fanOut);
+        readWatchset.next(fanOut);
+        fanOut.next(executionSucceeded);
+
+        Chain pipelineChain = Chain.start(triggerType);
 
         StateMachine stateMachine = StateMachine.Builder.create(this, "IngestionStateMachine")
                 .stateMachineName("financial-ingestion-pipeline-" + env)
@@ -355,6 +376,7 @@ public class IngestionStack extends Stack {
                         .includeExecutionData(true)
                         .build())
                 .build();
+        this.stateMachine = stateMachine;
 
         // ReadWatchset queries the KMS-encrypted table directly, so the state-machine role needs
         // decrypt on the platform table's key in addition to the dynamodb:Query that CallAwsService
@@ -418,5 +440,10 @@ public class IngestionStack extends Stack {
                         .exportName("platform-state-machine-arn-" + env)
                         .value(stateMachine.getStateMachineArn())
                         .build());
+    }
+
+    /** The ingestion pipeline state machine, exposed so the API stack can grant StartExecution. */
+    public StateMachine getStateMachine() {
+        return stateMachine;
     }
 }
