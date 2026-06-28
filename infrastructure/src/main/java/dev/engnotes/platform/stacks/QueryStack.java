@@ -258,6 +258,24 @@ public class QueryStack extends Stack {
                                         .build()))
                                 .build());
 
+        // /health - Lambda-free health check (mock integration, public) for smoke tests and uptime monitors
+        api.getRoot()
+                .addResource("health")
+                .addMethod(
+                        "GET",
+                        MockIntegration.Builder.create()
+                                .requestTemplates(Map.of("application/json", "{\"statusCode\": 200}"))
+                                .integrationResponses(List.of(IntegrationResponse.builder()
+                                        .statusCode("200")
+                                        .responseTemplates(Map.of("application/json", "{\"status\":\"ok\"}"))
+                                        .build()))
+                                .build(),
+                        MethodOptions.builder()
+                                .methodResponses(List.of(MethodResponse.builder()
+                                        .statusCode("200")
+                                        .build()))
+                                .build());
+
         // Watchlist routes (non-proxy): the integration template sets the operation per HTTP method
         // and maps the path ticker onto WatchlistRequest. POST/DELETE carry {ticker}; GET lists.
         var watchlistResource = api.getRoot().addResource("watchlist");

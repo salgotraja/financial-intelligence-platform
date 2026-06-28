@@ -57,6 +57,20 @@ profile.
 > is the canonical editable diagram (official AWS icons). The PNG above and the
 > [SVG](./assets/financial_intelligence_platform_deployment.drawio.svg) are exports that embed the XML.
 
+### VPC Endpoint Strategy
+
+Egress is split by destination to keep the private path off the metered NAT path. Lambdas reach
+AWS services (DynamoDB, S3, Secrets Manager, Bedrock Runtime, CloudWatch Logs, X-Ray) over VPC
+endpoints, which stay on the private AWS network and incur no NAT data-processing charge. Only
+the outbound calls to external market-data providers (Yahoo Finance, NSE/BSE) leave through the
+NAT Gateway over the public internet.
+
+![VPC endpoint strategy: private AWS path via VPC endpoints vs metered NAT egress for external APIs](./assets/vpc_endpoint_strategy_financial_platform.png)
+
+> Source: [`vpc_endpoint_strategy_financial_platform.drawio`](./assets/vpc_endpoint_strategy_financial_platform.drawio)
+> is the canonical editable diagram. The PNG above and the
+> [SVG](./assets/vpc_endpoint_strategy_financial_platform.svg) are exports that embed the XML.
+
 ## Stack Topology (CDK Java)
 
 Foundation deploys first. Ingestion, Insight, and API stacks take Foundation as a constructor
