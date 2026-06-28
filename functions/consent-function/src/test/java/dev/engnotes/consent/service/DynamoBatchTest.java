@@ -1,8 +1,8 @@
 package dev.engnotes.consent.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -64,11 +64,12 @@ class DynamoBatchTest {
 
         assertThatThrownBy(() -> DynamoBatch.batchWriteAllWithRetry(dynamoDb, TABLE, List.of(w)))
                 .isInstanceOf(IllegalStateException.class);
+        verify(dynamoDb, times(5)).batchWriteItem(any(BatchWriteItemRequest.class));
     }
 
     @Test
     void noOpWhenNoWrites() {
         DynamoBatch.batchWriteAllWithRetry(dynamoDb, TABLE, List.of());
-        assertThat(true).isTrue();
+        verify(dynamoDb, never()).batchWriteItem(any(BatchWriteItemRequest.class));
     }
 }
