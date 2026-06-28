@@ -57,7 +57,7 @@ public class UserDataExportService {
 
     private List<String> readWatchlist(String subjectSub) {
         return dynamoDb
-                .query(QueryRequest.builder()
+                .queryPaginator(QueryRequest.builder()
                         .tableName(platformTable)
                         .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
                         .expressionAttributeValues(Map.of(":pk", s("USER#" + subjectSub), ":sk", s("WATCH#")))
@@ -72,7 +72,7 @@ public class UserDataExportService {
 
     private List<AuditEventView> readAudit(String subjectSub) {
         return dynamoDb
-                .query(QueryRequest.builder()
+                .queryPaginator(QueryRequest.builder()
                         .tableName(auditTable)
                         .keyConditionExpression("PK = :pk")
                         .expressionAttributeValues(Map.of(":pk", s("USER#" + subjectSub)))

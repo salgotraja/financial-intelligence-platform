@@ -2,7 +2,6 @@ package dev.engnotes.watchlist.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,10 +15,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
+import software.amazon.awssdk.services.dynamodb.paginators.QueryIterable;
 
 @ExtendWith(MockitoExtension.class)
 class WatchlistStoreServiceTest {
@@ -36,48 +36,51 @@ class WatchlistStoreServiceTest {
         store = new WatchlistStoreService(dynamoDb, TABLE);
     }
 
-    @Test
-    void addWritesUserItemAndWatchsetUnionEntryUnderGivenSub() {
-        store.add("user-123", "RELIANCE.NS");
+    private void stubPaginator() {
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
+    }
 
-        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
-        verify(dynamoDb, times(2)).putItem(captor.capture());
-
-        List<PutItemRequest> puts = captor.getAllValues();
-        assertThat(puts.get(0).item().get("PK").s()).isEqualTo("USER#user-123");
-        assertThat(puts.get(0).item().get("SK").s()).isEqualTo("WATCH#RELIANCE.NS");
-        assertThat(puts.get(0).item().get("ticker").s()).isEqualTo("RELIANCE.NS");
-        assertThat(puts.get(1).item().get("PK").s()).isEqualTo("WATCHSET");
-        assertThat(puts.get(1).item().get("SK").s()).isEqualTo("TICKER#RELIANCE.NS");
+    private static AttributeValue s(String v) {
+        return AttributeValue.builder().s(v).build();
     }
 
     @Test
-    void removeDeletesUserItemAndWatchsetUnionEntryUnderGivenSub() {
+    void addWritesBothItemsInOneTransaction() {
+        store.add("user-123", "RELIANCE.NS");
+
+        ArgumentCaptor<TransactWriteItemsRequest> captor = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        verify(dynamoDb).transactWriteItems(captor.capture());
+        List<TransactWriteItem> items = captor.getValue().transactItems();
+        assertThat(items).hasSize(2);
+        assertThat(items.get(0).put().item().get("PK").s()).isEqualTo("USER#user-123");
+        assertThat(items.get(0).put().item().get("SK").s()).isEqualTo("WATCH#RELIANCE.NS");
+        assertThat(items.get(0).put().item().get("ticker").s()).isEqualTo("RELIANCE.NS");
+        assertThat(items.get(1).put().item().get("PK").s()).isEqualTo("WATCHSET");
+        assertThat(items.get(1).put().item().get("SK").s()).isEqualTo("TICKER#RELIANCE.NS");
+        assertThat(items.get(1).put().item().get("ticker").s()).isEqualTo("RELIANCE.NS");
+    }
+
+    @Test
+    void removeDeletesBothItemsInOneTransaction() {
         store.remove("user-123", "TCS.NS");
 
-        ArgumentCaptor<DeleteItemRequest> captor = ArgumentCaptor.forClass(DeleteItemRequest.class);
-        verify(dynamoDb, times(2)).deleteItem(captor.capture());
-
-        List<DeleteItemRequest> deletes = captor.getAllValues();
-        assertThat(deletes.get(0).key().get("PK").s()).isEqualTo("USER#user-123");
-        assertThat(deletes.get(0).key().get("SK").s()).isEqualTo("WATCH#TCS.NS");
-        assertThat(deletes.get(1).key().get("PK").s()).isEqualTo("WATCHSET");
-        assertThat(deletes.get(1).key().get("SK").s()).isEqualTo("TICKER#TCS.NS");
+        ArgumentCaptor<TransactWriteItemsRequest> captor = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        verify(dynamoDb).transactWriteItems(captor.capture());
+        List<TransactWriteItem> items = captor.getValue().transactItems();
+        assertThat(items).hasSize(2);
+        assertThat(items.get(0).delete().key().get("PK").s()).isEqualTo("USER#user-123");
+        assertThat(items.get(0).delete().key().get("SK").s()).isEqualTo("WATCH#TCS.NS");
+        assertThat(items.get(1).delete().key().get("PK").s()).isEqualTo("WATCHSET");
+        assertThat(items.get(1).delete().key().get("SK").s()).isEqualTo("TICKER#TCS.NS");
     }
 
     @Test
     void listQueriesGivenUserPartitionAndReturnsTickers() {
+        stubPaginator();
         when(dynamoDb.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder()
-                        .items(List.of(
-                                Map.of(
-                                        "ticker",
-                                        AttributeValue.builder()
-                                                .s("RELIANCE.NS")
-                                                .build()),
-                                Map.of(
-                                        "ticker",
-                                        AttributeValue.builder().s("INFY.NS").build())))
+                        .items(List.of(Map.of("ticker", s("RELIANCE.NS")), Map.of("ticker", s("INFY.NS"))))
                         .build());
 
         List<String> tickers = store.list("user-123");
@@ -90,20 +93,26 @@ class WatchlistStoreServiceTest {
     }
 
     @Test
-    void listIgnoresItemsMissingTickerAttribute() {
+    void listPaginatesAcrossPages() {
+        stubPaginator();
         when(dynamoDb.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder()
-                        .items(List.of(
-                                Map.of(
-                                        "ticker",
-                                        AttributeValue.builder()
-                                                .s("RELIANCE.NS")
-                                                .build()),
-                                Map.of(
-                                        "SK",
-                                        AttributeValue.builder()
-                                                .s("WATCH#BROKEN")
-                                                .build())))
+                        .items(List.of(Map.of("ticker", s("RELIANCE.NS"))))
+                        .lastEvaluatedKey(Map.of("PK", s("USER#user-123"), "SK", s("WATCH#RELIANCE.NS")))
+                        .build())
+                .thenReturn(QueryResponse.builder()
+                        .items(List.of(Map.of("ticker", s("INFY.NS"))))
+                        .build());
+
+        assertThat(store.list("user-123")).containsExactly("RELIANCE.NS", "INFY.NS");
+    }
+
+    @Test
+    void listIgnoresItemsMissingTickerAttribute() {
+        stubPaginator();
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder()
+                        .items(List.of(Map.of("ticker", s("RELIANCE.NS")), Map.of("SK", s("WATCH#BROKEN"))))
                         .build());
 
         assertThat(store.list("user-123")).containsExactly("RELIANCE.NS");
