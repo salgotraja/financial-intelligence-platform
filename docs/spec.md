@@ -271,6 +271,24 @@ The platform handles personal data of Indian users, so it treats the Digital Per
 Protection Act 2023 (DPDP) as a first-class design constraint. Cognito is the identity provider
 and the anchor for consent, purpose limitation, and data-subject rights.
 
+> **Implementation status (sub-projects A-C, built 2026-06).** This section is the target design.
+> What actually shipped differs deliberately, simpler where the slice does not need the full
+> machinery (the divergence is tracked in [`STATUS.md`](./STATUS.md)):
+> - **Endpoints:** consent is `GET/POST/DELETE /user/consent`; right-to-access is `GET /user/export`;
+>   right-to-erasure is `DELETE /user/account` (not the single `/user/my-data` resource described
+>   below). Export and erasure also support an admin-on-behalf path (`?subjectSub=`, admins only).
+> - **Erasure** is a synchronous Lambda (`dsr-function`), not a Step Functions workflow: it deletes
+>   the subject's `USER#{sub}` platform-table items (CONSENT + watchlist + WATCHSET mirrors) and the
+>   Cognito user, retains the audit trail, and logs `ACCOUNT_ERASED` before the deletes. No
+>   `deletion_pending` flag, no S3 tagged-object pass (the lake holds no personal data), and no SES
+>   confirmation email yet.
+> - **Consent** gates the per-user watchlist (fail-closed), not login: there is no `preAuthentication`
+>   gate and no `consent_version` re-consent flow yet. The authoritative consent record lives in
+>   DynamoDB (`USER#{sub}/CONSENT`), read fresh per request, not in the JWT claim.
+> - **Audit table** keys events `PK=USER#{sub}`, `SK=EVENT#{iso8601}#{seq}` carrying the raw `sub`
+>   (not the hashed `AUDIT#{type}#{date}` scheme below); it is append-only, enforced at IAM
+>   (`PutItem` only), `RETAIN` in every env, PITR on, no TTL.
+
 ### Identity and tenancy
 - Cognito User Pools. Per-user watchlists keyed by `sub`. API Gateway uses a Cognito JWT
   authorizer for REST and WebSocket connect.
