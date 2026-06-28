@@ -2,8 +2,7 @@ package dev.engnotes.dsr.service;
 
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.concurrent.ThreadLocalRandom;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse;
@@ -17,7 +16,6 @@ import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
  */
 final class DynamoBatch {
 
-    private static final Logger log = LoggerFactory.getLogger(DynamoBatch.class);
     private static final int CHUNK = 25;
     private static final int MAX_ATTEMPTS = 5;
     private static final long BASE_BACKOFF_MILLIS = 25L;
@@ -42,7 +40,8 @@ final class DynamoBatch {
             }
             requestItems = unprocessed;
             if (attempt < MAX_ATTEMPTS - 1) {
-                sleep(BASE_BACKOFF_MILLIS << attempt);
+                long backoff = BASE_BACKOFF_MILLIS << attempt;
+                sleep(backoff + ThreadLocalRandom.current().nextLong(BASE_BACKOFF_MILLIS));
             }
         }
         throw new IllegalStateException("BatchWriteItem left unprocessed items after " + MAX_ATTEMPTS + " attempts");

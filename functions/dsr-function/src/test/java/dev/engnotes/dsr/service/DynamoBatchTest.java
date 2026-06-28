@@ -1,5 +1,6 @@
 package dev.engnotes.dsr.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -11,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -71,5 +73,33 @@ class DynamoBatchTest {
     void noOpWhenNoWrites() {
         DynamoBatch.batchWriteAllWithRetry(dynamoDb, TABLE, List.of());
         verify(dynamoDb, never()).batchWriteItem(any(BatchWriteItemRequest.class));
+    }
+
+    @Test
+    void resubmitsOnlyTheUnprocessedSubset() {
+        WriteRequest a = delete("WATCH#A");
+        WriteRequest b = delete("WATCH#B");
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
+                .thenReturn(BatchWriteItemResponse.builder()
+                        .unprocessedItems(Map.of(TABLE, List.of(b)))
+                        .build())
+                .thenReturn(BatchWriteItemResponse.builder().build());
+
+        DynamoBatch.batchWriteAllWithRetry(dynamoDb, TABLE, List.of(a, b));
+
+        ArgumentCaptor<BatchWriteItemRequest> captor = ArgumentCaptor.forClass(BatchWriteItemRequest.class);
+        verify(dynamoDb, times(2)).batchWriteItem(captor.capture());
+        List<BatchWriteItemRequest> calls = captor.getAllValues();
+        assertThat(calls.get(0).requestItems().get(TABLE)).hasSize(2);
+        assertThat(calls.get(1).requestItems().get(TABLE)).hasSize(1);
+        assertThat(calls.get(1)
+                        .requestItems()
+                        .get(TABLE)
+                        .get(0)
+                        .deleteRequest()
+                        .key()
+                        .get("SK")
+                        .s())
+                .isEqualTo("WATCH#B");
     }
 }

@@ -58,6 +58,7 @@ class WatchlistStoreServiceTest {
         assertThat(items.get(0).put().item().get("ticker").s()).isEqualTo("RELIANCE.NS");
         assertThat(items.get(1).put().item().get("PK").s()).isEqualTo("WATCHSET");
         assertThat(items.get(1).put().item().get("SK").s()).isEqualTo("TICKER#RELIANCE.NS");
+        assertThat(items.get(1).put().item().get("ticker").s()).isEqualTo("RELIANCE.NS");
     }
 
     @Test
