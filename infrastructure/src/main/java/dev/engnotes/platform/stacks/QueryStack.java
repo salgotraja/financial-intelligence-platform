@@ -395,8 +395,8 @@ public class QueryStack extends Stack {
 
         // Consent routes (non-proxy, spec sub-project B): POST -> GRANT, GET -> VIEW, DELETE ->
         // WITHDRAW. The caller sub is taken from the authorizer context, never the body. POST reads
-        // {version?, purpose} from the body ($!{...} renders empty for an absent version, which the
-        // handler defaults to CONSENT_VERSION).
+        // {version?, purpose} from the body; both fields are escaped via $util.escapeJavaScript to
+        // prevent injection. An absent/blank version is defaulted to CONSENT_VERSION in the handler.
         var userResource = api.getRoot().addResource("user");
         var consentResource = userResource.addResource("consent");
 
@@ -406,10 +406,9 @@ public class QueryStack extends Stack {
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
-                                "#set($v = $input.path('$.version'))"
-                                        + "{ \"operation\": \"GRANT\","
+                                "{ \"operation\": \"GRANT\","
                                         + "  \"sub\": \"$context.authorizer.sub\","
-                                        + "  \"version\": \"$!{v}\","
+                                        + "  \"version\": \"$util.escapeJavaScript($input.path('$.version'))\","
                                         + "  \"purpose\": \"$util.escapeJavaScript($input.path('$.purpose'))\","
                                         + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
