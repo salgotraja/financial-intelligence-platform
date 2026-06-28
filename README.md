@@ -54,21 +54,28 @@ financial-intelligence-platform/
 │   └── src/main/java/dev/engnotes/platform/
 │       ├── FinancialPlatformApp.java
 │       └── stacks/
-│           ├── FoundationStack.java      # VPC, KMS, DynamoDB, S3, SNS
+│           ├── DataStack.java            # KMS, DynamoDB table + audit table, S3, SNS (persistent)
+│           ├── NetworkStack.java         # VPC, NAT, VPC endpoints (ephemeral)
+│           ├── SecurityStack.java        # Cognito pool, groups, MFA, postConfirmation trigger
 │           ├── IngestionStack.java       # EventBridge, Step Functions, Lambdas, DLQ
-│           └── QueryStack.java           # API Gateway, query Lambda, alarms
+│           └── QueryStack.java           # API Gateway, query/watchlist/consent/dsr Lambdas, authorizer, alarms
 ├── functions/
 │   ├── ingestion-function/              # dev.engnotes.ingestion: fetch + store
 │   ├── insight-function/               # dev.engnotes.insight: Bedrock inference
-│   └── query-function/                 # dev.engnotes.query: API serving
+│   ├── query-function/                 # dev.engnotes.query: API serving
+│   ├── watchlist-function/             # dev.engnotes.watchlist: watchlist CRUD (consent-gated)
+│   ├── authorizer-function/            # dev.engnotes.authorizer: Cognito JWT + group authz
+│   ├── consent-function/               # dev.engnotes.consent: DPDP consent + audit
+│   └── dsr-function/                   # dev.engnotes.dsr: DPDP data-subject rights (export + erasure)
 ├── docs/                               # spec, architecture, diagrams (authoritative)
 ├── .github/workflows/deploy.yml        # CI/CD: build, dev, prod (manual gate)
 └── pom.xml                             # Maven multi-module reactor
 ```
 
-Per `docs/spec.md`, a Security/compliance stack (Cognito groups, consent triggers, erasure
-workflow, audit table) and an insight/API stack split are planned. The current stacks are
-Foundation, Ingestion, and Query.
+The DPDP Security/compliance work from `docs/spec.md` is built: Cognito groups + MFA, consent
+triggers and gating, an append-only audit table, and right-to-access / right-to-erasure endpoints
+(see `docs/STATUS.md` for what is built versus the target). The current stacks are Data, Network,
+Security, Ingestion, and Query.
 
 ## Getting Started
 

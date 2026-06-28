@@ -52,6 +52,7 @@ class AuthorizerHandlerTest {
 
         assertThat(response.getPrincipalId()).isEqualTo("user-abc");
         assertThat(response.getContext()).containsEntry("sub", "user-abc");
+        assertThat(response.getContext()).containsEntry("groups", "premium");
         Map<String, Object> statement = firstStatement(response);
         assertThat(statement.get("Effect")).isEqualTo("Allow");
         assertThat(Arrays.asList((String[]) statement.get("Resource"))).anyMatch(r -> r.contains("/POST/watchlist/*"));

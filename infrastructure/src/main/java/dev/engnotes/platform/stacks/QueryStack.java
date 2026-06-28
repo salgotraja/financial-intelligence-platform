@@ -189,6 +189,59 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        // DSR Lambda (DPDP, spec sub-project C): right-to-access export + right-to-erasure. Read-write
+        // on the platform table (export reads; erasure deletes consent + watchlist + WATCHSET mirrors),
+        // read + PutItem on the audit table (export reads the trail, both ops append an event), and
+        // Cognito ListUsers + AdminDeleteUser to delete the identity. High-privilege grants isolated to
+        // this role (kept off the consent role).
+        var dsrRole = Role.Builder.create(this, "DsrLambdaRole")
+                .roleName("financial-dsr-lambda-role-" + env)
+                .description("IAM role for the DPDP data-subject-rights Lambda")
+                .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
+                .managedPolicies(List.of(
+                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
+                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .build();
+        data.getPlatformTable().grantReadWriteData(dsrRole);
+        data.getAuditTable().grant(dsrRole, "dynamodb:PutItem", "dynamodb:Query");
+        data.getEncryptionKey().grantEncryptDecrypt(dsrRole);
+        security.getUserPool().grant(dsrRole, "cognito-idp:AdminDeleteUser", "cognito-idp:ListUsers");
+
+        var dsrFn = Function.Builder.create(this, "DsrFn")
+                .functionName("financial-dsr-" + env)
+                .description("DPDP data-subject rights: GET /user/export, DELETE /user/account")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/dsr-function/target/dsr-function.jar"))
+                .role(dsrRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(30))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
+                        "AUDIT_TABLE",
+                        data.getAuditTable().getTableName(),
+                        "USER_POOL_ID",
+                        security.getUserPoolId(),
+                        "ENVIRONMENT",
+                        env,
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "dsr",
+                        "MAIN_CLASS",
+                        "dev.engnotes.dsr.DsrHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "DsrFnLogs")
+                .logGroupName("/aws/lambda/" + dsrFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
         // API authorizer Lambda (NOT in the VPC: it must reach the public Cognito JWKS endpoint).
         var authorizerRole = Role.Builder.create(this, "AuthorizerLambdaRole")
                 .roleName("financial-authorizer-lambda-role-" + env)
@@ -458,6 +511,57 @@ public class QueryStack extends Stack {
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
+                        .methodResponses(List.of(
+                                MethodResponse.builder().statusCode("200").build()))
+                        .build());
+
+        // DSR routes (non-proxy, spec sub-project C): GET /user/export, DELETE /user/account. The caller
+        // sub + comma-joined groups come from the authorizer context; the optional subjectSub query param
+        // (admin-on-behalf) is escaped via $util.escapeJavaScript. Server-trusted fields are placed last.
+        var exportResource = userResource.addResource("export");
+        exportResource.addMethod(
+                "GET",
+                LambdaIntegration.Builder.create(dsrFn)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"EXPORT\","
+                                        + "  \"subjectSub\": \"$util.escapeJavaScript($input.params('subjectSub'))\","
+                                        + "  \"sourceIp\": \"$context.identity.sourceIp\","
+                                        + "  \"correlationId\": \"$context.requestId\","
+                                        + "  \"callerSub\": \"$context.authorizer.sub\","
+                                        + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
+                        .integrationResponses(List.of(
+                                IntegrationResponse.builder().statusCode("200").build()))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.querystring.subjectSub", false))
+                        .methodResponses(List.of(
+                                MethodResponse.builder().statusCode("200").build()))
+                        .build());
+
+        var accountResource = userResource.addResource("account");
+        accountResource.addMethod(
+                "DELETE",
+                LambdaIntegration.Builder.create(dsrFn)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"ERASE\","
+                                        + "  \"subjectSub\": \"$util.escapeJavaScript($input.params('subjectSub'))\","
+                                        + "  \"sourceIp\": \"$context.identity.sourceIp\","
+                                        + "  \"correlationId\": \"$context.requestId\","
+                                        + "  \"callerSub\": \"$context.authorizer.sub\","
+                                        + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
+                        .integrationResponses(List.of(
+                                IntegrationResponse.builder().statusCode("200").build()))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.querystring.subjectSub", false))
                         .methodResponses(List.of(
                                 MethodResponse.builder().statusCode("200").build()))
                         .build());

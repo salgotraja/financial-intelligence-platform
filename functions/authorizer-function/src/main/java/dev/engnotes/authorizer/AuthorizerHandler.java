@@ -43,16 +43,16 @@ public class AuthorizerHandler {
                 List<RoutePolicy.Rule> allowed = RoutePolicy.allowedRules(principal.groups());
                 if (allowed.isEmpty()) {
                     log.info("Deny (no permitted routes). sub={}", principal.sub());
-                    return policy(principal.sub(), deny(methodArn), principal.sub());
+                    return policy(principal.sub(), deny(methodArn), principal.sub(), joinGroups(principal.groups()));
                 }
                 String base = arnBase(methodArn);
                 List<String> resources = allowed.stream()
                         .map(rule -> base + "/" + rule.httpMethod() + "/" + rule.resourcePattern())
                         .toList();
-                return policy(principal.sub(), allow(resources), principal.sub());
+                return policy(principal.sub(), allow(resources), principal.sub(), joinGroups(principal.groups()));
             } catch (RuntimeException e) {
                 log.warn("Deny (verification failed): {}", e.getMessage());
-                return policy("unknown", deny(methodArn), "unknown");
+                return policy("unknown", deny(methodArn), "unknown", "");
             }
         };
     }
@@ -87,7 +87,7 @@ public class AuthorizerHandler {
                 .build();
     }
 
-    private static IamPolicyResponse policy(String principalId, Statement statement, String sub) {
+    private static IamPolicyResponse policy(String principalId, Statement statement, String sub, String groups) {
         IamPolicyResponse.PolicyDocument document = IamPolicyResponse.PolicyDocument.builder()
                 .withVersion(IamPolicyResponse.VERSION_2012_10_17)
                 .withStatement(List.of(statement))
@@ -95,7 +95,11 @@ public class AuthorizerHandler {
         return IamPolicyResponse.builder()
                 .withPrincipalId(principalId)
                 .withPolicyDocument(document)
-                .withContext(Map.of("sub", sub))
+                .withContext(Map.of("sub", sub, "groups", groups))
                 .build();
+    }
+
+    private static String joinGroups(List<String> groups) {
+        return groups == null ? "" : String.join(",", groups);
     }
 }
