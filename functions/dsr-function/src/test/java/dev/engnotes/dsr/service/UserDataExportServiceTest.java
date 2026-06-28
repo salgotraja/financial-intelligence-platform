@@ -18,6 +18,7 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
+import software.amazon.awssdk.services.dynamodb.paginators.QueryIterable;
 
 @ExtendWith(MockitoExtension.class)
 class UserDataExportServiceTest {
@@ -60,6 +61,8 @@ class UserDataExportServiceTest {
                                         "actorSub", s("user-1"),
                                         "sourceIp", s("1.2.3.4"))))
                                 .build());
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
 
         UserDataExport result = export.export("user-1");
 
@@ -79,6 +82,8 @@ class UserDataExportServiceTest {
                 .thenReturn(GetItemResponse.builder().build());
         when(dynamoDb.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of()).build());
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
 
         UserDataExport result = export.export("ghost");
 
@@ -87,6 +92,30 @@ class UserDataExportServiceTest {
         assertThat(result.consent().version()).isNull();
         assertThat(result.watchlist()).isEmpty();
         assertThat(result.auditTrail()).isEmpty();
+    }
+
+    @Test
+    void exportPaginatesAuditTrailAcrossPages() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().build());
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of()).build()) // watchlist: one empty page
+                .thenReturn(QueryResponse.builder() // audit page 1
+                        .items(List.of(Map.of("eventType", s("CONSENT_GRANTED"), "SK", s("EVENT#1"))))
+                        .lastEvaluatedKey(Map.of("PK", s("USER#user-1"), "SK", s("EVENT#1")))
+                        .build())
+                .thenReturn(QueryResponse.builder() // audit page 2
+                        .items(List.of(Map.of("eventType", s("DATA_EXPORTED"), "SK", s("EVENT#2"))))
+                        .build());
+
+        UserDataExport result = export.export("user-1");
+
+        assertThat(result.auditTrail()).hasSize(2);
+        assertThat(result.auditTrail())
+                .extracting(a -> a.eventType())
+                .containsExactly("CONSENT_GRANTED", "DATA_EXPORTED");
     }
 
     private static AttributeValue s(String value) {
