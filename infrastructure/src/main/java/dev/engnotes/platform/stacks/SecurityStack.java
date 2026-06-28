@@ -1,12 +1,24 @@
 package dev.engnotes.platform.stacks;
 
 import java.util.List;
+import java.util.Map;
 import software.amazon.awscdk.CfnOutput;
 import software.amazon.awscdk.CfnOutputProps;
+import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
 import software.amazon.awscdk.services.cognito.*;
+import software.amazon.awscdk.services.iam.ManagedPolicy;
+import software.amazon.awscdk.services.iam.Role;
+import software.amazon.awscdk.services.iam.ServicePrincipal;
+import software.amazon.awscdk.services.lambda.Code;
+import software.amazon.awscdk.services.lambda.Function;
+import software.amazon.awscdk.services.lambda.Runtime;
+import software.amazon.awscdk.services.lambda.SnapStartConf;
+import software.amazon.awscdk.services.lambda.Tracing;
+import software.amazon.awscdk.services.logs.LogGroup;
+import software.amazon.awscdk.services.logs.RetentionDays;
 import software.constructs.Construct;
 
 /**
@@ -21,8 +33,11 @@ public class SecurityStack extends Stack {
     private final UserPool userPool;
     private final UserPoolClient userPoolClient;
 
-    public SecurityStack(final Construct scope, final String id, final StackProps props, final String env) {
+    public SecurityStack(
+            final Construct scope, final String id, final StackProps props, final String env, final DataStack data) {
         super(scope, id, props);
+
+        this.addDependency(data);
 
         boolean prod = env.equals("prod");
 
@@ -73,6 +88,57 @@ public class SecurityStack extends Stack {
                     .groupName(group)
                     .build();
         }
+
+        // PostConfirmation trigger: seeds default-deny consent + ACCOUNT_CREATED audit at signup
+        // (spec sub-project B). Not in the VPC, so this persistent stack stays independent of the
+        // ephemeral NetworkStack; it reaches DynamoDB over the regional endpoint via its role.
+        var postConfirmationRole = Role.Builder.create(this, "PostConfirmationLambdaRole")
+                .roleName("financial-postconfirmation-lambda-role-" + env)
+                .description("IAM role for the Cognito PostConfirmation consent-seeding Lambda")
+                .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
+                .managedPolicies(List.of(
+                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaBasicExecutionRole"),
+                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .build();
+        data.getPlatformTable().grantReadWriteData(postConfirmationRole);
+        data.getAuditTable().grant(postConfirmationRole, "dynamodb:PutItem");
+        data.getEncryptionKey().grantEncryptDecrypt(postConfirmationRole);
+
+        var postConfirmationFn = Function.Builder.create(this, "PostConfirmationFn")
+                .functionName("financial-postconfirmation-" + env)
+                .description("Cognito PostConfirmation: seed default-deny consent + audit event")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/consent-function/target/consent-function.jar"))
+                .role(postConfirmationRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
+                        "AUDIT_TABLE",
+                        data.getAuditTable().getTableName(),
+                        "ENVIRONMENT",
+                        env,
+                        "CONSENT_VERSION",
+                        "v1",
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "postConfirmation",
+                        "MAIN_CLASS",
+                        "dev.engnotes.consent.ConsentHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .build();
+
+        LogGroup.Builder.create(this, "PostConfirmationFnLogs")
+                .logGroupName("/aws/lambda/" + postConfirmationFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        userPool.addTrigger(UserPoolOperation.POST_CONFIRMATION, postConfirmationFn);
 
         this.userPoolClient = userPool.addClient(
                 "AppClient",

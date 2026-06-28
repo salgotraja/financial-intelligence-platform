@@ -36,7 +36,7 @@ public class FinancialPlatformApp {
         DataStack data = new DataStack(app, "FinancialPlatform-Data-" + env, props, env);
 
         // Stateful stack - identity (Cognito user pool). Persistent like Data; never torn down.
-        SecurityStack security = new SecurityStack(app, "FinancialPlatform-Security-" + env, props, env);
+        SecurityStack security = new SecurityStack(app, "FinancialPlatform-Security-" + env, props, env, data);
 
         // Ephemeral stack - VPC, NAT, endpoints. Torn down between sessions to save idle cost.
         NetworkStack network = new NetworkStack(app, "FinancialPlatform-Network-" + env, props, env);
