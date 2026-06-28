@@ -103,6 +103,8 @@ class ConsentStoreServiceTest {
         ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
         verify(dynamoDb, times(2)).putItem(captor.capture());
         assertThat(captor.getAllValues().get(0).item().get("version").s()).isEqualTo("v1");
+        PutItemRequest auditPut = captor.getAllValues().get(1);
+        assertThat(auditPut.item().get("version").s()).isEqualTo("v1");
     }
 
     @Test
@@ -123,11 +125,15 @@ class ConsentStoreServiceTest {
         verify(dynamoDb, times(2)).putItem(captor.capture());
 
         PutItemRequest consentPut = captor.getAllValues().get(0);
+        assertThat(consentPut.tableName()).isEqualTo(TABLE);
         assertThat(consentPut.item().get("consentGiven").bool()).isFalse();
         assertThat(consentPut.item().get("version").s()).isEqualTo("v1");
+        assertThat(consentPut.item().get("purpose").s()).isEqualTo("market");
         assertThat(consentPut.item().get("updatedAt").s()).isEqualTo(INSTANT);
 
         PutItemRequest auditPut = captor.getAllValues().get(1);
+        assertThat(auditPut.tableName()).isEqualTo(AUDIT);
+        assertThat(auditPut.item().get("SK").s()).isEqualTo("EVENT#" + INSTANT + "#corr-3");
         assertThat(auditPut.item().get("eventType").s()).isEqualTo("CONSENT_WITHDRAWN");
 
         assertThat(record.consentGiven()).isFalse();
@@ -140,9 +146,11 @@ class ConsentStoreServiceTest {
         ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
         verify(dynamoDb, times(2)).putItem(captor.capture());
 
-        assertThat(captor.getAllValues().get(0).item().get("consentGiven").bool())
-                .isFalse();
+        PutItemRequest consentPut = captor.getAllValues().get(0);
+        assertThat(consentPut.tableName()).isEqualTo(TABLE);
+        assertThat(consentPut.item().get("consentGiven").bool()).isFalse();
         PutItemRequest auditPut = captor.getAllValues().get(1);
+        assertThat(auditPut.tableName()).isEqualTo(AUDIT);
         assertThat(auditPut.item().get("eventType").s()).isEqualTo("ACCOUNT_CREATED");
         assertThat(auditPut.item().get("SK").s()).isEqualTo("EVENT#" + INSTANT + "#signup");
     }
