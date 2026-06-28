@@ -24,6 +24,7 @@
         <module>functions/watchlist-function</module>
         <module>functions/authorizer-function</module>
         <module>functions/consent-function</module>
+        <module>functions/dsr-function</module>
     </modules>
 
     <properties>
