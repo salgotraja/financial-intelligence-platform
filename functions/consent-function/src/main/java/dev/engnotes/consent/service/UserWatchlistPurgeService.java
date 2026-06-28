@@ -10,7 +10,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.DeleteRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
@@ -21,15 +20,13 @@ import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
  * consent (a DPDP data-lifecycle concern, the seed of sub-project C's erasure), reusing the fixed
  * key construction rather than coupling to a shared module. Idempotent and re-runnable: an empty
  * watchlist is a no-op. Single-owner WATCHSET pruning is unconditional, consistent with
- * WatchlistStoreService (multi-user "remove-if-still-watched" is deferred there too).
+ * WatchlistStoreService (multi-user "remove-if-still-watched" is deferred there too). The ticker
+ * query paginates and the deletes drain UnprocessedItems via {@link DynamoBatch}.
  */
 @Service
 public class UserWatchlistPurgeService {
 
     private static final Logger log = LoggerFactory.getLogger(UserWatchlistPurgeService.class);
-
-    /** DynamoDB BatchWriteItem hard limit. */
-    private static final int BATCH_SIZE = 25;
 
     private final DynamoDbClient dynamoDb;
     private final String platformTable;
@@ -42,7 +39,7 @@ public class UserWatchlistPurgeService {
 
     public void purge(String sub) {
         List<String> tickers = dynamoDb
-                .query(QueryRequest.builder()
+                .queryPaginator(QueryRequest.builder()
                         .tableName(platformTable)
                         .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
                         .expressionAttributeValues(Map.of(":pk", s("USER#" + sub), ":sk", s("WATCH#")))
@@ -65,12 +62,7 @@ public class UserWatchlistPurgeService {
             writes.add(deleteOf(Map.of("PK", s("WATCHSET"), "SK", s("TICKER#" + ticker))));
         }
 
-        for (int i = 0; i < writes.size(); i += BATCH_SIZE) {
-            List<WriteRequest> chunk = writes.subList(i, Math.min(i + BATCH_SIZE, writes.size()));
-            dynamoDb.batchWriteItem(BatchWriteItemRequest.builder()
-                    .requestItems(Map.of(platformTable, chunk))
-                    .build());
-        }
+        DynamoBatch.batchWriteAllWithRetry(dynamoDb, platformTable, writes);
         log.info("Purged watchlist. sub={} tickers={}", sub, tickers.size());
     }
 
