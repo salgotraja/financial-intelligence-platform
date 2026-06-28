@@ -9,18 +9,23 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.Delete;
+import software.amazon.awssdk.services.dynamodb.model.Put;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 
 /**
  * Maintains the per-user watchlist and the distinct-ticker union on the single table (spec section
  * 4). Each tracked ticker is two items: the user's item {@code USER#{sub} / WATCH#{ticker}} (in-scope
  * personal data, deletable by the erasure prefix query) and the union entry
- * {@code WATCHSET / TICKER#{ticker}} read by the ingestion fan-out. Writes are idempotent.
+ * {@code WATCHSET / TICKER#{ticker}} read by the ingestion fan-out. The two items are written and
+ * deleted atomically via {@code TransactWriteItems} so a partial failure cannot leave them
+ * inconsistent. Writes are idempotent (Put overwrites; Delete of an absent key is a no-op).
  *
  * <p>The owner {@code sub} is supplied per call by the caller (the API authorizer's verified Cognito
- * {@code sub}), so the store holds no owner state.
+ * {@code sub}), so the store holds no owner state. Single-owner union pruning is unconditional;
+ * multi-user "remove only if no other watcher" is deferred.
  */
 @Service
 public class WatchlistStoreService {
@@ -36,43 +41,63 @@ public class WatchlistStoreService {
         this.platformTable = platformTable;
     }
 
-    /** Adds the ticker to the user's watchlist and the distinct-ticker union. Idempotent. */
+    /** Adds the ticker to the user's watchlist and the distinct-ticker union atomically. Idempotent. */
     public void add(String ownerSub, String ticker) {
-        dynamoDb.putItem(PutItemRequest.builder()
-                .tableName(platformTable)
-                .item(Map.of("PK", s("USER#" + ownerSub), "SK", s("WATCH#" + ticker), "ticker", s(ticker)))
-                .build());
-        dynamoDb.putItem(PutItemRequest.builder()
-                .tableName(platformTable)
-                .item(Map.of("PK", s("WATCHSET"), "SK", s("TICKER#" + ticker), "ticker", s(ticker)))
+        dynamoDb.transactWriteItems(TransactWriteItemsRequest.builder()
+                .transactItems(
+                        TransactWriteItem.builder()
+                                .put(Put.builder()
+                                        .tableName(platformTable)
+                                        .item(Map.of(
+                                                "PK", s("USER#" + ownerSub),
+                                                "SK", s("WATCH#" + ticker),
+                                                "ticker", s(ticker)))
+                                        .build())
+                                .build(),
+                        TransactWriteItem.builder()
+                                .put(Put.builder()
+                                        .tableName(platformTable)
+                                        .item(Map.of(
+                                                "PK", s("WATCHSET"),
+                                                "SK", s("TICKER#" + ticker),
+                                                "ticker", s(ticker)))
+                                        .build())
+                                .build())
                 .build());
         log.info("Added ticker to watchlist. ticker={} owner={}", ticker, ownerSub);
     }
 
     /**
-     * Removes the ticker from the user's watchlist and the union. With a single owner the union
-     * entry is removed unconditionally; multi-user "remove only if no other watcher" is deferred.
+     * Removes the ticker from the user's watchlist and the union atomically. With a single owner the
+     * union entry is removed unconditionally; multi-user "remove only if no other watcher" is deferred.
      */
     public void remove(String ownerSub, String ticker) {
-        dynamoDb.deleteItem(DeleteItemRequest.builder()
-                .tableName(platformTable)
-                .key(Map.of("PK", s("USER#" + ownerSub), "SK", s("WATCH#" + ticker)))
-                .build());
-        dynamoDb.deleteItem(DeleteItemRequest.builder()
-                .tableName(platformTable)
-                .key(Map.of("PK", s("WATCHSET"), "SK", s("TICKER#" + ticker)))
+        dynamoDb.transactWriteItems(TransactWriteItemsRequest.builder()
+                .transactItems(
+                        TransactWriteItem.builder()
+                                .delete(Delete.builder()
+                                        .tableName(platformTable)
+                                        .key(Map.of("PK", s("USER#" + ownerSub), "SK", s("WATCH#" + ticker)))
+                                        .build())
+                                .build(),
+                        TransactWriteItem.builder()
+                                .delete(Delete.builder()
+                                        .tableName(platformTable)
+                                        .key(Map.of("PK", s("WATCHSET"), "SK", s("TICKER#" + ticker)))
+                                        .build())
+                                .build())
                 .build());
         log.info("Removed ticker from watchlist. ticker={} owner={}", ticker, ownerSub);
     }
 
-    /** Lists the tickers on the user's watchlist (PK=USER#{sub}, SK begins_with WATCH#). */
+    /** Lists the tickers on the user's watchlist (PK=USER#{sub}, SK begins_with WATCH#). Paginates. */
     public List<String> list(String ownerSub) {
         QueryRequest request = QueryRequest.builder()
                 .tableName(platformTable)
                 .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
                 .expressionAttributeValues(Map.of(":pk", s("USER#" + ownerSub), ":sk", s("WATCH#")))
                 .build();
-        return dynamoDb.query(request).items().stream()
+        return dynamoDb.queryPaginator(request).items().stream()
                 .map(item -> item.get("ticker"))
                 .filter(Objects::nonNull)
                 .map(AttributeValue::s)
