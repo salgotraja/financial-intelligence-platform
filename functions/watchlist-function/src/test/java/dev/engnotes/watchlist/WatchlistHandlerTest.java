@@ -2,6 +2,7 @@ package dev.engnotes.watchlist;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -10,8 +11,10 @@ import dev.engnotes.watchlist.exception.WatchlistException;
 import dev.engnotes.watchlist.model.Operation;
 import dev.engnotes.watchlist.model.WatchlistRequest;
 import dev.engnotes.watchlist.model.WatchlistResponse;
+import dev.engnotes.watchlist.service.ConsentGate;
 import dev.engnotes.watchlist.service.WatchlistStoreService;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -25,10 +28,20 @@ class WatchlistHandlerTest {
     @Mock
     private WatchlistStoreService store;
 
+    @Mock
+    private ConsentGate consentGate;
+
+    @BeforeEach
+    void allowConsentByDefault() {
+        lenient()
+                .when(consentGate.isActive(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(true);
+    }
+
     @Test
     void addUsesTheRequestSubWhenPresent() {
         WatchlistResponse response = new WatchlistHandler()
-                .watchlist(store, DEFAULT_SUB)
+                .watchlist(store, consentGate, DEFAULT_SUB)
                 .apply(new WatchlistRequest(Operation.ADD, "RELIANCE.NS", "user-123", "corr-1"));
 
         verify(store).add("user-123", "RELIANCE.NS");
@@ -39,7 +52,7 @@ class WatchlistHandlerTest {
     @Test
     void addFallsBackToDefaultSubWhenRequestSubBlank() {
         new WatchlistHandler()
-                .watchlist(store, DEFAULT_SUB)
+                .watchlist(store, consentGate, DEFAULT_SUB)
                 .apply(new WatchlistRequest(Operation.ADD, "RELIANCE.NS", null, "corr-1"));
 
         verify(store).add(DEFAULT_SUB, "RELIANCE.NS");
@@ -48,7 +61,7 @@ class WatchlistHandlerTest {
     @Test
     void removeUsesTheRequestSub() {
         WatchlistResponse response = new WatchlistHandler()
-                .watchlist(store, DEFAULT_SUB)
+                .watchlist(store, consentGate, DEFAULT_SUB)
                 .apply(new WatchlistRequest(Operation.REMOVE, "TCS.NS", "user-123", "corr-2"));
 
         verify(store).remove("user-123", "TCS.NS");
@@ -60,7 +73,7 @@ class WatchlistHandlerTest {
         when(store.list("user-123")).thenReturn(List.of("RELIANCE.NS", "INFY.NS"));
 
         WatchlistResponse response = new WatchlistHandler()
-                .watchlist(store, DEFAULT_SUB)
+                .watchlist(store, consentGate, DEFAULT_SUB)
                 .apply(new WatchlistRequest(Operation.LIST, null, "user-123", "corr-3"));
 
         assertThat(response.status()).isEqualTo("ok");
@@ -70,9 +83,32 @@ class WatchlistHandlerTest {
     @Test
     void addRejectsInvalidTickerWithoutTouchingTheStore() {
         assertThatThrownBy(() -> new WatchlistHandler()
-                        .watchlist(store, DEFAULT_SUB)
+                        .watchlist(store, consentGate, DEFAULT_SUB)
                         .apply(new WatchlistRequest(Operation.ADD, "bad/ticker", "user-123", "corr-4")))
                 .isInstanceOf(WatchlistException.class);
         verifyNoInteractions(store);
+    }
+
+    @Test
+    void deniesEveryOperationWithoutActiveConsent() {
+        when(consentGate.isActive("user-123")).thenReturn(false);
+
+        assertThatThrownBy(() -> new WatchlistHandler()
+                        .watchlist(store, consentGate, DEFAULT_SUB)
+                        .apply(new WatchlistRequest(Operation.LIST, null, "user-123", "corr-5")))
+                .isInstanceOf(WatchlistException.class);
+        verifyNoInteractions(store);
+    }
+
+    @Test
+    void checksConsentForTheResolvedOwner() {
+        when(consentGate.isActive("user-123")).thenReturn(true);
+
+        new WatchlistHandler()
+                .watchlist(store, consentGate, DEFAULT_SUB)
+                .apply(new WatchlistRequest(Operation.ADD, "RELIANCE.NS", "user-123", "corr-6"));
+
+        verify(consentGate).isActive("user-123");
+        verify(store).add("user-123", "RELIANCE.NS");
     }
 }

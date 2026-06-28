@@ -1,7 +1,9 @@
 package dev.engnotes.watchlist;
 
+import dev.engnotes.watchlist.exception.WatchlistException;
 import dev.engnotes.watchlist.model.WatchlistRequest;
 import dev.engnotes.watchlist.model.WatchlistResponse;
+import dev.engnotes.watchlist.service.ConsentGate;
 import dev.engnotes.watchlist.service.WatchlistStoreService;
 import dev.engnotes.watchlist.validation.TickerValidator;
 import java.util.function.Function;
@@ -35,7 +37,9 @@ public class WatchlistHandler {
 
     @Bean
     public Function<WatchlistRequest, WatchlistResponse> watchlist(
-            WatchlistStoreService store, @Value("${DEFAULT_OWNER_SUB:dev-user}") String defaultOwnerSub) {
+            WatchlistStoreService store,
+            ConsentGate consentGate,
+            @Value("${DEFAULT_OWNER_SUB:dev-user}") String defaultOwnerSub) {
         return request -> {
             String owner = (request.ownerSub() != null && !request.ownerSub().isBlank())
                     ? request.ownerSub()
@@ -45,6 +49,11 @@ public class WatchlistHandler {
                     request.operation(),
                     owner,
                     request.correlationId());
+
+            // Consent gate (spec decision 5): no active consent -> no watchlist interaction at all.
+            if (!consentGate.isActive(owner)) {
+                throw new WatchlistException("consent required: no active consent for owner");
+            }
 
             return switch (request.operation()) {
                 case ADD -> {
