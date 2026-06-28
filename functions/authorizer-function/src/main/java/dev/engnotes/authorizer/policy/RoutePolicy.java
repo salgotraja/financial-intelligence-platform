@@ -24,7 +24,10 @@ public final class RoutePolicy {
             new Rule("GET", "watchlist", Set.of("premium", "admins")),
             new Rule("POST", "watchlist/*", Set.of("premium", "admins")),
             new Rule("DELETE", "watchlist/*", Set.of("premium", "admins")),
-            new Rule("POST", "ingest/*", Set.of("premium", "admins")));
+            new Rule("POST", "ingest/*", Set.of("premium", "admins")),
+            new Rule("GET", "user/consent", Set.of("readers", "premium", "admins")),
+            new Rule("POST", "user/consent", Set.of("readers", "premium", "admins")),
+            new Rule("DELETE", "user/consent", Set.of("readers", "premium", "admins")));
 
     private RoutePolicy() {}
 

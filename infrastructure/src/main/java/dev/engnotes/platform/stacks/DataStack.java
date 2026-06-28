@@ -28,6 +28,7 @@ public class DataStack extends Stack {
 
     private final Key encryptionKey;
     private final Table platformTable;
+    private final Table auditTable;
     private final IBucket dataLakeBucket;
     private final Topic alertTopic;
 
@@ -70,7 +71,9 @@ public class DataStack extends Stack {
                 .billingMode(BillingMode.PAY_PER_REQUEST)
                 .encryption(TableEncryption.CUSTOMER_MANAGED)
                 .encryptionKey(encryptionKey)
-                .pointInTimeRecovery(true) // PITR for disaster recovery
+                .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder()
+                        .pointInTimeRecoveryEnabled(true)
+                        .build()) // PITR for disaster recovery
                 .timeToLiveAttribute("ttl") // auto-expire hot data
                 .removalPolicy(statefulRemoval)
                 .build();
@@ -89,6 +92,29 @@ public class DataStack extends Stack {
                         .build())
                 .projectionType(ProjectionType.ALL)
                 .build());
+
+        // Append-only consent audit table (spec sub-project B). Separate from the single table so the
+        // app role can hold PutItem only (no Update/Delete) for tamper-evidence. RETAIN in every env
+        // (audit records must survive stack deletion); PITR on; no TTL (events never expire). Reused
+        // by sub-project C (right-to-access / erasure logging).
+        this.auditTable = Table.Builder.create(this, "AuditTable")
+                .tableName("financial-platform-audit-" + env)
+                .partitionKey(Attribute.builder()
+                        .name("PK")
+                        .type(AttributeType.STRING)
+                        .build())
+                .sortKey(Attribute.builder()
+                        .name("SK")
+                        .type(AttributeType.STRING)
+                        .build())
+                .billingMode(BillingMode.PAY_PER_REQUEST)
+                .encryption(TableEncryption.CUSTOMER_MANAGED)
+                .encryptionKey(encryptionKey)
+                .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder()
+                        .pointInTimeRecoveryEnabled(true)
+                        .build())
+                .removalPolicy(RemovalPolicy.RETAIN)
+                .build();
 
         // S3 Data Lake - raw market data archived from DynamoDB, partitioned for Athena.
         this.dataLakeBucket = Bucket.Builder.create(this, "DataLakeBucket")
@@ -142,6 +168,14 @@ public class DataStack extends Stack {
 
         new CfnOutput(
                 this,
+                "AuditTableName",
+                CfnOutputProps.builder()
+                        .exportName("platform-audit-table-" + env)
+                        .value(auditTable.getTableName())
+                        .build());
+
+        new CfnOutput(
+                this,
                 "DataLakeBucketName",
                 CfnOutputProps.builder()
                         .exportName("platform-datalake-bucket-" + env)
@@ -155,6 +189,10 @@ public class DataStack extends Stack {
 
     public Table getPlatformTable() {
         return platformTable;
+    }
+
+    public Table getAuditTable() {
+        return auditTable;
     }
 
     public IBucket getDataLakeBucket() {

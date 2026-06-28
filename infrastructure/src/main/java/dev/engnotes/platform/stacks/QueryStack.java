@@ -138,6 +138,57 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        // Consent Lambda (DPDP, spec sub-project B). Read-write on the platform table (consent record
+        // + withdrawal purge) and PutItem-only on the audit table (write-only audit trail).
+        var consentRole = Role.Builder.create(this, "ConsentLambdaRole")
+                .roleName("financial-consent-lambda-role-" + env)
+                .description("IAM role for the consent management Lambda")
+                .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
+                .managedPolicies(List.of(
+                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
+                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .build();
+        data.getPlatformTable().grantReadWriteData(consentRole);
+        data.getAuditTable().grant(consentRole, "dynamodb:PutItem");
+        data.getEncryptionKey().grantEncryptDecrypt(consentRole);
+
+        var consentFn = Function.Builder.create(this, "ConsentFn")
+                .functionName("financial-consent-" + env)
+                .description("Consent management: GET/POST/DELETE /user/consent")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/consent-function/target/consent-function.jar"))
+                .role(consentRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
+                        "AUDIT_TABLE",
+                        data.getAuditTable().getTableName(),
+                        "ENVIRONMENT",
+                        env,
+                        "CONSENT_VERSION",
+                        "v1",
+                        "DEFAULT_OWNER_SUB",
+                        "dev-user",
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "consent",
+                        "MAIN_CLASS",
+                        "dev.engnotes.consent.ConsentHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "ConsentFnLogs")
+                .logGroupName("/aws/lambda/" + consentFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
         // API authorizer Lambda (NOT in the VPC: it must reach the public Cognito JWKS endpoint).
         var authorizerRole = Role.Builder.create(this, "AuthorizerLambdaRole")
                 .roleName("financial-authorizer-lambda-role-" + env)
@@ -331,6 +382,75 @@ public class QueryStack extends Stack {
                                 "application/json",
                                 "{ \"operation\": \"LIST\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        .integrationResponses(List.of(
+                                IntegrationResponse.builder().statusCode("200").build()))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .methodResponses(List.of(
+                                MethodResponse.builder().statusCode("200").build()))
+                        .build());
+
+        // Consent routes (non-proxy, spec sub-project B): POST -> GRANT, GET -> VIEW, DELETE ->
+        // WITHDRAW. The caller sub is taken from the authorizer context, never the body. POST reads
+        // {version?, purpose} from the body; both fields are escaped via $util.escapeJavaScript to
+        // prevent injection. An absent/blank version is defaulted to CONSENT_VERSION in the handler.
+        var userResource = api.getRoot().addResource("user");
+        var consentResource = userResource.addResource("consent");
+
+        consentResource.addMethod(
+                "POST",
+                LambdaIntegration.Builder.create(consentFn)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"GRANT\","
+                                        + "  \"sub\": \"$context.authorizer.sub\","
+                                        + "  \"version\": \"$util.escapeJavaScript($input.path('$.version'))\","
+                                        + "  \"purpose\": \"$util.escapeJavaScript($input.path('$.purpose'))\","
+                                        + "  \"sourceIp\": \"$context.identity.sourceIp\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        .integrationResponses(List.of(
+                                IntegrationResponse.builder().statusCode("200").build()))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .methodResponses(List.of(
+                                MethodResponse.builder().statusCode("200").build()))
+                        .build());
+
+        consentResource.addMethod(
+                "GET",
+                LambdaIntegration.Builder.create(consentFn)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"VIEW\","
+                                        + "  \"sub\": \"$context.authorizer.sub\","
+                                        + "  \"sourceIp\": \"$context.identity.sourceIp\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        .integrationResponses(List.of(
+                                IntegrationResponse.builder().statusCode("200").build()))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .methodResponses(List.of(
+                                MethodResponse.builder().statusCode("200").build()))
+                        .build());
+
+        consentResource.addMethod(
+                "DELETE",
+                LambdaIntegration.Builder.create(consentFn)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"WITHDRAW\","
+                                        + "  \"sub\": \"$context.authorizer.sub\","
+                                        + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
                         .integrationResponses(List.of(
                                 IntegrationResponse.builder().statusCode("200").build()))

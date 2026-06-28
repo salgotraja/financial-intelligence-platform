@@ -10,13 +10,13 @@
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <groupId>dev.engnotes.watchlist</groupId>
-    <artifactId>watchlist-function</artifactId>
-    <name>watchlist-function</name>
-    <description>Spring Cloud Function Lambda: watchlist CRUD and WATCHSET maintenance</description>
+    <groupId>dev.engnotes.consent</groupId>
+    <artifactId>consent-function</artifactId>
+    <name>consent-function</name>
+    <description>Spring Cloud Function Lambda: consent management (DPDP) and watchlist purge</description>
 
     <properties>
-        <start-class>dev.engnotes.watchlist.WatchlistHandler</start-class>
+        <start-class>dev.engnotes.consent.ConsentHandler</start-class>
     </properties>
 
     <dependencies>
@@ -41,12 +41,17 @@
             </exclusions>
         </dependency>
 
-        <!-- Jackson autoconfig: previously inherited transitively via webflux's starter-jackson;
-             declared explicitly now that webflux is excluded (Spring Cloud Function needs it for
-             Lambda payload (de)serialization). -->
+        <!-- Jackson autoconfig: declared explicitly now that webflux is excluded (Spring Cloud
+             Function needs it for Lambda payload (de)serialization). -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-json</artifactId>
+        </dependency>
+
+        <!-- Cognito PostConfirmation trigger event type -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-lambda-java-events</artifactId>
         </dependency>
 
         <!-- AWS SDK v2 (versions managed by the BOM in the root pom) -->
@@ -68,7 +73,7 @@
 
     <build>
         <!-- Stable artifact name so CDK Code.fromAsset(...) and the CI upload step resolve it. -->
-        <finalName>watchlist-function</finalName>
+        <finalName>consent-function</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

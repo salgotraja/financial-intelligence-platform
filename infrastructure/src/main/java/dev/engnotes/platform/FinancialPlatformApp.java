@@ -5,6 +5,7 @@ import dev.engnotes.platform.stacks.IngestionStack;
 import dev.engnotes.platform.stacks.NetworkStack;
 import dev.engnotes.platform.stacks.QueryStack;
 import dev.engnotes.platform.stacks.SecurityStack;
+import software.amazon.awscdk.Annotations;
 import software.amazon.awscdk.App;
 import software.amazon.awscdk.Environment;
 import software.amazon.awscdk.StackProps;
@@ -35,7 +36,7 @@ public class FinancialPlatformApp {
         DataStack data = new DataStack(app, "FinancialPlatform-Data-" + env, props, env);
 
         // Stateful stack - identity (Cognito user pool). Persistent like Data; never torn down.
-        SecurityStack security = new SecurityStack(app, "FinancialPlatform-Security-" + env, props, env);
+        SecurityStack security = new SecurityStack(app, "FinancialPlatform-Security-" + env, props, env, data);
 
         // Ephemeral stack - VPC, NAT, endpoints. Torn down between sessions to save idle cost.
         NetworkStack network = new NetworkStack(app, "FinancialPlatform-Network-" + env, props, env);
@@ -46,6 +47,13 @@ public class FinancialPlatformApp {
 
         // Query (API Gateway, query + watchlist + authorizer Lambdas) - depends on all halves.
         new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, network, data, ingestion, security);
+
+        // Acknowledge expected synth-time advisories (after the constructs exist so the
+        // acknowledgement covers them): SnapStart engages only on published versions (aliases publish
+        // at deploy; see STATUS), and the Distributed Map's executionType is set on ProcessorConfig
+        // (the working path in this CDK version).
+        Annotations.of(app).acknowledgeWarning("@aws-cdk/aws-lambda:snapStartRequirePublish");
+        Annotations.of(app).acknowledgeWarning("@aws-cdk/aws-stepfunctions:propertyIgnored");
 
         app.synth();
     }

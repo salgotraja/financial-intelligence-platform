@@ -31,6 +31,14 @@
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-function-adapter-aws</artifactId>
+            <!-- The Lambda adapter (FunctionInvoker) runs no HTTP server: exclude the transitive
+                 reactive web stack (webflux -> reactor-netty -> netty) to shrink the uber-JAR. -->
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-webflux</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- JSON (Jackson 3, the Spring Boot 4 default): Bedrock request/response + item build -->
