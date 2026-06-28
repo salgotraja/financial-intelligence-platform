@@ -328,6 +328,8 @@ public class IngestionStack extends Stack {
                         "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)"))
                 .toleratedFailurePercentage(100)
                 .build();
+        // executionType on ProcessorConfig is the working path in this CDK version; the synth-time
+        // "use mapExecutionType instead" advisory is benign (mapExecutionType alone fails Map validation).
         fanOut.itemProcessor(
                 perTicker,
                 ProcessorConfig.builder()

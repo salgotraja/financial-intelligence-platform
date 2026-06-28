@@ -70,7 +70,9 @@ public class DataStack extends Stack {
                 .billingMode(BillingMode.PAY_PER_REQUEST)
                 .encryption(TableEncryption.CUSTOMER_MANAGED)
                 .encryptionKey(encryptionKey)
-                .pointInTimeRecovery(true) // PITR for disaster recovery
+                .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder()
+                        .pointInTimeRecoveryEnabled(true)
+                        .build()) // PITR for disaster recovery
                 .timeToLiveAttribute("ttl") // auto-expire hot data
                 .removalPolicy(statefulRemoval)
                 .build();

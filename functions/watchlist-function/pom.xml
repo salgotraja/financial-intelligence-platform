@@ -31,6 +31,22 @@
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-function-adapter-aws</artifactId>
+            <!-- The Lambda adapter (FunctionInvoker) runs no HTTP server: exclude the transitive
+                 reactive web stack (webflux -> reactor-netty -> netty) to shrink the uber-JAR. -->
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-webflux</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- Jackson autoconfig: previously inherited transitively via webflux's starter-jackson;
+             declared explicitly now that webflux is excluded (Spring Cloud Function needs it for
+             Lambda payload (de)serialization). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-json</artifactId>
         </dependency>
 
         <!-- AWS SDK v2 (versions managed by the BOM in the root pom) -->
