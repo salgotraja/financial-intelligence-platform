@@ -9,15 +9,20 @@ import org.junit.jupiter.api.Test;
 class RoutePolicyTest {
 
     @Test
-    void readersGetOnlyReadRules() {
+    void readersGetReadRulesAndConsentManagement() {
         List<RoutePolicy.Rule> rules = RoutePolicy.allowedRules(Set.of("readers"));
         assertThat(rules)
-                .extracting(RoutePolicy.Rule::resourcePattern)
-                .containsExactlyInAnyOrder("insights/*", "market/*");
+                .extracting(rule -> rule.httpMethod() + " " + rule.resourcePattern())
+                .containsExactlyInAnyOrder(
+                        "GET insights/*",
+                        "GET market/*",
+                        "GET user/consent",
+                        "POST user/consent",
+                        "DELETE user/consent");
     }
 
     @Test
-    void premiumGetsReadAndWriteRules() {
+    void premiumGetsReadWriteAndConsentRules() {
         List<RoutePolicy.Rule> rules = RoutePolicy.allowedRules(Set.of("premium"));
         assertThat(rules)
                 .extracting(rule -> rule.httpMethod() + " " + rule.resourcePattern())
@@ -27,13 +32,16 @@ class RoutePolicyTest {
                         "GET watchlist",
                         "POST watchlist/*",
                         "DELETE watchlist/*",
-                        "POST ingest/*");
+                        "POST ingest/*",
+                        "GET user/consent",
+                        "POST user/consent",
+                        "DELETE user/consent");
     }
 
     @Test
     void adminsGetEverything() {
         List<RoutePolicy.Rule> rules = RoutePolicy.allowedRules(Set.of("admins"));
-        assertThat(rules).hasSize(6);
+        assertThat(rules).hasSize(9);
     }
 
     @Test
