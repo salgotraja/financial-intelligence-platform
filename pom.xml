@@ -23,6 +23,7 @@
         <module>functions/query-function</module>
         <module>functions/watchlist-function</module>
         <module>functions/authorizer-function</module>
+        <module>functions/consent-function</module>
     </modules>
 
     <properties>
