@@ -22,6 +22,7 @@
         <module>functions/insight-function</module>
         <module>functions/query-function</module>
         <module>functions/watchlist-function</module>
+        <module>functions/authorizer-function</module>
     </modules>
 
     <properties>
@@ -37,6 +38,8 @@
         <aws-lambda-java.version>1.4.0</aws-lambda-java.version>
         <aws-lambda-events.version>3.16.1</aws-lambda-events.version>
         <aws-xray.version>2.21.0</aws-xray.version>
+        <java-jwt.version>4.4.0</java-jwt.version>
+        <jwks-rsa.version>0.22.1</jwks-rsa.version>
     </properties>
 
     <!--
@@ -86,6 +89,18 @@
                 <groupId>com.amazonaws</groupId>
                 <artifactId>aws-xray-recorder-sdk-aws-sdk-v2-instrumentor</artifactId>
                 <version>${aws-xray.version}</version>
+            </dependency>
+
+            <!-- JWT verification for the API authorizer -->
+            <dependency>
+                <groupId>com.auth0</groupId>
+                <artifactId>java-jwt</artifactId>
+                <version>${java-jwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.auth0</groupId>
+                <artifactId>jwks-rsa</artifactId>
+                <version>${jwks-rsa.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

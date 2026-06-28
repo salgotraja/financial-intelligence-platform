@@ -37,12 +37,14 @@ public class QueryStack extends Stack {
             final String env,
             final NetworkStack network,
             final DataStack data,
-            final IngestionStack ingestion) {
+            final IngestionStack ingestion,
+            final SecurityStack security) {
         super(scope, id, props);
 
         this.addDependency(network);
         this.addDependency(data);
         this.addDependency(ingestion);
+        this.addDependency(security);
 
         // IAM Role for query Lambda
         // Read-only: query Lambda never writes to DynamoDB.
@@ -136,6 +138,55 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        // API authorizer Lambda (NOT in the VPC: it must reach the public Cognito JWKS endpoint).
+        var authorizerRole = Role.Builder.create(this, "AuthorizerLambdaRole")
+                .roleName("financial-authorizer-lambda-role-" + env)
+                .description("IAM role for the API token authorizer Lambda")
+                .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
+                .managedPolicies(List.of(
+                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaBasicExecutionRole"),
+                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .build();
+
+        var authorizerFn = Function.Builder.create(this, "AuthorizerFn")
+                .functionName("financial-authorizer-" + env)
+                .description("API Gateway token authorizer: Cognito JWT + group authorization")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/authorizer-function/target/authorizer-function.jar"))
+                .role(authorizerRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "COGNITO_REGION",
+                        this.getRegion(),
+                        "COGNITO_USER_POOL_ID",
+                        security.getUserPoolId(),
+                        "COGNITO_CLIENT_ID",
+                        security.getUserPoolClientId(),
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "authorize",
+                        "MAIN_CLASS",
+                        "dev.engnotes.authorizer.AuthorizerHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .build();
+
+        LogGroup.Builder.create(this, "AuthorizerFnLogs")
+                .logGroupName("/aws/lambda/" + authorizerFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        var apiAuthorizer = TokenAuthorizer.Builder.create(this, "ApiAuthorizer")
+                .authorizerName("financial-cognito-authorizer-" + env)
+                .handler(authorizerFn)
+                .identitySource("method.request.header.Authorization")
+                .resultsCacheTtl(Duration.minutes(5))
+                .build();
+
         // Provisioned concurrency on the published version.
         // Why: eliminate cold starts for user-facing requests.
         // Cost: pay for provisioned concurrency even when idle
@@ -191,7 +242,7 @@ public class QueryStack extends Stack {
                         List.of(IntegrationResponse.builder().statusCode("200").build()))
                 .build();
 
-        // /insights/{ticker}
+        // /insights/{ticker} - protected (readers+)
         api.getRoot()
                 .addResource("insights")
                 .addResource("{ticker}")
@@ -199,7 +250,27 @@ public class QueryStack extends Stack {
                         "GET",
                         queryIntegration,
                         MethodOptions.builder()
+                                .authorizer(apiAuthorizer)
+                                .authorizationType(AuthorizationType.CUSTOM)
                                 .requestParameters(Map.of("method.request.path.ticker", true))
+                                .methodResponses(List.of(MethodResponse.builder()
+                                        .statusCode("200")
+                                        .build()))
+                                .build());
+
+        // /health - Lambda-free health check (mock integration, public) for smoke tests and uptime monitors
+        api.getRoot()
+                .addResource("health")
+                .addMethod(
+                        "GET",
+                        MockIntegration.Builder.create()
+                                .requestTemplates(Map.of("application/json", "{\"statusCode\": 200}"))
+                                .integrationResponses(List.of(IntegrationResponse.builder()
+                                        .statusCode("200")
+                                        .responseTemplates(Map.of("application/json", "{\"status\":\"ok\"}"))
+                                        .build()))
+                                .build(),
+                        MethodOptions.builder()
                                 .methodResponses(List.of(MethodResponse.builder()
                                         .statusCode("200")
                                         .build()))
@@ -218,11 +289,14 @@ public class QueryStack extends Stack {
                                 "application/json",
                                 "{ \"operation\": \"ADD\","
                                         + "  \"ticker\": \"$input.params('ticker')\","
+                                        + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
                         .integrationResponses(List.of(
                                 IntegrationResponse.builder().statusCode("200").build()))
                         .build(),
                 MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
                         .requestParameters(Map.of("method.request.path.ticker", true))
                         .methodResponses(List.of(
                                 MethodResponse.builder().statusCode("200").build()))
@@ -236,11 +310,14 @@ public class QueryStack extends Stack {
                                 "application/json",
                                 "{ \"operation\": \"REMOVE\","
                                         + "  \"ticker\": \"$input.params('ticker')\","
+                                        + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
                         .integrationResponses(List.of(
                                 IntegrationResponse.builder().statusCode("200").build()))
                         .build(),
                 MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
                         .requestParameters(Map.of("method.request.path.ticker", true))
                         .methodResponses(List.of(
                                 MethodResponse.builder().statusCode("200").build()))
@@ -252,11 +329,15 @@ public class QueryStack extends Stack {
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
-                                "{ \"operation\": \"LIST\"," + "  \"correlationId\": \"$context.requestId\" }"))
+                                "{ \"operation\": \"LIST\","
+                                        + "  \"ownerSub\": \"$context.authorizer.sub\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
                         .integrationResponses(List.of(
                                 IntegrationResponse.builder().statusCode("200").build()))
                         .build(),
                 MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
                         .methodResponses(List.of(
                                 MethodResponse.builder().statusCode("200").build()))
                         .build());
@@ -299,27 +380,11 @@ public class QueryStack extends Stack {
                         "POST",
                         ingestIntegration,
                         MethodOptions.builder()
+                                .authorizer(apiAuthorizer)
+                                .authorizationType(AuthorizationType.CUSTOM)
                                 .requestParameters(Map.of("method.request.path.ticker", true))
                                 .methodResponses(List.of(MethodResponse.builder()
                                         .statusCode("202")
-                                        .build()))
-                                .build());
-
-        // /health - Lambda-free health check (mock integration) for smoke tests and uptime monitors
-        api.getRoot()
-                .addResource("health")
-                .addMethod(
-                        "GET",
-                        MockIntegration.Builder.create()
-                                .requestTemplates(Map.of("application/json", "{\"statusCode\": 200}"))
-                                .integrationResponses(List.of(IntegrationResponse.builder()
-                                        .statusCode("200")
-                                        .responseTemplates(Map.of("application/json", "{\"status\":\"ok\"}"))
-                                        .build()))
-                                .build(),
-                        MethodOptions.builder()
-                                .methodResponses(List.of(MethodResponse.builder()
-                                        .statusCode("200")
                                         .build()))
                                 .build());
 

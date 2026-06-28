@@ -4,6 +4,7 @@ import dev.engnotes.platform.stacks.DataStack;
 import dev.engnotes.platform.stacks.IngestionStack;
 import dev.engnotes.platform.stacks.NetworkStack;
 import dev.engnotes.platform.stacks.QueryStack;
+import dev.engnotes.platform.stacks.SecurityStack;
 import software.amazon.awscdk.App;
 import software.amazon.awscdk.Environment;
 import software.amazon.awscdk.StackProps;
@@ -33,6 +34,9 @@ public class FinancialPlatformApp {
         // Stateful stack - stays deployed across sessions (KMS, DynamoDB, S3, SNS).
         DataStack data = new DataStack(app, "FinancialPlatform-Data-" + env, props, env);
 
+        // Stateful stack - identity (Cognito user pool). Persistent like Data; never torn down.
+        SecurityStack security = new SecurityStack(app, "FinancialPlatform-Security-" + env, props, env);
+
         // Ephemeral stack - VPC, NAT, endpoints. Torn down between sessions to save idle cost.
         NetworkStack network = new NetworkStack(app, "FinancialPlatform-Network-" + env, props, env);
 
@@ -40,8 +44,8 @@ public class FinancialPlatformApp {
         IngestionStack ingestion =
                 new IngestionStack(app, "FinancialPlatform-Ingestion-" + env, props, env, network, data);
 
-        // Query (API Gateway, query + watchlist Lambdas) - depends on network, data, and ingestion.
-        new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, network, data, ingestion);
+        // Query (API Gateway, query + watchlist + authorizer Lambdas) - depends on all halves.
+        new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, network, data, ingestion, security);
 
         app.synth();
     }
