@@ -11,7 +11,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.DeleteRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
@@ -29,9 +28,6 @@ public class UserErasureService {
 
     private static final Logger log = LoggerFactory.getLogger(UserErasureService.class);
 
-    /** DynamoDB BatchWriteItem hard limit. */
-    private static final int BATCH_SIZE = 25;
-
     private final DynamoDbClient dynamoDb;
     private final CognitoUserService cognito;
     private final String platformTable;
@@ -47,7 +43,7 @@ public class UserErasureService {
 
     public ErasureResult erase(String subjectSub) {
         List<String> tickers = dynamoDb
-                .query(QueryRequest.builder()
+                .queryPaginator(QueryRequest.builder()
                         .tableName(platformTable)
                         .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
                         .expressionAttributeValues(Map.of(":pk", s("USER#" + subjectSub), ":sk", s("WATCH#")))
@@ -66,12 +62,7 @@ public class UserErasureService {
             writes.add(deleteOf(Map.of("PK", s("WATCHSET"), "SK", s("TICKER#" + ticker))));
         }
 
-        for (int i = 0; i < writes.size(); i += BATCH_SIZE) {
-            List<WriteRequest> chunk = writes.subList(i, Math.min(i + BATCH_SIZE, writes.size()));
-            dynamoDb.batchWriteItem(BatchWriteItemRequest.builder()
-                    .requestItems(Map.of(platformTable, chunk))
-                    .build());
-        }
+        DynamoBatch.batchWriteAllWithRetry(dynamoDb, platformTable, writes);
 
         boolean cognitoDeleted = cognito.deleteBySub(subjectSub);
         log.info("Erased subject. subjectSub={} items={} cognitoDeleted={}", subjectSub, writes.size(), cognitoDeleted);

@@ -18,9 +18,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
+import software.amazon.awssdk.services.dynamodb.paginators.QueryIterable;
 
 @ExtendWith(MockitoExtension.class)
 class UserErasureServiceTest {
@@ -42,10 +44,14 @@ class UserErasureServiceTest {
 
     @Test
     void eraseDeletesConsentWatchlistMirrorsThenCognito() {
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
         when(dynamoDb.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder()
                         .items(List.of(Map.of("ticker", s("RELIANCE.NS")), Map.of("ticker", s("INFY.NS"))))
                         .build());
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
+                .thenReturn(BatchWriteItemResponse.builder().build());
         when(cognito.deleteBySub("user-1")).thenReturn(true);
 
         ErasureResult result = erasure.erase("user-1");
@@ -75,8 +81,12 @@ class UserErasureServiceTest {
 
     @Test
     void eraseDeletesConsentAndCognitoEvenWhenWatchlistEmpty() {
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
         when(dynamoDb.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of()).build());
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
+                .thenReturn(BatchWriteItemResponse.builder().build());
         when(cognito.deleteBySub("ghost")).thenReturn(false);
 
         ErasureResult result = erasure.erase("ghost");
@@ -89,6 +99,28 @@ class UserErasureServiceTest {
                 .containsExactly("CONSENT");
         assertThat(result.itemsDeleted()).isEqualTo(1);
         assertThat(result.cognitoUserDeleted()).isFalse();
+    }
+
+    @Test
+    void erasePaginatesWatchlistAcrossPages() {
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder()
+                        .items(List.of(Map.of("ticker", s("RELIANCE.NS"))))
+                        .lastEvaluatedKey(Map.of("PK", s("USER#user-1"), "SK", s("WATCH#RELIANCE.NS")))
+                        .build())
+                .thenReturn(QueryResponse.builder()
+                        .items(List.of(Map.of("ticker", s("INFY.NS"))))
+                        .build());
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
+                .thenReturn(BatchWriteItemResponse.builder().build());
+        when(cognito.deleteBySub("user-1")).thenReturn(true);
+
+        ErasureResult result = erasure.erase("user-1");
+
+        // CONSENT + 2 tickers * (WATCH# + WATCHSET) = 5 deletes
+        assertThat(result.itemsDeleted()).isEqualTo(5);
     }
 
     private static AttributeValue s(String value) {
