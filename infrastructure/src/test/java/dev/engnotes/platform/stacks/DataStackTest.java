@@ -1,9 +1,12 @@
 package dev.engnotes.platform.stacks;
 
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import software.amazon.awscdk.App;
 import software.amazon.awscdk.Environment;
 import software.amazon.awscdk.StackProps;
+import software.amazon.awscdk.assertions.Match;
 import software.amazon.awscdk.assertions.Template;
 
 class DataStackTest {
@@ -28,12 +31,16 @@ class DataStackTest {
     void hasMonthlyCostBudget() {
         var t = synth();
         t.resourceCountIs("AWS::Budgets::Budget", 1);
+        var emailEntry = Match.objectLike(
+                Map.of("Subscribers", Match.arrayWith(List.of(Match.objectLike(Map.of("SubscriptionType", "EMAIL"))))));
         t.hasResourceProperties(
                 "AWS::Budgets::Budget",
-                java.util.Map.of(
+                Match.objectLike(Map.of(
                         "Budget",
-                        software.amazon.awscdk.assertions.Match.objectLike(java.util.Map.of(
-                                "BudgetType", "COST",
-                                "TimeUnit", "MONTHLY"))));
+                                Match.objectLike(Map.of(
+                                        "BudgetType", "COST",
+                                        "TimeUnit", "MONTHLY",
+                                        "BudgetLimit", Match.objectLike(Map.of("Amount", 5, "Unit", "USD")))),
+                        "NotificationsWithSubscribers", Match.arrayWith(List.of(emailEntry, emailEntry, emailEntry)))));
     }
 }

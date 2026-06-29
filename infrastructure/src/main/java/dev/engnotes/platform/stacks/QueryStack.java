@@ -654,7 +654,7 @@ public class QueryStack extends Stack {
         var api5xxRateAlarm = Alarm.Builder.create(this, "Api5xxRateAlarm")
                 .alarmName("financial-api-5xx-rate-" + env)
                 .alarmDescription("[P1] API availability - users are receiving 5XX errors.\n"
-                        + "Symptom: 5XX rate > 1% (>= 5 requests) for 5 min.\n"
+                        + "Symptom: 5XX rate > 1% (>= 5 errors) for 5 min.\n"
                         + "Likely causes: Lambda errors, DynamoDB throttle, downstream timeout.\n"
                         + "First action: check the Lambdas row on the dashboard for the failing function.")
                 .metric(serverErrorRate)
@@ -719,6 +719,29 @@ public class QueryStack extends Stack {
                         .width(8)
                         .build());
 
+        // metricConcurrentExecutions() is not on IFunction in CDK 2.260.0; use raw Metric per function.
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("Lambda invocations")
+                        .left(fns.values().stream()
+                                .map(fn -> fn.metricInvocations())
+                                .toList())
+                        .width(12)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("Lambda concurrent executions")
+                        .left(fns.values().stream()
+                                .map(fn -> Metric.Builder.create()
+                                        .namespace("AWS/Lambda")
+                                        .metricName("ConcurrentExecutions")
+                                        .dimensionsMap(Map.of("FunctionName", fn.getFunctionName()))
+                                        .statistic("Maximum")
+                                        .period(Duration.minutes(5))
+                                        .build())
+                                .toList())
+                        .width(12)
+                        .build());
+
         dashboard.addWidgets(
                 GraphWidget.Builder.create()
                         .title("Ingestion executions")
@@ -757,9 +780,45 @@ public class QueryStack extends Stack {
                         .width(12)
                         .build());
 
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("DynamoDB consumed capacity (audit table)")
+                        .left(List.of(
+                                data.getAuditTable().metricConsumedReadCapacityUnits(),
+                                data.getAuditTable().metricConsumedWriteCapacityUnits()))
+                        .width(12)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("DynamoDB system errors (platform + audit tables)")
+                        .left(List.of(
+                                Metric.Builder.create()
+                                        .namespace("AWS/DynamoDB")
+                                        .metricName("SystemErrors")
+                                        .dimensionsMap(Map.of(
+                                                "TableName",
+                                                data.getPlatformTable().getTableName()))
+                                        .statistic("Sum")
+                                        .period(Duration.minutes(5))
+                                        .build(),
+                                Metric.Builder.create()
+                                        .namespace("AWS/DynamoDB")
+                                        .metricName("SystemErrors")
+                                        .dimensionsMap(Map.of(
+                                                "TableName",
+                                                data.getAuditTable().getTableName()))
+                                        .statistic("Sum")
+                                        .period(Duration.minutes(5))
+                                        .build()))
+                        .width(12)
+                        .build());
+
         dashboard.addWidgets(AlarmStatusWidget.Builder.create()
-                .title("Page alarms (P1)")
-                .alarms(List.of(p99LatencyAlarm, api5xxRateAlarm))
+                .title("Alarms (P1 + P2)")
+                .alarms(List.of(
+                        p99LatencyAlarm,
+                        api5xxRateAlarm,
+                        ingestion.getPipelineFailedAlarm(),
+                        ingestion.getDlqDepthAlarm()))
                 .width(24)
                 .build());
 

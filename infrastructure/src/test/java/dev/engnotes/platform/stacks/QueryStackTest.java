@@ -36,4 +36,14 @@ class QueryStackTest {
     void hasPlatformDashboard() {
         synth().resourceCountIs("AWS::CloudWatch::Dashboard", 1);
     }
+
+    @Test
+    void p99AlarmPagesCriticalTopicWithSustainedWindow() {
+        synth().hasResourceProperties(
+                        "AWS::CloudWatch::Alarm",
+                        Match.objectLike(Map.of(
+                                "AlarmName", "financial-api-p99-latency-dev",
+                                "EvaluationPeriods", 5,
+                                "DatapointsToAlarm", 5)));
+    }
 }

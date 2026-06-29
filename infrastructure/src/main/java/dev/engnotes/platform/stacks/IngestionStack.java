@@ -48,6 +48,8 @@ public class IngestionStack extends Stack {
 
     private final Queue dlq;
     private final StateMachine stateMachine;
+    private final Alarm pipelineFailedAlarm;
+    private final Alarm dlqDepthAlarm;
 
     public IngestionStack(
             final Construct scope,
@@ -390,7 +392,7 @@ public class IngestionStack extends Stack {
         // Ingestion is async/batch, so these page no one in real time; they open a ticket to act today.
         // ExecutionsFailed and DLQ depth are proxies for the true symptom (stale/missing market data)
         // until a data-freshness metric exists.
-        Alarm.Builder.create(this, "IngestionPipelineFailedAlarm")
+        this.pipelineFailedAlarm = Alarm.Builder.create(this, "IngestionPipelineFailedAlarm")
                 .alarmName("financial-ingestion-pipeline-failed-" + env)
                 .alarmDescription("[P2] Ingestion pipeline execution failed - market data may be stale.\n"
                         + "Symptom: Step Functions ExecutionsFailed >= 1 in 5 min.\n"
@@ -404,10 +406,10 @@ public class IngestionStack extends Stack {
                 .evaluationPeriods(1)
                 .comparisonOperator(ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD)
                 .treatMissingData(TreatMissingData.NOT_BREACHING)
-                .build()
-                .addAlarmAction(new SnsAction(data.getAlertTopic()));
+                .build();
+        this.pipelineFailedAlarm.addAlarmAction(new SnsAction(data.getAlertTopic()));
 
-        Alarm.Builder.create(this, "IngestionDlqDepthAlarm")
+        this.dlqDepthAlarm = Alarm.Builder.create(this, "IngestionDlqDepthAlarm")
                 .alarmName("financial-ingestion-dlq-depth-" + env)
                 .alarmDescription("[P2] Ingestion DLQ has messages - one or more tickers failed and need replay.\n"
                         + "Symptom: ApproximateNumberOfMessagesVisible > 0 in 5 min.\n"
@@ -420,8 +422,8 @@ public class IngestionStack extends Stack {
                 .evaluationPeriods(1)
                 .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
                 .treatMissingData(TreatMissingData.NOT_BREACHING)
-                .build()
-                .addAlarmAction(new SnsAction(data.getAlertTopic()));
+                .build();
+        this.dlqDepthAlarm.addAlarmAction(new SnsAction(data.getAlertTopic()));
 
         // ReadWatchset queries the KMS-encrypted table directly, so the state-machine role needs
         // decrypt on the platform table's key in addition to the dynamodb:Query that CallAwsService
@@ -495,5 +497,15 @@ public class IngestionStack extends Stack {
     /** The ingestion DLQ, exposed so the dashboard stack can wire depth widgets. */
     public Queue getDlq() {
         return dlq;
+    }
+
+    /** The pipeline-failed alarm, exposed so the dashboard can list it in the AlarmStatusWidget. */
+    public Alarm getPipelineFailedAlarm() {
+        return pipelineFailedAlarm;
+    }
+
+    /** The DLQ depth alarm, exposed so the dashboard can list it in the AlarmStatusWidget. */
+    public Alarm getDlqDepthAlarm() {
+        return dlqDepthAlarm;
     }
 }
