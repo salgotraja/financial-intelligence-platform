@@ -31,6 +31,7 @@ public class DataStack extends Stack {
     private final Table auditTable;
     private final IBucket dataLakeBucket;
     private final Topic alertTopic;
+    private final Topic criticalTopic;
 
     public DataStack(final Construct scope, final String id, final StackProps props, final String env) {
         super(scope, id, props);
@@ -149,6 +150,17 @@ public class DataStack extends Stack {
         String alertEmail = alertEmailContext != null ? alertEmailContext.toString() : "alerts@engnotes.dev";
         alertTopic.addSubscription(EmailSubscription.Builder.create(alertEmail).build());
 
+        // SNS Critical/Page Topic - P1 symptom alarms (API availability, p99 latency) publish here,
+        // kept separate from the warning topic so future routing (SMS/PagerDuty) is a subscription
+        // change, not a redesign. Same KMS key and email as the warning topic: one inbox today, two
+        // channels tomorrow.
+        this.criticalTopic = Topic.Builder.create(this, "CriticalTopic")
+                .topicName("financial-platform-alerts-critical-" + env)
+                .masterKey(encryptionKey)
+                .build();
+        criticalTopic.addSubscription(
+                EmailSubscription.Builder.create(alertEmail).build());
+
         // Outputs - dependent stacks import these by name.
         new CfnOutput(
                 this,
@@ -201,5 +213,9 @@ public class DataStack extends Stack {
 
     public Topic getAlertTopic() {
         return alertTopic;
+    }
+
+    public Topic getCriticalTopic() {
+        return criticalTopic;
     }
 }

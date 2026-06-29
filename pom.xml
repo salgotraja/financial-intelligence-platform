@@ -17,7 +17,6 @@
     <description>Serverless financial intelligence platform (parent aggregator)</description>
 
     <modules>
-        <module>infrastructure</module>
         <module>functions/ingestion-function</module>
         <module>functions/insight-function</module>
         <module>functions/query-function</module>
@@ -25,6 +24,7 @@
         <module>functions/authorizer-function</module>
         <module>functions/consent-function</module>
         <module>functions/dsr-function</module>
+        <module>infrastructure</module>
     </modules>
 
     <properties>
