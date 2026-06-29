@@ -665,6 +665,104 @@ public class QueryStack extends Stack {
                 .build();
         api5xxRateAlarm.addAlarmAction(new SnsAction(data.getCriticalTopic()));
 
+        // == Platform dashboard ==
+        // One pane aggregating user-facing symptoms (API, Lambda) and diagnostic causes (ingestion,
+        // data). Built here in the DAG-sink stack so every widget uses real construct refs.
+        var dashboard = Dashboard.Builder.create(this, "PlatformDashboard")
+                .dashboardName("financial-platform-" + env)
+                .build();
+
+        var fns = Map.of(
+                "query", queryFn,
+                "watchlist", watchlistFn,
+                "consent", consentFn,
+                "dsr", dsrFn,
+                "authorizer", authorizerFn);
+
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("API latency p50/p90/p99")
+                        .left(List.of(
+                                api.metricLatency(
+                                        MetricOptions.builder().statistic("p50").build()),
+                                api.metricLatency(
+                                        MetricOptions.builder().statistic("p90").build()),
+                                api.metricLatency(
+                                        MetricOptions.builder().statistic("p99").build())))
+                        .width(12)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("API requests / 4XX / 5XX")
+                        .left(List.of(api.metricCount(), api.metricClientError(), api.metricServerError()))
+                        .width(12)
+                        .build());
+
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("Lambda errors")
+                        .left(fns.values().stream().map(fn -> fn.metricErrors()).toList())
+                        .width(8)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("Lambda throttles")
+                        .left(fns.values().stream()
+                                .map(fn -> fn.metricThrottles())
+                                .toList())
+                        .width(8)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("Lambda duration p99")
+                        .left(fns.values().stream()
+                                .map(fn -> fn.metricDuration(
+                                        MetricOptions.builder().statistic("p99").build()))
+                                .toList())
+                        .width(8)
+                        .build());
+
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("Ingestion executions")
+                        .left(List.of(
+                                ingestion.getStateMachine().metricStarted(),
+                                ingestion.getStateMachine().metricSucceeded(),
+                                ingestion.getStateMachine().metricFailed(),
+                                ingestion.getStateMachine().metricTimedOut()))
+                        .width(12)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("Ingestion DLQ depth / age")
+                        .left(List.of(ingestion.getDlq().metricApproximateNumberOfMessagesVisible()))
+                        .right(List.of(ingestion.getDlq().metricApproximateAgeOfOldestMessage()))
+                        .width(12)
+                        .build());
+
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("DynamoDB consumed capacity (platform table)")
+                        .left(List.of(
+                                data.getPlatformTable().metricConsumedReadCapacityUnits(),
+                                data.getPlatformTable().metricConsumedWriteCapacityUnits()))
+                        .width(12)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("DynamoDB throttled requests (platform table)")
+                        .left(List.of(Metric.Builder.create()
+                                .namespace("AWS/DynamoDB")
+                                .metricName("ThrottledRequests")
+                                .dimensionsMap(Map.of(
+                                        "TableName", data.getPlatformTable().getTableName()))
+                                .statistic("Sum")
+                                .period(Duration.minutes(5))
+                                .build()))
+                        .width(12)
+                        .build());
+
+        dashboard.addWidgets(AlarmStatusWidget.Builder.create()
+                .title("Page alarms (P1)")
+                .alarms(List.of(p99LatencyAlarm, api5xxRateAlarm))
+                .width(24)
+                .build());
+
         // CloudFormation Outputs
         new CfnOutput(
                 this,

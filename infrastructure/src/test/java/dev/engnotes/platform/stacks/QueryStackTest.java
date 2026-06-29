@@ -31,4 +31,9 @@ class QueryStackTest {
         synth().hasResourceProperties(
                         "AWS::CloudWatch::Alarm", Match.objectLike(Map.of("AlarmName", "financial-api-5xx-rate-dev")));
     }
+
+    @Test
+    void hasPlatformDashboard() {
+        synth().resourceCountIs("AWS::CloudWatch::Dashboard", 1);
+    }
 }
