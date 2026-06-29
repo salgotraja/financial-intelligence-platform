@@ -23,4 +23,17 @@ class DataStackTest {
     void hasWarningAndCriticalTopics() {
         synth().resourceCountIs("AWS::SNS::Topic", 2);
     }
+
+    @Test
+    void hasMonthlyCostBudget() {
+        var t = synth();
+        t.resourceCountIs("AWS::Budgets::Budget", 1);
+        t.hasResourceProperties(
+                "AWS::Budgets::Budget",
+                java.util.Map.of(
+                        "Budget",
+                        software.amazon.awscdk.assertions.Match.objectLike(java.util.Map.of(
+                                "BudgetType", "COST",
+                                "TimeUnit", "MONTHLY"))));
+    }
 }
