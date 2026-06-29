@@ -8,6 +8,11 @@ import software.amazon.awscdk.customresources.AwsCustomResource;
 import software.amazon.awscdk.customresources.AwsCustomResourcePolicy;
 import software.amazon.awscdk.customresources.AwsSdkCall;
 import software.amazon.awscdk.customresources.PhysicalResourceId;
+import software.amazon.awscdk.services.cloudwatch.Alarm;
+import software.amazon.awscdk.services.cloudwatch.ComparisonOperator;
+import software.amazon.awscdk.services.cloudwatch.MetricOptions;
+import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
+import software.amazon.awscdk.services.cloudwatch.actions.SnsAction;
 import software.amazon.awscdk.services.events.*;
 import software.amazon.awscdk.services.events.Schedule;
 import software.amazon.awscdk.services.events.targets.SfnStateMachine;
@@ -41,7 +46,10 @@ import software.constructs.Construct;
  */
 public class IngestionStack extends Stack {
 
+    private final Queue dlq;
     private final StateMachine stateMachine;
+    private final Alarm pipelineFailedAlarm;
+    private final Alarm dlqDepthAlarm;
 
     public IngestionStack(
             final Construct scope,
@@ -59,7 +67,7 @@ public class IngestionStack extends Stack {
         // == Dead Letter Queue ==
         // The catch path publishes failed executions here; the EventBridge target
         // also lands start-failures here. In prod a Lambda subscriber pages on-call.
-        Queue dlq = Queue.Builder.create(this, "IngestionDLQ")
+        this.dlq = Queue.Builder.create(this, "IngestionDLQ")
                 .queueName("financial-ingestion-dlq-" + env)
                 .encryption(QueueEncryption.KMS)
                 .encryptionMasterKey(data.getEncryptionKey())
@@ -380,6 +388,43 @@ public class IngestionStack extends Stack {
                 .build();
         this.stateMachine = stateMachine;
 
+        // == Symptom alarms (P2/TICKET -> warning topic) ==
+        // Ingestion is async/batch, so these page no one in real time; they open a ticket to act today.
+        // ExecutionsFailed and DLQ depth are proxies for the true symptom (stale/missing market data)
+        // until a data-freshness metric exists.
+        this.pipelineFailedAlarm = Alarm.Builder.create(this, "IngestionPipelineFailedAlarm")
+                .alarmName("financial-ingestion-pipeline-failed-" + env)
+                .alarmDescription("[P2] Ingestion pipeline execution failed - market data may be stale.\n"
+                        + "Symptom: Step Functions ExecutionsFailed >= 1 in 5 min.\n"
+                        + "Likely causes: source fetch error, Lambda failure, DynamoDB write error.\n"
+                        + "First action: open the State Machine execution history and the dashboard Ingestion row.")
+                .metric(stateMachine.metricFailed(MetricOptions.builder()
+                        .statistic("Sum")
+                        .period(Duration.minutes(5))
+                        .build()))
+                .threshold(1)
+                .evaluationPeriods(1)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build();
+        this.pipelineFailedAlarm.addAlarmAction(new SnsAction(data.getAlertTopic()));
+
+        this.dlqDepthAlarm = Alarm.Builder.create(this, "IngestionDlqDepthAlarm")
+                .alarmName("financial-ingestion-dlq-depth-" + env)
+                .alarmDescription("[P2] Ingestion DLQ has messages - one or more tickers failed and need replay.\n"
+                        + "Symptom: ApproximateNumberOfMessagesVisible > 0 in 5 min.\n"
+                        + "First action: inspect the DLQ messages and the dashboard Ingestion row, then replay.")
+                .metric(dlq.metricApproximateNumberOfMessagesVisible(MetricOptions.builder()
+                        .statistic("Maximum")
+                        .period(Duration.minutes(5))
+                        .build()))
+                .threshold(0)
+                .evaluationPeriods(1)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build();
+        this.dlqDepthAlarm.addAlarmAction(new SnsAction(data.getAlertTopic()));
+
         // ReadWatchset queries the KMS-encrypted table directly, so the state-machine role needs
         // decrypt on the platform table's key in addition to the dynamodb:Query that CallAwsService
         // grants via iamResources.
@@ -447,5 +492,20 @@ public class IngestionStack extends Stack {
     /** The ingestion pipeline state machine, exposed so the API stack can grant StartExecution. */
     public StateMachine getStateMachine() {
         return stateMachine;
+    }
+
+    /** The ingestion DLQ, exposed so the dashboard stack can wire depth widgets. */
+    public Queue getDlq() {
+        return dlq;
+    }
+
+    /** The pipeline-failed alarm, exposed so the dashboard can list it in the AlarmStatusWidget. */
+    public Alarm getPipelineFailedAlarm() {
+        return pipelineFailedAlarm;
+    }
+
+    /** The DLQ depth alarm, exposed so the dashboard can list it in the AlarmStatusWidget. */
+    public Alarm getDlqDepthAlarm() {
+        return dlqDepthAlarm;
     }
 }

@@ -2,6 +2,7 @@ package dev.engnotes.platform.stacks;
 
 import java.util.List;
 import software.amazon.awscdk.*;
+import software.amazon.awscdk.services.budgets.CfnBudget;
 import software.amazon.awscdk.services.dynamodb.*;
 import software.amazon.awscdk.services.kms.Key;
 import software.amazon.awscdk.services.kms.KeySpec;
@@ -31,6 +32,7 @@ public class DataStack extends Stack {
     private final Table auditTable;
     private final IBucket dataLakeBucket;
     private final Topic alertTopic;
+    private final Topic criticalTopic;
 
     public DataStack(final Construct scope, final String id, final StackProps props, final String env) {
         super(scope, id, props);
@@ -149,6 +151,38 @@ public class DataStack extends Stack {
         String alertEmail = alertEmailContext != null ? alertEmailContext.toString() : "alerts@engnotes.dev";
         alertTopic.addSubscription(EmailSubscription.Builder.create(alertEmail).build());
 
+        // SNS Critical/Page Topic - P1 symptom alarms (API availability, p99 latency) publish here,
+        // kept separate from the warning topic so future routing (SMS/PagerDuty) is a subscription
+        // change, not a redesign. Same KMS key and email as the warning topic: one inbox today, two
+        // channels tomorrow.
+        this.criticalTopic = Topic.Builder.create(this, "CriticalTopic")
+                .topicName("financial-platform-alerts-critical-" + env)
+                .masterKey(encryptionKey)
+                .build();
+        criticalTopic.addSubscription(
+                EmailSubscription.Builder.create(alertEmail).build());
+
+        // Monthly cost budget - codifies the lean learning-account limit. Notify-only (no enforcement).
+        // Notifications use EMAIL subscribers (not SNS): the alert topics are KMS-encrypted, and routing
+        // Budgets through an encrypted topic would need both an SNS topic policy and a KMS key-policy
+        // grant for budgets.amazonaws.com - two silent-failure points for no benefit with one recipient.
+        // A Budget is account-scoped; multi-env on one account would double-alert (latent: only dev today).
+        CfnBudget.Builder.create(this, "MonthlyCostBudget")
+                .budget(CfnBudget.BudgetDataProperty.builder()
+                        .budgetName("financial-platform-monthly-" + env)
+                        .budgetType("COST")
+                        .timeUnit("MONTHLY")
+                        .budgetLimit(CfnBudget.SpendProperty.builder()
+                                .amount(5)
+                                .unit("USD")
+                                .build())
+                        .build())
+                .notificationsWithSubscribers(List.of(
+                        budgetNotification("ACTUAL", 80, alertEmail),
+                        budgetNotification("ACTUAL", 100, alertEmail),
+                        budgetNotification("FORECASTED", 100, alertEmail)))
+                .build();
+
         // Outputs - dependent stacks import these by name.
         new CfnOutput(
                 this,
@@ -183,6 +217,22 @@ public class DataStack extends Stack {
                         .build());
     }
 
+    private static CfnBudget.NotificationWithSubscribersProperty budgetNotification(
+            final String notificationType, final Number thresholdPct, final String email) {
+        return CfnBudget.NotificationWithSubscribersProperty.builder()
+                .notification(CfnBudget.NotificationProperty.builder()
+                        .notificationType(notificationType)
+                        .comparisonOperator("GREATER_THAN")
+                        .threshold(thresholdPct)
+                        .thresholdType("PERCENTAGE")
+                        .build())
+                .subscribers(List.of(CfnBudget.SubscriberProperty.builder()
+                        .subscriptionType("EMAIL")
+                        .address(email)
+                        .build()))
+                .build();
+    }
+
     public Key getEncryptionKey() {
         return encryptionKey;
     }
@@ -201,5 +251,9 @@ public class DataStack extends Stack {
 
     public Topic getAlertTopic() {
         return alertTopic;
+    }
+
+    public Topic getCriticalTopic() {
+        return criticalTopic;
     }
 }
