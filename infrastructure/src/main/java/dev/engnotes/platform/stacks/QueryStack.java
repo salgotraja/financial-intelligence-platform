@@ -612,22 +612,58 @@ public class QueryStack extends Stack {
                                         .build()))
                                 .build());
 
-        // CloudWatch Alarms
-        // p99 > 500ms: user experience degraded
+        // CloudWatch Alarms (P1 / page -> critical topic)
+        // p99 latency: users are experiencing slowness. Sustained 5 min to cut flapping.
         var p99LatencyAlarm = Alarm.Builder.create(this, "p99LatencyAlarm")
                 .alarmName("financial-api-p99-latency-" + env)
-                .alarmDescription("API p99 latency exceeded 500ms")
+                .alarmDescription("[P1] API latency - users are experiencing slowness.\n"
+                        + "Symptom: p99 latency > 500ms for 5 consecutive minutes.\n"
+                        + "Likely causes: cold starts, DynamoDB latency, downstream slowness.\n"
+                        + "First action: check the API and Lambdas rows on the dashboard.")
                 .metric(api.metricLatency(MetricOptions.builder()
                         .statistic("p99")
                         .period(Duration.minutes(1))
                         .build()))
                 .threshold(500)
-                .evaluationPeriods(3)
+                .evaluationPeriods(5)
+                .datapointsToAlarm(5)
                 .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
                 .treatMissingData(TreatMissingData.NOT_BREACHING)
                 .build();
+        p99LatencyAlarm.addAlarmAction(new SnsAction(data.getCriticalTopic()));
 
-        p99LatencyAlarm.addAlarmAction(new SnsAction(data.getAlertTopic()));
+        // API 5XX error rate: users are receiving server errors. The metric-math encodes a low-volume
+        // floor so a single error on an idle system never pages: when 5XX count < 5 the expression
+        // yields 0 (never breaches); otherwise it yields the true error-rate percentage.
+        var serverErrorRate = MathExpression.Builder.create()
+                .expression("IF(errors >= 5, 100 * errors / total, 0)")
+                .usingMetrics(Map.of(
+                        "errors",
+                        api.metricServerError(MetricOptions.builder()
+                                .statistic("Sum")
+                                .period(Duration.minutes(5))
+                                .build()),
+                        "total",
+                        api.metricCount(MetricOptions.builder()
+                                .statistic("Sum")
+                                .period(Duration.minutes(5))
+                                .build())))
+                .period(Duration.minutes(5))
+                .build();
+
+        var api5xxRateAlarm = Alarm.Builder.create(this, "Api5xxRateAlarm")
+                .alarmName("financial-api-5xx-rate-" + env)
+                .alarmDescription("[P1] API availability - users are receiving 5XX errors.\n"
+                        + "Symptom: 5XX rate > 1% (>= 5 requests) for 5 min.\n"
+                        + "Likely causes: Lambda errors, DynamoDB throttle, downstream timeout.\n"
+                        + "First action: check the Lambdas row on the dashboard for the failing function.")
+                .metric(serverErrorRate)
+                .threshold(1)
+                .evaluationPeriods(1)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build();
+        api5xxRateAlarm.addAlarmAction(new SnsAction(data.getCriticalTopic()));
 
         // CloudFormation Outputs
         new CfnOutput(
