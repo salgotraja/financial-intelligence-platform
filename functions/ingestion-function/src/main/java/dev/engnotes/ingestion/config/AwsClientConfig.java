@@ -63,9 +63,10 @@ public class AwsClientConfig {
 
     @Bean
     public S3Client s3Client() {
-        return withEndpoint(S3Client.builder())
-                .forcePathStyle(true)
-                .httpClient(UrlConnectionHttpClient.create())
-                .build();
+        var builder = withEndpoint(S3Client.builder()).httpClient(UrlConnectionHttpClient.create());
+        if (!endpointUrl.isBlank()) {
+            builder.forcePathStyle(true);
+        }
+        return builder.build();
     }
 }

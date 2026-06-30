@@ -6,6 +6,7 @@ import java.net.URI;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
 class AwsEndpointOverrideTest {
 
@@ -16,10 +17,13 @@ class AwsEndpointOverrideTest {
         setField("region", "ap-south-1");
         setField("endpointUrl", "http://localhost:4566");
         try (DynamoDbClient ddb = config.dynamoDbClient();
-                S3Client s3 = config.s3Client()) {
+                S3Client s3 = config.s3Client();
+                SecretsManagerClient sm = config.secretsManagerClient()) {
             assertThat(ddb.serviceClientConfiguration().endpointOverride())
                     .contains(URI.create("http://localhost:4566"));
             assertThat(s3.serviceClientConfiguration().endpointOverride())
+                    .contains(URI.create("http://localhost:4566"));
+            assertThat(sm.serviceClientConfiguration().endpointOverride())
                     .contains(URI.create("http://localhost:4566"));
         }
     }
@@ -28,8 +32,10 @@ class AwsEndpointOverrideTest {
     void noOverrideWhenEndpointUrlBlank() {
         setField("region", "ap-south-1");
         setField("endpointUrl", "");
-        try (DynamoDbClient ddb = config.dynamoDbClient()) {
+        try (DynamoDbClient ddb = config.dynamoDbClient();
+                S3Client s3 = config.s3Client()) {
             assertThat(ddb.serviceClientConfiguration().endpointOverride()).isEmpty();
+            assertThat(s3.serviceClientConfiguration().endpointOverride()).isEmpty();
         }
     }
 
