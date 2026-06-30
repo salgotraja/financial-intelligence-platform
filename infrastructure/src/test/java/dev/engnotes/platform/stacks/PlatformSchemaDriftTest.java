@@ -64,6 +64,8 @@ class PlatformSchemaDriftTest {
                                 "AttributeDefinitions",
                                 Match.arrayWith(List.of(
                                         Map.of("AttributeName", PlatformSchema.PK, "AttributeType", "S"),
-                                        Map.of("AttributeName", PlatformSchema.GSI1_PK, "AttributeType", "S"))))));
+                                        Map.of("AttributeName", PlatformSchema.SK, "AttributeType", "S"),
+                                        Map.of("AttributeName", PlatformSchema.GSI1_PK, "AttributeType", "S"),
+                                        Map.of("AttributeName", PlatformSchema.GSI1_SK, "AttributeType", "S"))))));
     }
 }
