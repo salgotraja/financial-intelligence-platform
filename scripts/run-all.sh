@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One paid entry point: preflight -> deploy -> seed -> mint -> smoke (gate) -> load -> record -> teardown.
 # A trap guarantees teardown if anything fails after deploy, so no cost leaks.
+set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
 here="$(dirname "$0")"
 preflight
