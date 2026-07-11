@@ -19,10 +19,13 @@ for t in "${TICKERS[@]}"; do
   run aws dynamodb put-item --table-name "$TABLE" --item "$item"
 done
 
-log "Creating test user $TEST_USER"
+log "Creating test user $TEST_USER (idempotent: Security pool is retained across runs)"
+# admin-create-user fails if the user already exists in the retained pool; tolerate that and reuse.
+# set-password and add-to-group below are idempotent, so a reused user is fully reset each run.
 run aws cognito-idp admin-create-user --user-pool-id "$USER_POOL_ID" \
   --username "$TEST_USER" --message-action SUPPRESS \
-  --user-attributes Name=email,Value="$TEST_USER" Name=email_verified,Value=true
+  --user-attributes Name=email,Value="$TEST_USER" Name=email_verified,Value=true \
+  || log "test user already exists in retained pool, reusing"
 run aws cognito-idp admin-set-user-password --user-pool-id "$USER_POOL_ID" \
   --username "$TEST_USER" --password "$TEST_USER_PASSWORD" --permanent
 run aws cognito-idp admin-add-user-to-group --user-pool-id "$USER_POOL_ID" \
