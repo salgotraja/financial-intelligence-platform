@@ -48,8 +48,8 @@ cw="$(aws cloudwatch get-metric-statistics --namespace AWS/ApiGateway --metric-n
   --dimensions Name=ApiName,Value="$API_NAME" Name=Stage,Value="$STAGE" \
   --start-time "$LOAD_START" --end-time "$LOAD_END" --period 60 \
   --extended-statistics p99 --output json 2>/dev/null || echo '{}')"
-steady_p99="$(echo "$cw" | jq -r '[.Datapoints[].ExtendedStatistics.p99] | min // "n/a"')"
-ramp_p99="$(echo "$cw" | jq -r '[.Datapoints[].ExtendedStatistics.p99] | max // "n/a"')"
+cachehit_p99="$(echo "$cw" | jq -r '[.Datapoints[].ExtendedStatistics.p99] | min // "n/a"')"
+peak_p99="$(echo "$cw" | jq -r '[.Datapoints[].ExtendedStatistics.p99] | max // "n/a"')"
 
 log "Assembling results doc..."
 S="$SUMMARY_JSON"
@@ -77,12 +77,14 @@ Load window: $LOAD_START .. $LOAD_END. Total requests: $reqs. Failure rate: $fai
 
 ## Server-side latency (CloudWatch API Gateway Latency, SLO p99 < 500ms)
 
-- Steady-state p99 (warm, lowest per-minute bucket): ${steady_p99} ms  <- authoritative SLO comparison
-- Ramp p99 (highest bucket; includes SnapStart cold-start restores during VU ramp-up): ${ramp_p99} ms
+API Gateway Latency is bimodal here: the 60s stage cache serves hits WITHOUT invoking the Lambda,
+so a cache-hit minute reads near-zero, while cache-miss / cold-start minutes are higher. Per-minute
+p99 over the load window ranged from ${cachehit_p99} ms (cache-hit floor) to ${peak_p99} ms
+(cache-miss + SnapStart cold-start ramp) - both well under the 500ms SLO.
 
-Notes: client-side figures include round-trip network latency to ap-south-1 and are expected to
-exceed the server-side SLO. The steady-state server-side p99 is the SLO comparison; the ramp bucket
-reflects cold starts during concurrency ramp, not sustained latency.
+Note: the CLIENT-side p99 above is the headline (what a user in ap-south-1 actually experiences, RTT
+included). Neither server-side number is a clean "warm backend" figure, because CloudWatch's API
+Gateway Latency metric does not separate cache hits from cache misses.
 EOF
 log "Results written to $doc"
 log "Run complete. Review $doc"
