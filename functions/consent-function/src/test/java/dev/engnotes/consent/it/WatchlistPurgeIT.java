@@ -54,5 +54,15 @@ class WatchlistPurgeIT extends AbstractLocalStackIT {
                         .build())
                 .items();
         assertThat(remaining).isEmpty();
+
+        var mirrors = ddb().query(QueryRequest.builder()
+                        .tableName(PlatformSchema.PLATFORM_TABLE)
+                        .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
+                        .expressionAttributeValues(Map.of(
+                                ":pk", AttributeValue.builder().s("WATCHSET").build(),
+                                ":sk", AttributeValue.builder().s("TICKER#").build()))
+                        .build())
+                .items();
+        assertThat(mirrors).isEmpty();
     }
 }
