@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# One paid entry point: preflight -> deploy -> seed -> mint -> smoke (gate) -> load -> record -> teardown.
-# A trap guarantees teardown if anything fails after deploy, so no cost leaks.
+# One paid entry point: preflight -> deploy -> seed -> mint -> smoke (gate) -> load -> record.
+# Does NOT tear down: stacks are LEFT RUNNING so you can inspect them in the AWS console. Run
+# scripts/teardown.sh yourself when done. On EVERY exit (success, failure, or crash) it prints a
+# loud teardown reminder so live stacks never leak silently.
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
 here="$(dirname "$0")"
@@ -9,13 +11,20 @@ preflight
 export TEST_USER_PASSWORD="$(openssl rand -base64 18)Aa1!"   # ephemeral, never persisted to git
 
 DEPLOYED=0
-cleanup() {
+remind_teardown() {
   if [[ "$DEPLOYED" == "1" ]]; then
-    log "TRAP: ensuring teardown after failure..."
-    "$here/teardown.sh" || log "teardown attempt failed; check console"
+    load_state || true
+    log ""
+    log "############################################################"
+    log "#  STACKS ARE LIVE ON REAL AWS ($ENV, $REGION) AND COST MONEY"
+    log "#    API: ${API_URL:-<see CloudFormation Exports>}"
+    log "#  Inspect in the console, then TEAR DOWN when done:"
+    log "#      ./scripts/teardown.sh"
+    log "#  (NAT gateway ~\$1/day accrues until you do.)"
+    log "############################################################"
   fi
 }
-trap cleanup EXIT
+trap remind_teardown EXIT
 
 read -r -p "This deploys to REAL AWS ($ENV, $REGION) and spends money. Type 'yes' to proceed: " ok
 [[ "$ok" == "yes" ]] || die "aborted by user"
@@ -52,8 +61,9 @@ cat > "$doc" <<EOF
 # Query-path Load Test Results (2026-07-11)
 
 Ephemeral real-AWS run, env=$ENV, region=$REGION. Path: \`GET /insights/{ticker}\` behind the
-Cognito authorizer, 10 req/s for 60s over ${#TICKERS[@]} rotating tickers (cache mix). All ephemeral
-stacks torn down after the run; only the deletion-protected DataStack retained.
+Cognito authorizer, 10 req/s for 60s over ${#TICKERS[@]} rotating tickers (cache mix). Ephemeral
+stacks left running for inspection, then torn down via \`scripts/teardown.sh\` (only the
+deletion-protected DataStack is kept).
 
 Load window: $LOAD_START .. $LOAD_END. Total requests: $reqs. Failure rate: $failr.
 
@@ -75,7 +85,6 @@ exceed the server-side SLO. The steady-state server-side p99 is the SLO comparis
 reflects cold starts during concurrency ramp, not sustained latency.
 EOF
 log "Results written to $doc"
-
-"$here/teardown.sh"; DEPLOYED=0   # explicit clean teardown; disarm trap
-trap - EXIT
-log "DONE. Review $doc"
+log "Run complete. Review $doc"
+# No auto-teardown: stacks stay up for console inspection. The EXIT trap prints the loud
+# teardown reminder below (fires on success, failure, and crash alike).
