@@ -1,10 +1,12 @@
 package dev.engnotes.ingestion.config;
 
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import software.amazon.awssdk.awscore.client.builder.AwsClientBuilder;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -19,13 +21,25 @@ import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
  * lazily via the default provider chain, so these beans construct without
  * contacting AWS at startup (the Spring context loads in tests with no creds).
  *
- * TODO(module-5): add the X-Ray SDK v2 ExecutionInterceptor for sub-segment tracing.
+ * aws.endpoint-url is normally blank (prod/Lambda); integration tests set it to a
+ * LocalStack endpoint to redirect every client. Blank means no override.
  */
 @Configuration
 public class AwsClientConfig {
 
     @Value("${aws.region:ap-south-1}")
     private String region;
+
+    @Value("${aws.endpoint-url:}")
+    private String endpointUrl;
+
+    private <B extends AwsClientBuilder<B, ?>> B withEndpoint(B builder) {
+        builder.region(Region.of(region));
+        if (!endpointUrl.isBlank()) {
+            builder.endpointOverride(URI.create(endpointUrl));
+        }
+        return builder;
+    }
 
     /** Shared JDK HttpClient for market-data providers; one per Lambda instance, reused across calls. */
     @Bean
@@ -35,25 +49,24 @@ public class AwsClientConfig {
 
     @Bean
     public SecretsManagerClient secretsManagerClient() {
-        return SecretsManagerClient.builder()
-                .region(Region.of(region))
+        return withEndpoint(SecretsManagerClient.builder())
                 .httpClient(UrlConnectionHttpClient.create())
                 .build();
     }
 
     @Bean
     public DynamoDbClient dynamoDbClient() {
-        return DynamoDbClient.builder()
-                .region(Region.of(region))
+        return withEndpoint(DynamoDbClient.builder())
                 .httpClient(UrlConnectionHttpClient.create())
                 .build();
     }
 
     @Bean
     public S3Client s3Client() {
-        return S3Client.builder()
-                .region(Region.of(region))
-                .httpClient(UrlConnectionHttpClient.create())
-                .build();
+        var builder = withEndpoint(S3Client.builder()).httpClient(UrlConnectionHttpClient.create());
+        if (!endpointUrl.isBlank()) {
+            builder.forcePathStyle(true);
+        }
+        return builder.build();
     }
 }

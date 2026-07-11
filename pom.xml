@@ -17,6 +17,7 @@
     <description>Serverless financial intelligence platform (parent aggregator)</description>
 
     <modules>
+        <module>integration-test-support</module>
         <module>functions/ingestion-function</module>
         <module>functions/insight-function</module>
         <module>functions/query-function</module>
@@ -34,6 +35,10 @@
         <!-- Spring Cloud (release train aligned to Spring Boot 4.1.x; it manages
              spring-cloud-function + the AWS adapter - do not pin those yourself) -->
         <spring-cloud.version>2025.1.2</spring-cloud.version>
+
+        <!-- Override Boot's default (2.x) so integration-test-support can use the stable 1.x
+             artifact IDs (localstack, junit-jupiter). Remove when migrating to TC 2.x names. -->
+        <testcontainers.version>1.21.4</testcontainers.version>
 
         <!-- AWS SDK v2 -->
         <aws-sdk.version>2.46.17</aws-sdk.version>
@@ -200,6 +205,16 @@
                         <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
                     </configuration>
                 </plugin>
+                <!-- Failsafe runs *IT integration tests in the integration-test/verify phases.
+                     Config only here; executions are bound under the integration-tests profile so
+                     a plain `mvn verify` never needs Docker. -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <configuration>
+                        <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
         <plugins>
@@ -227,5 +242,30 @@
             </plugin>
         </plugins>
     </build>
+
+
+    <profiles>
+        <!-- Opt-in: `./mvnw verify -Pintegration-tests` runs LocalStack-backed *IT tests.
+             Requires a running Docker daemon. Plain `mvn verify` is unaffected. -->
+        <profile>
+            <id>integration-tests</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>
