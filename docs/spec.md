@@ -302,7 +302,7 @@ and the anchor for consent, purpose limitation, and data-subject rights.
 - Standard attributes only for data actually used: email, name, phone. No custom attribute is
   added for data the platform does not process (DPDP data-minimisation maps directly).
 - Custom attributes for consent state: `consent_given` (bool), `consent_timestamp`,
-  `consent_version`, `data_processing_purpose`.
+  `consent_version`, `processing_purpose` (Cognito custom-attribute names are capped at 20 chars).
 
 ### Authorization groups (purpose limitation)
 User Pool Groups gate which endpoints a token can reach; the group claim is injected into the

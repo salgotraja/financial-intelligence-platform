@@ -284,26 +284,29 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        // Invoke the authorizer via a published-version alias so SnapStart engages; invoking $LATEST
+        // would run the full Spring Boot init on every cold start (added to every authorized request).
+        var authorizerFnAlias = Alias.Builder.create(this, "AuthorizerFnAlias")
+                .aliasName("live")
+                .version(authorizerFn.getCurrentVersion())
+                .build();
+
         var apiAuthorizer = TokenAuthorizer.Builder.create(this, "ApiAuthorizer")
                 .authorizerName("financial-cognito-authorizer-" + env)
-                .handler(authorizerFn)
+                .handler(authorizerFnAlias)
                 .identitySource("method.request.header.Authorization")
                 .resultsCacheTtl(Duration.minutes(5))
                 .build();
 
-        // Provisioned concurrency on the published version.
-        // Why: eliminate cold starts for user-facing requests.
-        // Cost: pay for provisioned concurrency even when idle
-        // In dev: set to 0 to save cost. In prod: tune based on expected traffic
-        var queryFnVersion = queryFn.getCurrentVersion();
-
+        // Invoke the query Lambda via a published-version alias so SnapStart engages; invoking
+        // $LATEST would run the full Spring Boot init (~5-10s) on every cold start. Provisioned
+        // concurrency (paid even when idle) stays prod-only.
+        var queryAliasBuilder =
+                Alias.Builder.create(this, "QueryFnAlias").aliasName("live").version(queryFn.getCurrentVersion());
         if (env.equals("prod")) {
-            var queryFnAlias = Alias.Builder.create(this, "QueryFnAlias")
-                    .aliasName("live")
-                    .version(queryFnVersion)
-                    .provisionedConcurrentExecutions(2) // adjust based on load test
-                    .build();
+            queryAliasBuilder.provisionedConcurrentExecutions(2); // adjust based on load test
         }
+        var queryFnAlias = queryAliasBuilder.build();
 
         // API Gateway
         var apiGwLogs = LogGroup.Builder.create(this, "ApiGwAccessLogs")
@@ -336,12 +339,15 @@ public class QueryStack extends Stack {
         // Non-proxy: the request template maps the path ticker + request id onto the function's
         // QueryRequest record. With the default proxy integration the template is ignored and the
         // raw event arrives, so the ticker resolves to null.
-        var queryIntegration = LambdaIntegration.Builder.create(queryFn)
+        var queryIntegration = LambdaIntegration.Builder.create(queryFnAlias)
                 .proxy(false)
                 .requestTemplates(Map.of(
                         "application/json",
                         "{ \"ticker\": \"$input.params('ticker')\", "
                                 + "  \"correlationId\": \"$context.requestId\" }"))
+                // {ticker} must be a cache key, else the 60s stage cache serves one ticker's
+                // response for every ticker (wrong data + collapses the load-test cache mix).
+                .cacheKeyParameters(List.of("method.request.path.ticker"))
                 .integrationResponses(
                         List.of(IntegrationResponse.builder().statusCode("200").build()))
                 .build();

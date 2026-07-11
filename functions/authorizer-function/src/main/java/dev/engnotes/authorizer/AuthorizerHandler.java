@@ -1,8 +1,6 @@
 package dev.engnotes.authorizer;
 
 import com.amazonaws.services.lambda.runtime.events.APIGatewayCustomAuthorizerEvent;
-import com.amazonaws.services.lambda.runtime.events.IamPolicyResponse;
-import com.amazonaws.services.lambda.runtime.events.IamPolicyResponse.Statement;
 import dev.engnotes.authorizer.jwt.JwtVerifier;
 import dev.engnotes.authorizer.jwt.Principal;
 import dev.engnotes.authorizer.policy.RoutePolicy;
@@ -35,7 +33,7 @@ public class AuthorizerHandler {
     }
 
     @Bean
-    public Function<APIGatewayCustomAuthorizerEvent, IamPolicyResponse> authorize(JwtVerifier verifier) {
+    public Function<APIGatewayCustomAuthorizerEvent, Map<String, Object>> authorize(JwtVerifier verifier) {
         return event -> {
             String methodArn = event.getMethodArn();
             try {
@@ -71,32 +69,27 @@ public class AuthorizerHandler {
         return String.join(":", colon[0], colon[1], colon[2], colon[3], colon[4], path[0]) + "/" + path[1];
     }
 
-    private static Statement allow(List<String> resources) {
-        return Statement.builder()
-                .withEffect("Allow")
-                .withAction("execute-api:Invoke")
-                .withResource(resources)
-                .build();
+    // API Gateway rejects a policy statement that carries a null Condition; build statements with
+    // no Condition key. (Jackson 3 ignores the aws-lambda-java-events Jackson-2 @JsonInclude that
+    // would otherwise have dropped it.)
+    private static Map<String, Object> allow(List<String> resources) {
+        return statement("Allow", resources);
     }
 
-    private static Statement deny(String resource) {
-        return Statement.builder()
-                .withEffect("Deny")
-                .withAction("execute-api:Invoke")
-                .withResource(List.of(resource))
-                .build();
+    private static Map<String, Object> deny(String resource) {
+        return statement("Deny", List.of(resource));
     }
 
-    private static IamPolicyResponse policy(String principalId, Statement statement, String sub, String groups) {
-        IamPolicyResponse.PolicyDocument document = IamPolicyResponse.PolicyDocument.builder()
-                .withVersion(IamPolicyResponse.VERSION_2012_10_17)
-                .withStatement(List.of(statement))
-                .build();
-        return IamPolicyResponse.builder()
-                .withPrincipalId(principalId)
-                .withPolicyDocument(document)
-                .withContext(Map.of("sub", sub, "groups", groups))
-                .build();
+    private static Map<String, Object> statement(String effect, List<String> resources) {
+        return Map.of("Effect", effect, "Action", "execute-api:Invoke", "Resource", resources);
+    }
+
+    private static Map<String, Object> policy(
+            String principalId, Map<String, Object> statement, String sub, String groups) {
+        return Map.of(
+                "principalId", principalId,
+                "policyDocument", Map.of("Version", "2012-10-17", "Statement", List.of(statement)),
+                "context", Map.of("sub", sub, "groups", groups));
     }
 
     private static String joinGroups(List<String> groups) {
