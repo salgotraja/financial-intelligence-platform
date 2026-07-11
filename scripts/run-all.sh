@@ -21,7 +21,8 @@ read -r -p "This deploys to REAL AWS ($ENV, $REGION) and spends money. Type 'yes
 [[ "$ok" == "yes" ]] || die "aborted by user"
 
 START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-"$here/deploy-ephemeral.sh"; DEPLOYED=1
+DEPLOYED=1
+"$here/deploy-ephemeral.sh"
 "$here/seed-insights.sh"
 "$here/mint-token.sh"
 "$here/smoke.sh"          # aborts (non-zero) before load if the deploy is broken

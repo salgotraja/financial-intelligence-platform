@@ -30,6 +30,7 @@ run()  { if [[ "${DRY_RUN:-0}" == "1" ]]; then printf '+ %s\n' "$*" >&2; else "$
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"; }
 
 preflight() {
+  [[ "$ENV" == "dev" ]] || die "this tooling is dev-only (ENV=$ENV); refusing to run"
   for c in aws cdk k6 jq mvn openssl curl; do need_cmd "$c"; done
   [[ -n "${JAVA_HOME:-}" ]] || die "JAVA_HOME unset (expected Java 25, e.g. ~/.sdkman/candidates/java/25.0.2-tem)"
   if [[ "${DRY_RUN:-0}" != "1" ]]; then
