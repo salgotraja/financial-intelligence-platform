@@ -4,6 +4,10 @@
 # cdk resolves the safe destroy order from stack dependencies (Query before Security, etc.). Idempotent.
 source "$(dirname "$0")/lib/common.sh"
 
+# Dev-only guard: teardown is the one destructive script and is standalone-runnable, so it must
+# enforce the "never prod" invariant itself (it does not call preflight()).
+[[ "$ENV" == "dev" ]] || die "teardown is dev-only (ENV=$ENV); refusing to destroy"
+
 log "Destroying $STACK_QUERY, $STACK_INGESTION, $STACK_NETWORK, $STACK_SECURITY (only Data retained)..."
 run bash -c "cd '$REPO_ROOT/infrastructure' && cdk destroy '$STACK_QUERY' '$STACK_INGESTION' '$STACK_NETWORK' '$STACK_SECURITY' --context env=$ENV --force"
 

@@ -20,7 +20,6 @@ trap cleanup EXIT
 read -r -p "This deploys to REAL AWS ($ENV, $REGION) and spends money. Type 'yes' to proceed: " ok
 [[ "$ok" == "yes" ]] || die "aborted by user"
 
-START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DEPLOYED=1
 "$here/deploy-ephemeral.sh"
 "$here/seed-insights.sh"
