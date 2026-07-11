@@ -17,6 +17,9 @@ LS_CID=""
 
 cleanup() {
   [[ -n "$APP_PID" ]] && kill "$APP_PID" 2>/dev/null || true
+  # spring-boot:run forks the app JVM, so also stop whatever holds the app port.
+  local pids; pids="$(lsof -ti tcp:8080 2>/dev/null || true)"
+  [[ -n "$pids" ]] && kill $pids 2>/dev/null || true
   [[ -n "$LS_CID" ]] && docker rm -f "$LS_CID" >/dev/null 2>&1 || true
   log "local-load cleanup done (app stopped, LocalStack removed)"
 }
@@ -51,9 +54,11 @@ for t in "${TICKERS[@]}"; do
 done
 
 log "Starting query-function locally (POST $APP_URL/serveInsight) against LocalStack..."
-# fork=false runs the app in the maven JVM, so -D props reach @Value and the child dies with $!.
+# Pass config as Spring APPLICATION ARGUMENTS (--key=value): spring-boot:run forks the app JVM, so
+# plain -D system properties would not reach it (only env vars + run.arguments do). This is what
+# routes DynamoDB to LocalStack instead of real AWS.
 "$REPO_ROOT/mvnw" -q -pl functions/query-function -Plocal-web \
-  -Daws.endpoint-url="$LS_ENDPOINT" -DPLATFORM_TABLE="$TABLE" -Dspring-boot.run.fork=false \
+  -Dspring-boot.run.arguments="--aws.endpoint-url=$LS_ENDPOINT --PLATFORM_TABLE=$TABLE" \
   spring-boot:run > "$REPO_ROOT/.load-run/local-app.log" 2>&1 &
 APP_PID=$!
 
