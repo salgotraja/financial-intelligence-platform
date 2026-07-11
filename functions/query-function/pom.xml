@@ -83,4 +83,32 @@
         </plugins>
     </build>
 
+    <profiles>
+        <!-- Opt-in local HTTP mode for the offline k6 load test (scripts/local-load.sh). Runs the
+             query function as a web app (POST /serveInsight) backed by LocalStack DynamoDB via the
+             aws.endpoint-url override. NEVER active in the default Lambda build, so the shaded fat
+             JAR is unaffected. Run with: ./mvnw -Plocal-web -pl functions/query-function spring-boot:run -->
+        <profile>
+            <id>local-web</id>
+            <dependencies>
+                <dependency>
+                    <groupId>org.springframework.cloud</groupId>
+                    <artifactId>spring-cloud-function-web</artifactId>
+                </dependency>
+                <dependency>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-web</artifactId>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-maven-plugin</artifactId>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
 </project>
