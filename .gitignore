@@ -38,3 +38,6 @@ build/
 # CDK build artifacts
 infrastructure/cdk.out/
 infrastructure/cdk.context.json
+
+# Ephemeral load-test runtime state
+.load-run/
