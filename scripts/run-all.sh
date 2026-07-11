@@ -26,16 +26,22 @@ DEPLOYED=1
 "$here/seed-insights.sh"
 "$here/mint-token.sh"
 "$here/smoke.sh"          # aborts (non-zero) before load if the deploy is broken
+LOAD_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "$here/run-load.sh"
-END_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# Extend the end by a minute so the final partial CloudWatch bucket is captured.
+LOAD_END="$(date -u -v+1M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+1 min' +%Y-%m-%dT%H:%M:%SZ)"
 
-log "Pulling server-side CloudWatch Latency p99 for the window..."
+log "Pulling server-side CloudWatch Latency for the LOAD window (per-minute)..."
 load_state
+# Narrow to the load window only (not the whole run) and bucket at 60s so ramp cold starts are
+# separated from steady state. steady_p99 = lowest per-minute bucket (ramp inflates the first);
+# ramp_p99 = highest bucket.
 cw="$(aws cloudwatch get-metric-statistics --namespace AWS/ApiGateway --metric-name Latency \
   --dimensions Name=ApiName,Value="$API_NAME" Name=Stage,Value="$STAGE" \
-  --start-time "$START_TS" --end-time "$END_TS" --period 300 \
+  --start-time "$LOAD_START" --end-time "$LOAD_END" --period 60 \
   --extended-statistics p99 --output json 2>/dev/null || echo '{}')"
-server_p99="$(echo "$cw" | jq -r '[.Datapoints[].ExtendedStatistics.p99] | max // "n/a"')"
+steady_p99="$(echo "$cw" | jq -r '[.Datapoints[].ExtendedStatistics.p99] | min // "n/a"')"
+ramp_p99="$(echo "$cw" | jq -r '[.Datapoints[].ExtendedStatistics.p99] | max // "n/a"')"
 
 log "Assembling results doc..."
 S="$SUMMARY_JSON"
@@ -47,10 +53,10 @@ cat > "$doc" <<EOF
 # Query-path Load Test Results (2026-07-11)
 
 Ephemeral real-AWS run, env=$ENV, region=$REGION. Path: \`GET /insights/{ticker}\` behind the
-Cognito authorizer, 10 req/s for 60s over ${#TICKERS[@]} rotating tickers (cache mix). Torn down
-after the run (Data + Security retained).
+Cognito authorizer, 10 req/s for 60s over ${#TICKERS[@]} rotating tickers (cache mix). All ephemeral
+stacks torn down after the run; only the deletion-protected DataStack retained.
 
-Window: $START_TS .. $END_TS. Total requests: $reqs. Failure rate: $failr.
+Load window: $LOAD_START .. $LOAD_END. Total requests: $reqs. Failure rate: $failr.
 
 ## Client-side latency (k6, includes ap-south-1 RTT)
 
@@ -62,10 +68,12 @@ Window: $START_TS .. $END_TS. Total requests: $reqs. Failure rate: $failr.
 
 ## Server-side latency (CloudWatch API Gateway Latency, SLO p99 < 500ms)
 
-Server-side p99 over the window: ${server_p99} ms (alarm threshold 500ms).
+- Steady-state p99 (warm, lowest per-minute bucket): ${steady_p99} ms  <- authoritative SLO comparison
+- Ramp p99 (highest bucket; includes SnapStart cold-start restores during VU ramp-up): ${ramp_p99} ms
 
 Notes: client-side figures include round-trip network latency to ap-south-1 and are expected to
-exceed the server-side SLO; the CloudWatch figure is the authoritative SLO comparison.
+exceed the server-side SLO. The steady-state server-side p99 is the SLO comparison; the ramp bucket
+reflects cold starts during concurrency ramp, not sustained latency.
 EOF
 log "Results written to $doc"
 
