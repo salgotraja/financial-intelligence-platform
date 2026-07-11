@@ -44,7 +44,6 @@
         <aws-sdk.version>2.46.17</aws-sdk.version>
         <aws-lambda-java.version>1.4.0</aws-lambda-java.version>
         <aws-lambda-events.version>3.16.1</aws-lambda-events.version>
-        <aws-xray.version>2.21.0</aws-xray.version>
         <java-jwt.version>4.4.0</java-jwt.version>
         <jwks-rsa.version>0.22.1</jwks-rsa.version>
     </properties>
@@ -102,17 +101,9 @@
                 <version>${aws-lambda-events.version}</version>
             </dependency>
 
-            <!-- X-Ray SDK -->
-            <dependency>
-                <groupId>com.amazonaws</groupId>
-                <artifactId>aws-xray-recorder-sdk-core</artifactId>
-                <version>${aws-xray.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.amazonaws</groupId>
-                <artifactId>aws-xray-recorder-sdk-aws-sdk-v2-instrumentor</artifactId>
-                <version>${aws-xray.version}</version>
-            </dependency>
+            <!-- Tracing: no SDK on purpose. Traces come from managed active tracing
+                 (Tracing.ACTIVE in CDK); the X-Ray SDK is deprecated in favour of
+                 OpenTelemetry. See docs/adr/0001-tracing-opentelemetry-direction.md. -->
 
             <!-- JWT verification for the API authorizer -->
             <dependency>
