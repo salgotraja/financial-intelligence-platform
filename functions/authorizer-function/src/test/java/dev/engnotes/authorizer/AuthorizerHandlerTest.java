@@ -4,10 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import com.amazonaws.services.lambda.runtime.events.APIGatewayCustomAuthorizerEvent;
-import com.amazonaws.services.lambda.runtime.events.IamPolicyResponse;
 import dev.engnotes.authorizer.jwt.JwtVerifier;
 import dev.engnotes.authorizer.jwt.Principal;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -32,37 +30,41 @@ class AuthorizerHandlerTest {
         return event;
     }
 
-    // getPolicyDocument() serialises statements as Map[] (one Map per Statement, with String[] Resource).
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> firstStatement(IamPolicyResponse response) {
-        Map<String, Object>[] stmts =
-                (Map<String, Object>[]) response.getPolicyDocument().get("Statement");
-        return stmts[0];
+    private static Map<String, Object> firstStatement(Map<String, Object> response) {
+        Map<String, Object> doc = (Map<String, Object>) response.get("policyDocument");
+        List<Map<String, Object>> stmts = (List<Map<String, Object>>) doc.get("Statement");
+        return stmts.get(0);
     }
 
+    @SuppressWarnings("unchecked")
     private static List<String> resourceList(Map<String, Object> statement) {
-        return Arrays.asList((String[]) statement.get("Resource"));
+        return (List<String>) statement.get("Resource");
     }
 
     @Test
     void premiumGetsAllowPolicyWithSubContext() {
         when(verifier.verify("some.jwt.token")).thenReturn(new Principal("user-abc", List.of("premium")));
 
-        IamPolicyResponse response = new AuthorizerHandler().authorize(verifier).apply(event());
+        Map<String, Object> response =
+                new AuthorizerHandler().authorize(verifier).apply(event());
 
-        assertThat(response.getPrincipalId()).isEqualTo("user-abc");
-        assertThat(response.getContext()).containsEntry("sub", "user-abc");
-        assertThat(response.getContext()).containsEntry("groups", "premium");
+        assertThat(response.get("principalId")).isEqualTo("user-abc");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ctx = (Map<String, Object>) response.get("context");
+        assertThat(ctx).containsEntry("sub", "user-abc");
+        assertThat(ctx).containsEntry("groups", "premium");
         Map<String, Object> statement = firstStatement(response);
         assertThat(statement.get("Effect")).isEqualTo("Allow");
-        assertThat(Arrays.asList((String[]) statement.get("Resource"))).anyMatch(r -> r.contains("/POST/watchlist/*"));
+        assertThat(resourceList(statement)).anyMatch(r -> r.contains("/POST/watchlist/*"));
     }
 
     @Test
     void readerPolicyAllowsReadsButExcludesWatchlist() {
         when(verifier.verify("some.jwt.token")).thenReturn(new Principal("user-reader", List.of("readers")));
 
-        IamPolicyResponse response = new AuthorizerHandler().authorize(verifier).apply(event());
+        Map<String, Object> response =
+                new AuthorizerHandler().authorize(verifier).apply(event());
 
         // Cache-safe: policy is route-independent. Reader gets an Allow listing only read resources;
         // API Gateway then denies the POST /watchlist methodArn because it is not in the resource list.
@@ -77,8 +79,17 @@ class AuthorizerHandlerTest {
     void invalidTokenGetsDeny() {
         when(verifier.verify("some.jwt.token")).thenThrow(new IllegalStateException("bad token"));
 
-        IamPolicyResponse response = new AuthorizerHandler().authorize(verifier).apply(event());
+        Map<String, Object> response =
+                new AuthorizerHandler().authorize(verifier).apply(event());
 
         assertThat(firstStatement(response).get("Effect")).isEqualTo("Deny");
+    }
+
+    @Test
+    void allowStatementHasNoConditionKey() { // regression: null Condition broke API Gateway policy parsing
+        when(verifier.verify("some.jwt.token")).thenReturn(new Principal("u", List.of("readers")));
+        Map<String, Object> response =
+                new AuthorizerHandler().authorize(verifier).apply(event());
+        assertThat(firstStatement(response)).doesNotContainKey("Condition");
     }
 }
