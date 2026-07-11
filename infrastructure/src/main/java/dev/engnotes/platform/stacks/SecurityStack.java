@@ -67,7 +67,7 @@ public class SecurityStack extends Stack {
                                 StringAttribute.Builder.create().mutable(true).build(),
                         "consent_version",
                                 StringAttribute.Builder.create().mutable(true).build(),
-                        "data_processing_purpose",
+                        "processing_purpose",
                                 StringAttribute.Builder.create().mutable(true).build()))
                 .passwordPolicy(PasswordPolicy.builder()
                         .minLength(12)

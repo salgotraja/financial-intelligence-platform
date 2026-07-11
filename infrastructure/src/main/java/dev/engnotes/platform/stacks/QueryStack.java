@@ -342,6 +342,9 @@ public class QueryStack extends Stack {
                         "application/json",
                         "{ \"ticker\": \"$input.params('ticker')\", "
                                 + "  \"correlationId\": \"$context.requestId\" }"))
+                // {ticker} must be a cache key, else the 60s stage cache serves one ticker's
+                // response for every ticker (wrong data + collapses the load-test cache mix).
+                .cacheKeyParameters(List.of("method.request.path.ticker"))
                 .integrationResponses(
                         List.of(IntegrationResponse.builder().statusCode("200").build()))
                 .build();
