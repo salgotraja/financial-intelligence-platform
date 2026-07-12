@@ -60,9 +60,10 @@ public class AuthorizerHandler {
 
     /**
      * WebSocket $connect authorizer (REQUEST type): the browser cannot set headers on the upgrade,
-     * so the access token arrives as ?token=. Any known platform group may connect; per-ticker
-     * scoping happens at subscribe time. Untyped map event: the v2 REQUEST shape has no safe POJO
-     * here (Jackson 3 ignores the aws-lambda-java-events annotations).
+     * so the access token arrives as ?token=. Any known platform group may connect; subscribe
+     * validates ticker format; all groups see all tickers, matching GET /insights. Untyped map
+     * event: the v2 REQUEST shape has no safe POJO here (Jackson 3 ignores the
+     * aws-lambda-java-events annotations).
      */
     @Bean
     public Function<Map<String, Object>, Map<String, Object>> authorizeWebSocket(JwtVerifier verifier) {

@@ -31,6 +31,7 @@ public class ConnectionRegistry {
     private static final Pattern TICKER_PATTERN = Pattern.compile("^[A-Z0-9.^-]{1,15}$");
     private static final long SUBSCRIPTION_TTL_SECONDS = 2 * 60 * 60;
     private static final String BY_CONNECTION_INDEX = "by-connection";
+    private static final int MAX_TICKERS_PER_SUBSCRIBE = 25;
 
     private final DynamoDbClient dynamoDb;
     private final String connectionsTable;
@@ -43,6 +44,10 @@ public class ConnectionRegistry {
 
     /** Registers the connection for each ticker; returns the number of rows written. */
     public int subscribe(String connectionId, List<String> tickers) {
+        if (tickers.size() > MAX_TICKERS_PER_SUBSCRIBE) {
+            throw new IllegalArgumentException(
+                    "Too many tickers: " + tickers.size() + " (max " + MAX_TICKERS_PER_SUBSCRIBE + ")");
+        }
         for (String ticker : tickers) {
             if (ticker == null || !TICKER_PATTERN.matcher(ticker).matches()) {
                 throw new IllegalArgumentException("Invalid ticker: " + ticker);

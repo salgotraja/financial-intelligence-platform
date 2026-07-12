@@ -23,7 +23,7 @@ if npx -y wscat -c "$WS_URL" -w 3 < <(sleep 60) >/dev/null 2>"$err_file"; then
 fi
 grep -Eq "401|403|Unexpected server response" "$err_file" || die "unexpected failure mode: $(cat "$err_file")"
 
-log "2/2 subscribe to $T, write a fresh insight, expect a push within 30s"
+log "2/2 subscribe to $T, write a fresh insight, expect a push within 60s"
 marker="ws-smoke-$(date +%s)"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 npx -y wscat -c "$WS_URL?token=$ACCESS_TOKEN" \

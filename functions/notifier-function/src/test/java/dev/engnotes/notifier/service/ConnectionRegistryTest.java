@@ -62,6 +62,18 @@ class ConnectionRegistryTest {
     }
 
     @Test
+    void subscribeRejectsOversizedTickerListWithoutTouchingDynamoDb() {
+        List<String> tickers = java.util.stream.IntStream.rangeClosed(1, 26)
+                .mapToObj(i -> "T" + i)
+                .toList();
+
+        assertThatThrownBy(() -> registry.subscribe("conn-1", tickers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageStartingWith("Too many tickers:");
+        verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
     void disconnectQueriesGsiAndDeletesEachRow() {
         when(dynamoDb.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder()
