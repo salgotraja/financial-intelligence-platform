@@ -328,7 +328,11 @@ public class IngestionStack extends Stack {
         DistributedMap fanOut = DistributedMap.Builder.create(this, "FanOutTickers")
                 .comment("Fan out the per-ticker pipeline across the WATCHSET union")
                 .itemsPath("$.watchset.Items")
-                .maxConcurrency(5)
+                // 2, not 5: this account's Lambda concurrency quota is 10 TOTAL, and a fan-out
+                // burst at 5 (x fetch+insight per item) starved the API-path authorizers into
+                // "Rate Exceeded" 500s (observed live 2026-07-12). Keep pipeline bursts well
+                // under half the pool until the requested quota increase (->1000) is granted.
+                .maxConcurrency(2)
                 .itemSelector(Map.of(
                         "ticker.$",
                         "$$.Map.Item.Value.ticker.S",
