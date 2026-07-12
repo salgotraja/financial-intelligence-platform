@@ -167,9 +167,10 @@ public class DataStack extends Stack {
         // Budgets through an encrypted topic would need both an SNS topic policy and a KMS key-policy
         // grant for budgets.amazonaws.com - two silent-failure points for no benefit with one recipient.
         // A Budget is account-scoped; multi-env on one account would double-alert (latent: only dev today).
+        // No explicit budgetName: NotificationsWithSubscribers changes force REPLACEMENT, and a fixed
+        // name makes the create-before-delete collide with itself (Budgets 400 "different internalId").
         CfnBudget.Builder.create(this, "MonthlyCostBudget")
                 .budget(CfnBudget.BudgetDataProperty.builder()
-                        .budgetName("financial-platform-monthly-" + env)
                         .budgetType("COST")
                         .timeUnit("MONTHLY")
                         .budgetLimit(CfnBudget.SpendProperty.builder()
