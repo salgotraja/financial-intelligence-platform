@@ -31,8 +31,8 @@ else
   log "(dry-run) would delete orphan 'financial' log groups not owned by Data/Security"
 fi
 
-log "Deploying all 5 stacks (env=$ENV)..."
-run bash -c "cd '$REPO_ROOT/infrastructure' && cdk deploy --all --context env=$ENV --require-approval never"
+log "Deploying all 5 stacks (env=$ENV, alertEmail=${ALERT_EMAIL:-<stack default>})..."
+run bash -c "cd '$REPO_ROOT/infrastructure' && cdk deploy --all --context env=$ENV${ALERT_EMAIL:+ --context alertEmail=$ALERT_EMAIL} --require-approval never"
 
 log "Disabling ingest schedule rule to neutralize Bedrock/ingest spend..."
 run aws events disable-rule --name "$SCHEDULE_RULE"
