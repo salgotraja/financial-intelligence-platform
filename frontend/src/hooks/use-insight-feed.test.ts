@@ -64,14 +64,29 @@ describe('useInsightFeed', () => {
     expect(result.current.liveInsight?.ticker).toBe('RELIANCE.NS')
   })
 
-  it('closes the socket on unmount', async () => {
+  it('closes an open socket on unmount', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket)
     const { unmount } = renderHook(() => useInsightFeed('TCS.NS'))
     await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.open())
 
     unmount()
 
-    expect(FakeWebSocket.instances[0].readyState).toBe(3)
+    expect(socket.readyState).toBe(3)
+  })
+
+  it('defers closing a still-connecting socket until the handshake finishes', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const { unmount } = renderHook(() => useInsightFeed('TCS.NS'))
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    const socket = FakeWebSocket.instances[0]
+
+    unmount()
+    expect(socket.readyState).toBe(0)
+
+    act(() => socket.open())
+    expect(socket.readyState).toBe(3)
   })
 
   it('clears the previous ticker insight when the ticker changes', async () => {
