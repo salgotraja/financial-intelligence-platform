@@ -92,4 +92,80 @@ class AuthorizerHandlerTest {
                 new AuthorizerHandler().authorize(verifier).apply(event());
         assertThat(firstStatement(response)).doesNotContainKey("Condition");
     }
+
+    @Test
+    void webSocketAllowsValidTokenFromQueryString() {
+        when(verifier.verify("good-token")).thenReturn(new Principal("sub-1", List.of("readers")));
+        Map<String, Object> event = Map.of(
+                "methodArn",
+                "arn:aws:execute-api:ap-south-1:123456789012:wsapi/dev/$connect",
+                "queryStringParameters",
+                Map.of("token", "good-token"));
+
+        Map<String, Object> response =
+                new AuthorizerHandler().authorizeWebSocket(verifier).apply(event);
+
+        assertThat(response.get("principalId")).isEqualTo("sub-1");
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) response.get("policyDocument");
+        @SuppressWarnings("unchecked")
+        var statement = ((List<Map<String, Object>>) doc.get("Statement")).getFirst();
+        assertThat(statement.get("Effect")).isEqualTo("Allow");
+        assertThat(statement).doesNotContainKey("Condition");
+        assertThat(statement.get("Resource"))
+                .isEqualTo(List.of("arn:aws:execute-api:ap-south-1:123456789012:wsapi/dev/$connect"));
+        @SuppressWarnings("unchecked")
+        var context = (Map<String, Object>) response.get("context");
+        assertThat(context).containsEntry("sub", "sub-1").containsEntry("groups", "readers");
+    }
+
+    @Test
+    void webSocketDeniesMissingToken() {
+        Map<String, Object> event =
+                Map.of("methodArn", "arn:aws:execute-api:ap-south-1:123456789012:wsapi/dev/$connect");
+
+        Map<String, Object> response =
+                new AuthorizerHandler().authorizeWebSocket(verifier).apply(event);
+
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) response.get("policyDocument");
+        @SuppressWarnings("unchecked")
+        var statement = ((List<Map<String, Object>>) doc.get("Statement")).getFirst();
+        assertThat(statement.get("Effect")).isEqualTo("Deny");
+    }
+
+    @Test
+    void webSocketDeniesNullQueryStringParameters() {
+        var event = new java.util.HashMap<String, Object>();
+        event.put("methodArn", "arn:aws:execute-api:ap-south-1:123456789012:wsapi/dev/$connect");
+        event.put("queryStringParameters", null);
+
+        Map<String, Object> response =
+                new AuthorizerHandler().authorizeWebSocket(verifier).apply(event);
+
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) response.get("policyDocument");
+        @SuppressWarnings("unchecked")
+        var statement = ((List<Map<String, Object>>) doc.get("Statement")).getFirst();
+        assertThat(statement.get("Effect")).isEqualTo("Deny");
+    }
+
+    @Test
+    void webSocketDeniesUnknownGroups() {
+        when(verifier.verify("guest-token")).thenReturn(new Principal("sub-2", List.of("guests")));
+        Map<String, Object> event = Map.of(
+                "methodArn",
+                "arn:aws:execute-api:ap-south-1:123456789012:wsapi/dev/$connect",
+                "queryStringParameters",
+                Map.of("token", "guest-token"));
+
+        Map<String, Object> response =
+                new AuthorizerHandler().authorizeWebSocket(verifier).apply(event);
+
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) response.get("policyDocument");
+        @SuppressWarnings("unchecked")
+        var statement = ((List<Map<String, Object>>) doc.get("Statement")).getFirst();
+        assertThat(statement.get("Effect")).isEqualTo("Deny");
+    }
 }

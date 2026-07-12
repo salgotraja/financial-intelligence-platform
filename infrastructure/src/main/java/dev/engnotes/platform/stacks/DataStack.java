@@ -77,6 +77,8 @@ public class DataStack extends Stack {
                         .pointInTimeRecoveryEnabled(true)
                         .build()) // PITR for disaster recovery
                 .timeToLiveAttribute("ttl") // auto-expire hot data
+                // Realtime feed (spec 2026-07-12): notifier Lambda consumes INSERTed INSIGHT# items.
+                .stream(StreamViewType.NEW_IMAGE)
                 .removalPolicy(statefulRemoval)
                 .build();
 
