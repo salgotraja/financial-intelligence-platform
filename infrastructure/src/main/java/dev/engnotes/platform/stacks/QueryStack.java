@@ -393,6 +393,23 @@ public class QueryStack extends Stack {
                         .build())
                 .build();
 
+        // Authorizer 401/403 and default 4XX/5XX are API Gateway Gateway Responses, not method
+        // responses: they short-circuit before any integration runs, so the CORS headers configured
+        // above on methods/integrations never apply. Without these, browsers surface a CORS error
+        // instead of the real 401/403/5xx status.
+        api.addGatewayResponse(
+                "Default4xxCors",
+                GatewayResponseOptions.builder()
+                        .type(ResponseType.DEFAULT_4_XX)
+                        .responseHeaders(Map.of("Access-Control-Allow-Origin", "'" + allowOrigin + "'"))
+                        .build());
+        api.addGatewayResponse(
+                "Default5xxCors",
+                GatewayResponseOptions.builder()
+                        .type(ResponseType.DEFAULT_5_XX)
+                        .responseHeaders(Map.of("Access-Control-Allow-Origin", "'" + allowOrigin + "'"))
+                        .build());
+
         // Non-proxy: the request template maps the path ticker + request id onto the function's
         // QueryRequest record. With the default proxy integration the template is ignored and the
         // raw event arrives, so the ticker resolves to null.

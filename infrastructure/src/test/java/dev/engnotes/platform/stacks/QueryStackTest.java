@@ -1,5 +1,6 @@
 package dev.engnotes.platform.stacks;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -125,6 +126,57 @@ class QueryStackTest {
                         "expected Access-Control-Allow-Origin on integration response " + response + " of "
                                 + props.get("HttpMethod") + " " + props.get("ResourceId"));
             }
+        }
+    }
+
+    // Integration responses are only half of non-proxy CORS: API Gateway also requires the method's
+    // own MethodResponses to declare the header (as a boolean placeholder), or it strips the header
+    // the integration response tried to set before it reaches the client.
+    @Test
+    @SuppressWarnings("unchecked")
+    void allMethodResponsesDeclareCorsAllowOriginHeader() {
+        var methods = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> !"OPTIONS".equals(p.get("HttpMethod")))
+                .toList();
+        assertFalse(methods.isEmpty(), "expected non-OPTIONS API Gateway methods");
+        for (var props : methods) {
+            var methodResponses = (List<Map<String, Object>>) props.get("MethodResponses");
+            assertFalse(methodResponses.isEmpty(), "expected method responses on " + props);
+            for (var response : methodResponses) {
+                var responseParameters = (Map<String, Object>) response.get("ResponseParameters");
+                assertTrue(
+                        responseParameters != null
+                                && responseParameters.containsKey("method.response.header.Access-Control-Allow-Origin"),
+                        "expected Access-Control-Allow-Origin on method response " + response + " of "
+                                + props.get("HttpMethod") + " " + props.get("ResourceId"));
+            }
+        }
+    }
+
+    // Authorizer 401/403 (ACCESS_DENIED/UNAUTHORIZED, both DEFAULT_4XX) and any DEFAULT_5XX are
+    // Gateway Responses, generated outside the per-method Integration/MethodResponses wiring above:
+    // without an explicit Gateway Response, they carry no CORS header at all.
+    @Test
+    @SuppressWarnings("unchecked")
+    void hasCorsHeaderOnDefaultGatewayResponses() {
+        var gatewayResponses = synth().findResources("AWS::ApiGateway::GatewayResponse").values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .toList();
+        assertEquals(2, gatewayResponses.size(), "expected DEFAULT_4XX and DEFAULT_5XX gateway responses");
+
+        var types = gatewayResponses.stream()
+                .map(p -> (String) p.get("ResponseType"))
+                .sorted()
+                .toList();
+        assertEquals(List.of("DEFAULT_4XX", "DEFAULT_5XX"), types);
+
+        for (var props : gatewayResponses) {
+            var responseParameters = (Map<String, Object>) props.get("ResponseParameters");
+            assertTrue(
+                    responseParameters != null
+                            && responseParameters.containsKey("gatewayresponse.header.Access-Control-Allow-Origin"),
+                    "expected Access-Control-Allow-Origin on gateway response " + props);
         }
     }
 }
