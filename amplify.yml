@@ -5,6 +5,8 @@ applications:
       phases:
         preBuild:
           commands:
+            # Pin the build Node to .nvmrc (Node 24 LTS); the image default drifts otherwise.
+            - nvm install && nvm use
             - npm ci
         build:
           commands:
