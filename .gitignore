@@ -41,3 +41,4 @@ infrastructure/cdk.context.json
 
 # Ephemeral load-test runtime state
 .load-run/
+.gstack/
