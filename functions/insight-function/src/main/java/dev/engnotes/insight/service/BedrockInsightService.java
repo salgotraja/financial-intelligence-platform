@@ -62,7 +62,7 @@ public class BedrockInsightService {
     private final RuleBasedInsightGenerator fallback;
     private final CostTrackingService costTracker;
 
-    @Value("${BEDROCK_MODEL_ID:global.anthropic.claude-sonnet-4-5-20250929-v1:0}")
+    @Value("${BEDROCK_MODEL_ID:global.anthropic.claude-sonnet-4-6}")
     private String modelId;
 
     @Value("${BEDROCK_MAX_TOKENS:1024}")
