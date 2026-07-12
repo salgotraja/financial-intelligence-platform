@@ -308,6 +308,21 @@ public class QueryStack extends Stack {
         }
         var queryFnAlias = queryAliasBuilder.build();
 
+        // Same SnapStart rule for the remaining API Lambdas: only a published version restores from
+        // the snapshot, so every integration below targets a live alias, never $LATEST.
+        var watchlistFnAlias = Alias.Builder.create(this, "WatchlistFnAlias")
+                .aliasName("live")
+                .version(watchlistFn.getCurrentVersion())
+                .build();
+        var consentFnAlias = Alias.Builder.create(this, "ConsentFnAlias")
+                .aliasName("live")
+                .version(consentFn.getCurrentVersion())
+                .build();
+        var dsrFnAlias = Alias.Builder.create(this, "DsrFnAlias")
+                .aliasName("live")
+                .version(dsrFn.getCurrentVersion())
+                .build();
+
         // API Gateway
         var apiGwLogs = LogGroup.Builder.create(this, "ApiGwAccessLogs")
                 .logGroupName("/aws/apigateway/financial-platform-" + env)
@@ -348,8 +363,7 @@ public class QueryStack extends Stack {
                 // {ticker} must be a cache key, else the 60s stage cache serves one ticker's
                 // response for every ticker (wrong data + collapses the load-test cache mix).
                 .cacheKeyParameters(List.of("method.request.path.ticker"))
-                .integrationResponses(
-                        List.of(IntegrationResponse.builder().statusCode("200").build()))
+                .integrationResponses(errorAwareIntegrationResponses())
                 .build();
 
         // /insights/{ticker} - protected (readers+)
@@ -363,9 +377,7 @@ public class QueryStack extends Stack {
                                 .authorizer(apiAuthorizer)
                                 .authorizationType(AuthorizationType.CUSTOM)
                                 .requestParameters(Map.of("method.request.path.ticker", true))
-                                .methodResponses(List.of(MethodResponse.builder()
-                                        .statusCode("200")
-                                        .build()))
+                                .methodResponses(standardMethodResponses())
                                 .build());
 
         // /health - Lambda-free health check (mock integration, public) for smoke tests and uptime monitors
@@ -393,7 +405,7 @@ public class QueryStack extends Stack {
 
         watchlistTickerResource.addMethod(
                 "POST",
-                LambdaIntegration.Builder.create(watchlistFn)
+                LambdaIntegration.Builder.create(watchlistFnAlias)
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
@@ -401,20 +413,18 @@ public class QueryStack extends Stack {
                                         + "  \"ticker\": \"$input.params('ticker')\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(List.of(
-                                IntegrationResponse.builder().statusCode("200").build()))
+                        .integrationResponses(errorAwareIntegrationResponses())
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
                         .requestParameters(Map.of("method.request.path.ticker", true))
-                        .methodResponses(List.of(
-                                MethodResponse.builder().statusCode("200").build()))
+                        .methodResponses(standardMethodResponses())
                         .build());
 
         watchlistTickerResource.addMethod(
                 "DELETE",
-                LambdaIntegration.Builder.create(watchlistFn)
+                LambdaIntegration.Builder.create(watchlistFnAlias)
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
@@ -422,34 +432,30 @@ public class QueryStack extends Stack {
                                         + "  \"ticker\": \"$input.params('ticker')\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(List.of(
-                                IntegrationResponse.builder().statusCode("200").build()))
+                        .integrationResponses(errorAwareIntegrationResponses())
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
                         .requestParameters(Map.of("method.request.path.ticker", true))
-                        .methodResponses(List.of(
-                                MethodResponse.builder().statusCode("200").build()))
+                        .methodResponses(standardMethodResponses())
                         .build());
 
         watchlistResource.addMethod(
                 "GET",
-                LambdaIntegration.Builder.create(watchlistFn)
+                LambdaIntegration.Builder.create(watchlistFnAlias)
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
                                 "{ \"operation\": \"LIST\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(List.of(
-                                IntegrationResponse.builder().statusCode("200").build()))
+                        .integrationResponses(errorAwareIntegrationResponses())
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
-                        .methodResponses(List.of(
-                                MethodResponse.builder().statusCode("200").build()))
+                        .methodResponses(standardMethodResponses())
                         .build());
 
         // Consent routes (non-proxy, spec sub-project B): POST -> GRANT, GET -> VIEW, DELETE ->
@@ -461,7 +467,7 @@ public class QueryStack extends Stack {
 
         consentResource.addMethod(
                 "POST",
-                LambdaIntegration.Builder.create(consentFn)
+                LambdaIntegration.Builder.create(consentFnAlias)
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
@@ -471,19 +477,17 @@ public class QueryStack extends Stack {
                                         + "  \"purpose\": \"$util.escapeJavaScript($input.path('$.purpose'))\","
                                         + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(List.of(
-                                IntegrationResponse.builder().statusCode("200").build()))
+                        .integrationResponses(errorAwareIntegrationResponses())
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
-                        .methodResponses(List.of(
-                                MethodResponse.builder().statusCode("200").build()))
+                        .methodResponses(standardMethodResponses())
                         .build());
 
         consentResource.addMethod(
                 "GET",
-                LambdaIntegration.Builder.create(consentFn)
+                LambdaIntegration.Builder.create(consentFnAlias)
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
@@ -491,19 +495,17 @@ public class QueryStack extends Stack {
                                         + "  \"sub\": \"$context.authorizer.sub\","
                                         + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(List.of(
-                                IntegrationResponse.builder().statusCode("200").build()))
+                        .integrationResponses(errorAwareIntegrationResponses())
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
-                        .methodResponses(List.of(
-                                MethodResponse.builder().statusCode("200").build()))
+                        .methodResponses(standardMethodResponses())
                         .build());
 
         consentResource.addMethod(
                 "DELETE",
-                LambdaIntegration.Builder.create(consentFn)
+                LambdaIntegration.Builder.create(consentFnAlias)
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
@@ -511,14 +513,12 @@ public class QueryStack extends Stack {
                                         + "  \"sub\": \"$context.authorizer.sub\","
                                         + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(List.of(
-                                IntegrationResponse.builder().statusCode("200").build()))
+                        .integrationResponses(errorAwareIntegrationResponses())
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
-                        .methodResponses(List.of(
-                                MethodResponse.builder().statusCode("200").build()))
+                        .methodResponses(standardMethodResponses())
                         .build());
 
         // DSR routes (non-proxy, spec sub-project C): GET /user/export, DELETE /user/account. The caller
@@ -527,7 +527,7 @@ public class QueryStack extends Stack {
         var exportResource = userResource.addResource("export");
         exportResource.addMethod(
                 "GET",
-                LambdaIntegration.Builder.create(dsrFn)
+                LambdaIntegration.Builder.create(dsrFnAlias)
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
@@ -537,21 +537,19 @@ public class QueryStack extends Stack {
                                         + "  \"correlationId\": \"$context.requestId\","
                                         + "  \"callerSub\": \"$context.authorizer.sub\","
                                         + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
-                        .integrationResponses(List.of(
-                                IntegrationResponse.builder().statusCode("200").build()))
+                        .integrationResponses(errorAwareIntegrationResponses())
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
                         .requestParameters(Map.of("method.request.querystring.subjectSub", false))
-                        .methodResponses(List.of(
-                                MethodResponse.builder().statusCode("200").build()))
+                        .methodResponses(standardMethodResponses())
                         .build());
 
         var accountResource = userResource.addResource("account");
         accountResource.addMethod(
                 "DELETE",
-                LambdaIntegration.Builder.create(dsrFn)
+                LambdaIntegration.Builder.create(dsrFnAlias)
                         .proxy(false)
                         .requestTemplates(Map.of(
                                 "application/json",
@@ -561,15 +559,13 @@ public class QueryStack extends Stack {
                                         + "  \"correlationId\": \"$context.requestId\","
                                         + "  \"callerSub\": \"$context.authorizer.sub\","
                                         + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
-                        .integrationResponses(List.of(
-                                IntegrationResponse.builder().statusCode("200").build()))
+                        .integrationResponses(errorAwareIntegrationResponses())
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
                         .requestParameters(Map.of("method.request.querystring.subjectSub", false))
-                        .methodResponses(List.of(
-                                MethodResponse.builder().statusCode("200").build()))
+                        .methodResponses(standardMethodResponses())
                         .build());
 
         // On-demand ingest (spec section 5): POST /ingest/{ticker} -> Step Functions StartExecution.
@@ -837,5 +833,34 @@ public class QueryStack extends Stack {
                         .value(api.getUrl())
                         .description("Base URL for the Financial Intelligence API")
                         .build());
+    }
+
+    // Non-proxy integrations map Lambda errors via selectionPattern; without these any handler
+    // exception surfaces as an opaque 502. Client-input failures map to 400 by message; the 500
+    // pattern excludes them because API Gateway's pattern match order is undefined.
+    private static final String CLIENT_ERROR_PATTERN = "Invalid ticker|allowlist validation|consent required";
+
+    private static List<IntegrationResponse> errorAwareIntegrationResponses() {
+        return List.of(
+                IntegrationResponse.builder().statusCode("200").build(),
+                IntegrationResponse.builder()
+                        .statusCode("400")
+                        .selectionPattern(".*(" + CLIENT_ERROR_PATTERN + ").*")
+                        .responseTemplates(Map.of(
+                                "application/json",
+                                "{\"error\":\"$util.escapeJavaScript($input.path('$.errorMessage'))\"}"))
+                        .build(),
+                IntegrationResponse.builder()
+                        .statusCode("500")
+                        .selectionPattern("^((?!" + CLIENT_ERROR_PATTERN + ")(.|\\n))*$")
+                        .responseTemplates(Map.of("application/json", "{\"error\":\"internal error\"}"))
+                        .build());
+    }
+
+    private static List<MethodResponse> standardMethodResponses() {
+        return List.of(
+                MethodResponse.builder().statusCode("200").build(),
+                MethodResponse.builder().statusCode("400").build(),
+                MethodResponse.builder().statusCode("500").build());
     }
 }
