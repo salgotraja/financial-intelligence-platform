@@ -20,7 +20,7 @@ import software.constructs.Construct;
  * <p>
  * Serves user-facing API requests:
  *   GET /insights/{ticker} - latest insight for a ticker
- *   GET /market-data/{ticker} - latest market data for a ticker
+ *   GET /market-data/{ticker} - recent market-data points for a ticker
  *   GET /health - health check
  * <p>
  * Production decisions:
@@ -89,6 +89,39 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "QueryFnLogs")
                 .logGroupName("/aws/lambda/" + queryFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // Market-data Lambda: second function from the same query-function asset, selected via
+        // SPRING_CLOUD_FUNCTION_DEFINITION. Shares the read-only queryRole: this path never writes.
+        var marketDataFn = Function.Builder.create(this, "MarketDataFn")
+                .functionName("financial-market-data-" + env)
+                .description("Serves recent market-data points for charting")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
+                .role(queryRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
+                        "ENVIRONMENT",
+                        env,
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "serveMarketData",
+                        "MAIN_CLASS",
+                        "dev.engnotes.query.QueryHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "MarketDataFnLogs")
+                .logGroupName("/aws/lambda/" + marketDataFn.getFunctionName())
                 .retention(RetentionDays.ONE_MONTH)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
@@ -323,6 +356,11 @@ public class QueryStack extends Stack {
                 .version(dsrFn.getCurrentVersion())
                 .build();
 
+        var marketDataFnAlias = Alias.Builder.create(this, "MarketDataFnAlias")
+                .aliasName("live")
+                .version(marketDataFn.getCurrentVersion())
+                .build();
+
         // API Gateway
         var apiGwLogs = LogGroup.Builder.create(this, "ApiGwAccessLogs")
                 .logGroupName("/aws/apigateway/financial-platform-" + env)
@@ -373,6 +411,30 @@ public class QueryStack extends Stack {
                 .addMethod(
                         "GET",
                         queryIntegration,
+                        MethodOptions.builder()
+                                .authorizer(apiAuthorizer)
+                                .authorizationType(AuthorizationType.CUSTOM)
+                                .requestParameters(Map.of("method.request.path.ticker", true))
+                                .methodResponses(standardMethodResponses())
+                                .build());
+
+        var marketDataIntegration = LambdaIntegration.Builder.create(marketDataFnAlias)
+                .proxy(false)
+                .requestTemplates(Map.of(
+                        "application/json",
+                        "{ \"ticker\": \"$input.params('ticker')\", "
+                                + "  \"correlationId\": \"$context.requestId\" }"))
+                .cacheKeyParameters(List.of("method.request.path.ticker"))
+                .integrationResponses(errorAwareIntegrationResponses())
+                .build();
+
+        // /market-data/{ticker} - protected (readers+), chart data for the frontend
+        api.getRoot()
+                .addResource("market-data")
+                .addResource("{ticker}")
+                .addMethod(
+                        "GET",
+                        marketDataIntegration,
                         MethodOptions.builder()
                                 .authorizer(apiAuthorizer)
                                 .authorizationType(AuthorizationType.CUSTOM)
@@ -676,6 +738,7 @@ public class QueryStack extends Stack {
 
         var fns = Map.of(
                 "query", queryFn,
+                "marketdata", marketDataFn,
                 "watchlist", watchlistFn,
                 "consent", consentFn,
                 "dsr", dsrFn,

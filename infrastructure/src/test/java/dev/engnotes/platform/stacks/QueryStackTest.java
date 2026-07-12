@@ -76,4 +76,28 @@ class QueryStackTest {
                                 "EvaluationPeriods", 5,
                                 "DatapointsToAlarm", 5)));
     }
+
+    @Test
+    void hasMarketDataLambdaServingServeMarketData() {
+        synth().hasResourceProperties(
+                        "AWS::Lambda::Function",
+                        Match.objectLike(Map.of(
+                                "FunctionName",
+                                "financial-market-data-dev",
+                                "Environment",
+                                Match.objectLike(Map.of(
+                                        "Variables",
+                                        Match.objectLike(
+                                                Map.of("SPRING_CLOUD_FUNCTION_DEFINITION", "serveMarketData")))))));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void hasMarketDataResourceUnderApiRoot() {
+        var pathParts = synth().findResources("AWS::ApiGateway::Resource").values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .map(p -> (String) p.get("PathPart"))
+                .toList();
+        assertTrue(pathParts.contains("market-data"), "expected a market-data API resource");
+    }
 }

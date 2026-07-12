@@ -1,8 +1,10 @@
 package dev.engnotes.query;
 
+import dev.engnotes.query.model.MarketDataResponse;
 import dev.engnotes.query.model.QueryRequest;
 import dev.engnotes.query.model.QueryResponse;
 import dev.engnotes.query.service.InsightQuery;
+import dev.engnotes.query.service.MarketDataQuery;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +49,28 @@ public class QueryHandler {
                     "Insight query complete. ticker={} found={} correlationId={}",
                     ticker,
                     response.found(),
+                    correlationId);
+
+            return response;
+        };
+    }
+
+    /** Returns recent stored market-data points for the requested ticker (newest first). */
+    @Bean
+    public Function<QueryRequest, MarketDataResponse> serveMarketData(MarketDataQuery marketDataQuery) {
+        return request -> {
+            String ticker = request.ticker();
+            String correlationId = request.correlationId();
+
+            log.info("Serving market data. ticker={} correlationId={}", ticker, correlationId);
+
+            MarketDataResponse response = marketDataQuery.findRecentPoints(ticker);
+
+            log.info(
+                    "Market data query complete. ticker={} found={} points={} correlationId={}",
+                    ticker,
+                    response.found(),
+                    response.points().size(),
                     correlationId);
 
             return response;
