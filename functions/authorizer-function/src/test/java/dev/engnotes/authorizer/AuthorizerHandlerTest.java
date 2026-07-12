@@ -135,6 +135,22 @@ class AuthorizerHandlerTest {
     }
 
     @Test
+    void webSocketDeniesNullQueryStringParameters() {
+        var event = new java.util.HashMap<String, Object>();
+        event.put("methodArn", "arn:aws:execute-api:ap-south-1:123456789012:wsapi/dev/$connect");
+        event.put("queryStringParameters", null);
+
+        Map<String, Object> response =
+                new AuthorizerHandler().authorizeWebSocket(verifier).apply(event);
+
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) response.get("policyDocument");
+        @SuppressWarnings("unchecked")
+        var statement = ((List<Map<String, Object>>) doc.get("Statement")).getFirst();
+        assertThat(statement.get("Effect")).isEqualTo("Deny");
+    }
+
+    @Test
     void webSocketDeniesUnknownGroups() {
         when(verifier.verify("guest-token")).thenReturn(new Principal("sub-2", List.of("guests")));
         Map<String, Object> event = Map.of(

@@ -70,8 +70,8 @@ public class AuthorizerHandler {
             String methodArn = (String) event.get("methodArn");
             try {
                 @SuppressWarnings("unchecked")
-                Map<String, Object> query = (Map<String, Object>) event.getOrDefault("queryStringParameters", Map.of());
-                String token = (String) query.get("token");
+                Map<String, Object> query = (Map<String, Object>) event.get("queryStringParameters");
+                String token = query == null ? null : (String) query.get("token");
                 if (token == null || token.isBlank()) {
                     throw new IllegalStateException("missing token query parameter");
                 }
