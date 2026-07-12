@@ -151,6 +151,25 @@ class InsightFanoutTest {
     }
 
     @Test
+    void deleteFailureDuringPruneDoesNotAbortRemainingConnections() {
+        stubConnections("conn-1", "conn-2", "conn-3");
+        when(management.postToConnection(any(PostToConnectionRequest.class)))
+                .thenReturn(PostToConnectionResponse.builder().build())
+                .thenThrow(GoneException.builder().message("gone").build())
+                .thenReturn(PostToConnectionResponse.builder().build());
+        when(dynamoDb.deleteItem(any(DeleteItemRequest.class)))
+                .thenThrow(DynamoDbException.builder().message("ddb boom").build());
+
+        Map<String, Object> event = Map.of(
+                "Records", List.of(insertRecord("TICKER#RELIANCE.NS", "INSIGHT#2026-07-12T12:00:00Z", insightImage())));
+
+        Map<String, Object> result = fanout.fanOut(event);
+
+        assertThat(result).containsEntry("delivered", 2).containsEntry("pruned", 0);
+        verify(management, org.mockito.Mockito.times(3)).postToConnection(any(PostToConnectionRequest.class));
+    }
+
+    @Test
     void malformedRecordDoesNotAbortSubsequentRecords() {
         var connections = List.of(Map.of(
                 "ticker", AttributeValue.builder().s("TCS.NS").build(),

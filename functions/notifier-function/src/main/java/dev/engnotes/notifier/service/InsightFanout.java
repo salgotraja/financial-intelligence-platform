@@ -88,13 +88,20 @@ public class InsightFanout {
                                 .build());
                         recordDelivered++;
                     } catch (GoneException e) {
-                        dynamoDb.deleteItem(DeleteItemRequest.builder()
-                                .tableName(connectionsTable)
-                                .key(Map.of(
-                                        "ticker", connection.get("ticker"),
-                                        "connectionId", connection.get("connectionId")))
-                                .build());
-                        recordPruned++;
+                        try {
+                            dynamoDb.deleteItem(DeleteItemRequest.builder()
+                                    .tableName(connectionsTable)
+                                    .key(Map.of(
+                                            "ticker", connection.get("ticker"),
+                                            "connectionId", connection.get("connectionId")))
+                                    .build());
+                            recordPruned++;
+                        } catch (RuntimeException deleteFailure) {
+                            log.warn(
+                                    "Prune delete failed, skipping. connectionId={} error={}",
+                                    connectionId,
+                                    deleteFailure.getMessage());
+                        }
                     } catch (RuntimeException e) {
                         log.warn(
                                 "Post to connection failed, skipping. connectionId={} error={}",
