@@ -7,6 +7,14 @@ ENV="${ENV:-dev}"
 REGION="${AWS_DEFAULT_REGION:-ap-south-1}"
 export AWS_DEFAULT_REGION="$REGION"
 
+# The cdk CLI often lives on a shell-session PATH (fnm/nvm multishell) that non-interactive
+# bash does not inherit; fall back to npx so every script works from any shell. Exported so
+# `run bash -c "... cdk ..."` subshells resolve it too.
+if ! command -v cdk >/dev/null 2>&1; then
+  cdk() { npx -y aws-cdk "$@"; }
+  export -f cdk
+fi
+
 STACK_DATA="FinancialPlatform-Data-$ENV"
 STACK_SECURITY="FinancialPlatform-Security-$ENV"
 STACK_NETWORK="FinancialPlatform-Network-$ENV"
