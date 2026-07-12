@@ -368,6 +368,10 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        // Shared by the OPTIONS preflight below and every non-proxy integration/method response:
+        // the preflight alone does not cover the actual GET/POST/DELETE response the browser reads.
+        String allowOrigin = env.equals("prod") ? "https://engnotes.dev" : "*";
+
         var api = RestApi.Builder.create(this, "FinancialApi")
                 .restApiName("financial-intelligence-api-" + env)
                 .description("Financial Intelligence Platform API")
@@ -384,7 +388,7 @@ public class QueryStack extends Stack {
                         .cacheClusterEnabled(true)
                         .build())
                 .defaultCorsPreflightOptions(CorsOptions.builder()
-                        .allowOrigins(List.of(env.equals("prod") ? "https://engnotes.dev" : "*"))
+                        .allowOrigins(List.of(allowOrigin))
                         .allowMethods(List.of("GET", "POST", "DELETE", "OPTIONS"))
                         .build())
                 .build();
@@ -401,7 +405,7 @@ public class QueryStack extends Stack {
                 // {ticker} must be a cache key, else the 60s stage cache serves one ticker's
                 // response for every ticker (wrong data + collapses the load-test cache mix).
                 .cacheKeyParameters(List.of("method.request.path.ticker"))
-                .integrationResponses(errorAwareIntegrationResponses())
+                .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                 .build();
 
         // /insights/{ticker} - protected (readers+)
@@ -425,7 +429,7 @@ public class QueryStack extends Stack {
                         "{ \"ticker\": \"$input.params('ticker')\", "
                                 + "  \"correlationId\": \"$context.requestId\" }"))
                 .cacheKeyParameters(List.of("method.request.path.ticker"))
-                .integrationResponses(errorAwareIntegrationResponses())
+                .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                 .build();
 
         // /market-data/{ticker} - protected (readers+), chart data for the frontend
@@ -451,12 +455,14 @@ public class QueryStack extends Stack {
                                 .requestTemplates(Map.of("application/json", "{\"statusCode\": 200}"))
                                 .integrationResponses(List.of(IntegrationResponse.builder()
                                         .statusCode("200")
+                                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
                                         .responseTemplates(Map.of("application/json", "{\"status\":\"ok\"}"))
                                         .build()))
                                 .build(),
                         MethodOptions.builder()
                                 .methodResponses(List.of(MethodResponse.builder()
                                         .statusCode("200")
+                                        .responseParameters(Map.of(CORS_HEADER, true))
                                         .build()))
                                 .build());
 
@@ -475,7 +481,7 @@ public class QueryStack extends Stack {
                                         + "  \"ticker\": \"$input.params('ticker')\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses())
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
@@ -494,7 +500,7 @@ public class QueryStack extends Stack {
                                         + "  \"ticker\": \"$input.params('ticker')\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses())
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
@@ -512,7 +518,7 @@ public class QueryStack extends Stack {
                                 "{ \"operation\": \"LIST\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses())
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
@@ -539,7 +545,7 @@ public class QueryStack extends Stack {
                                         + "  \"purpose\": \"$util.escapeJavaScript($input.path('$.purpose'))\","
                                         + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses())
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
@@ -557,7 +563,7 @@ public class QueryStack extends Stack {
                                         + "  \"sub\": \"$context.authorizer.sub\","
                                         + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses())
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
@@ -575,7 +581,7 @@ public class QueryStack extends Stack {
                                         + "  \"sub\": \"$context.authorizer.sub\","
                                         + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses())
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
@@ -599,7 +605,7 @@ public class QueryStack extends Stack {
                                         + "  \"correlationId\": \"$context.requestId\","
                                         + "  \"callerSub\": \"$context.authorizer.sub\","
                                         + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses())
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
@@ -621,7 +627,7 @@ public class QueryStack extends Stack {
                                         + "  \"correlationId\": \"$context.requestId\","
                                         + "  \"callerSub\": \"$context.authorizer.sub\","
                                         + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses())
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
@@ -654,6 +660,7 @@ public class QueryStack extends Stack {
                                                 + "\",\"input\":\"{\\\"ticker\\\":\\\"$util.escapeJavaScript($input.params('ticker'))\\\",\\\"source\\\":\\\"on-demand\\\"}\"}"))
                         .integrationResponses(List.of(IntegrationResponse.builder()
                                 .statusCode("202")
+                                .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
                                 .responseTemplates(Map.of(
                                         "application/json",
                                         "{\"status\":\"accepted\",\"ticker\":\"$input.params('ticker')\"}"))
@@ -673,6 +680,7 @@ public class QueryStack extends Stack {
                                 .requestParameters(Map.of("method.request.path.ticker", true))
                                 .methodResponses(List.of(MethodResponse.builder()
                                         .statusCode("202")
+                                        .responseParameters(Map.of(CORS_HEADER, true))
                                         .build()))
                                 .build());
 
@@ -904,13 +912,21 @@ public class QueryStack extends Stack {
     // pattern requires at least one character (+, not *): API Gateway evaluates patterns against
     // an EMPTY errorMessage on successful invocations, so a pattern matching "" hijacks every 200.
     private static final String CLIENT_ERROR_PATTERN = "Invalid ticker|allowlist validation|consent required";
+    private static final String CORS_HEADER = "method.response.header.Access-Control-Allow-Origin";
 
-    private static List<IntegrationResponse> errorAwareIntegrationResponses() {
+    // Non-proxy integrations never emit response headers unless every IntegrationResponse maps them
+    // explicitly; the stage-level defaultCorsPreflightOptions only covers the OPTIONS preflight, not
+    // the real GET/POST/DELETE response the browser actually reads for the CORS check.
+    private static List<IntegrationResponse> errorAwareIntegrationResponses(String allowOrigin) {
         return List.of(
-                IntegrationResponse.builder().statusCode("200").build(),
+                IntegrationResponse.builder()
+                        .statusCode("200")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
+                        .build(),
                 IntegrationResponse.builder()
                         .statusCode("400")
                         .selectionPattern(".*(" + CLIENT_ERROR_PATTERN + ").*")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
                         .responseTemplates(Map.of(
                                 "application/json",
                                 "{\"error\":\"$util.escapeJavaScript($input.path('$.errorMessage'))\"}"))
@@ -918,14 +934,24 @@ public class QueryStack extends Stack {
                 IntegrationResponse.builder()
                         .statusCode("500")
                         .selectionPattern("^((?!" + CLIENT_ERROR_PATTERN + ")(.|\\n))+$")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
                         .responseTemplates(Map.of("application/json", "{\"error\":\"internal error\"}"))
                         .build());
     }
 
     private static List<MethodResponse> standardMethodResponses() {
         return List.of(
-                MethodResponse.builder().statusCode("200").build(),
-                MethodResponse.builder().statusCode("400").build(),
-                MethodResponse.builder().statusCode("500").build());
+                MethodResponse.builder()
+                        .statusCode("200")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build(),
+                MethodResponse.builder()
+                        .statusCode("400")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build(),
+                MethodResponse.builder()
+                        .statusCode("500")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build());
     }
 }

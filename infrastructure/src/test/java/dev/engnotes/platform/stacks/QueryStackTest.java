@@ -100,4 +100,31 @@ class QueryStackTest {
                 .toList();
         assertTrue(pathParts.contains("market-data"), "expected a market-data API resource");
     }
+
+    // The OPTIONS preflight response carries Access-Control-Allow-Origin (CDK's
+    // defaultCorsPreflightOptions handles that), but browsers also read the header off the actual
+    // GET/POST/DELETE response. Non-proxy integrations never emit it unless every IntegrationResponse
+    // maps it explicitly, so every real method (everything but the CORS-generated OPTIONS) must carry it.
+    @Test
+    @SuppressWarnings("unchecked")
+    void allResponsesCarryCorsAllowOriginHeader() {
+        var methods = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> !"OPTIONS".equals(p.get("HttpMethod")))
+                .toList();
+        assertFalse(methods.isEmpty(), "expected non-OPTIONS API Gateway methods");
+        for (var props : methods) {
+            var integration = (Map<String, Object>) props.get("Integration");
+            var integrationResponses = (List<Map<String, Object>>) integration.get("IntegrationResponses");
+            assertFalse(integrationResponses.isEmpty(), "expected integration responses on " + props);
+            for (var response : integrationResponses) {
+                var responseParameters = (Map<String, Object>) response.get("ResponseParameters");
+                assertTrue(
+                        responseParameters != null
+                                && responseParameters.containsKey("method.response.header.Access-Control-Allow-Origin"),
+                        "expected Access-Control-Allow-Origin on integration response " + response + " of "
+                                + props.get("HttpMethod") + " " + props.get("ResourceId"));
+            }
+        }
+    }
 }
