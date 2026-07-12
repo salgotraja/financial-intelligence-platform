@@ -9,6 +9,10 @@ import java.util.List;
  */
 public record WatchlistResponse(String status, String ticker, List<String> tickers) {
 
+    public WatchlistResponse {
+        tickers = tickers == null ? List.of() : List.copyOf(tickers);
+    }
+
     public static WatchlistResponse added(String ticker) {
         return new WatchlistResponse("added", ticker, null);
     }
