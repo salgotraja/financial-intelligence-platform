@@ -837,7 +837,9 @@ public class QueryStack extends Stack {
 
     // Non-proxy integrations map Lambda errors via selectionPattern; without these any handler
     // exception surfaces as an opaque 502. Client-input failures map to 400 by message; the 500
-    // pattern excludes them because API Gateway's pattern match order is undefined.
+    // pattern excludes them because API Gateway's pattern match order is undefined. The 500
+    // pattern requires at least one character (+, not *): API Gateway evaluates patterns against
+    // an EMPTY errorMessage on successful invocations, so a pattern matching "" hijacks every 200.
     private static final String CLIENT_ERROR_PATTERN = "Invalid ticker|allowlist validation|consent required";
 
     private static List<IntegrationResponse> errorAwareIntegrationResponses() {
@@ -852,7 +854,7 @@ public class QueryStack extends Stack {
                         .build(),
                 IntegrationResponse.builder()
                         .statusCode("500")
-                        .selectionPattern("^((?!" + CLIENT_ERROR_PATTERN + ")(.|\\n))*$")
+                        .selectionPattern("^((?!" + CLIENT_ERROR_PATTERN + ")(.|\\n))+$")
                         .responseTemplates(Map.of("application/json", "{\"error\":\"internal error\"}"))
                         .build());
     }
