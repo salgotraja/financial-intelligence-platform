@@ -91,18 +91,20 @@ public class IngestionStack extends Stack {
         // KMS encrypt/decrypt for DynamoDB and S3.
         data.getEncryptionKey().grantEncryptDecrypt(ingestionRole);
 
-        // Bedrock invoke. Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1 (verified):
-        // the bare foundation-model id is not invocable on demand. We call the global
-        // cross-region profile, so the policy must allow BOTH the inference-profile ARN
-        // and the underlying foundation-model ARN (note the -v1:0 version suffix). Global
-        // profiles can route to any region, hence the * region on the foundation-model.
+        // Bedrock invoke. Claude is INFERENCE_PROFILE-only in ap-south-1: the bare
+        // foundation-model id is not invocable on demand. We call the global cross-region
+        // profile, so the policy must allow BOTH the inference-profile ARN and the underlying
+        // foundation-model ARN. Global profiles can route to any region, hence the * region on
+        // the foundation-model. Model verified against `aws bedrock list-inference-profiles`
+        // in ap-south-1 (2026-07-12): global.anthropic.claude-sonnet-4-6 exists; the previously
+        // configured global sonnet-4-5 profile does not.
         ingestionRole.addToPolicy(PolicyStatement.Builder.create()
                 .effect(Effect.ALLOW)
                 .actions(List.of("bedrock:InvokeModel"))
                 .resources(List.of(
                         "arn:aws:bedrock:" + this.getRegion() + ":" + this.getAccount()
-                                + ":inference-profile/global.anthropic.claude-sonnet-4-5-20250929-v1:0",
-                        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0"))
+                                + ":inference-profile/global.anthropic.claude-sonnet-4-6",
+                        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6"))
                 .build());
 
         // Secrets Manager read - market data provider API key path only.
@@ -174,11 +176,11 @@ public class IngestionStack extends Stack {
         Map<String, String> insightEnv = new HashMap<>(commonEnvVars);
         insightEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "generateInsight");
         insightEnv.put("MAIN_CLASS", "dev.engnotes.insight.InsightHandler");
-        // Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1; invoke the global profile id,
+        // Claude is INFERENCE_PROFILE-only in ap-south-1; invoke the global profile id,
         // not the bare foundation-model id (the latter returns ValidationException on demand).
-        insightEnv.put("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");
+        insightEnv.put("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-6");
         insightEnv.put("BEDROCK_MAX_TOKENS", "1024");
-        // Cost tracking + daily-spend circuit breaker (spec section 9). Sonnet 4.5 list pricing
+        // Cost tracking + daily-spend circuit breaker (spec section 9). Claude Sonnet list pricing
         // (USD per 1K tokens); the breaker opens once a day's spend reaches the cap and routes to
         // the rule-based fallback. Cost records share the insight table (already granted to the role).
         insightEnv.put("COST_DAILY_CAP_USD", "5.0");
@@ -326,14 +328,20 @@ public class IngestionStack extends Stack {
         DistributedMap fanOut = DistributedMap.Builder.create(this, "FanOutTickers")
                 .comment("Fan out the per-ticker pipeline across the WATCHSET union")
                 .itemsPath("$.watchset.Items")
-                .maxConcurrency(5)
+                // 2, not 5: this account's Lambda concurrency quota is 10 TOTAL, and a fan-out
+                // burst at 5 (x fetch+insight per item) starved the API-path authorizers into
+                // "Rate Exceeded" 500s (observed live 2026-07-12). Keep pipeline bursts well
+                // under half the pool until the requested quota increase (->1000) is granted.
+                .maxConcurrency(2)
                 .itemSelector(Map.of(
                         "ticker.$",
                         "$$.Map.Item.Value.ticker.S",
                         "requestedAt.$",
                         "$$.Execution.StartTime",
                         "correlationId.$",
-                        "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)"))
+                        "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)",
+                        "source.$",
+                        "$$.Execution.Input.source"))
                 .toleratedFailurePercentage(100)
                 .build();
         // executionType on ProcessorConfig is the working path in this CDK version; the synth-time

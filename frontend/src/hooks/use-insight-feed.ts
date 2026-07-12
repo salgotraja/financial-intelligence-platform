@@ -61,7 +61,18 @@ export const useInsightFeed = (ticker: string): InsightFeed => {
     return () => {
       stopped = true
       if (retryTimer) clearTimeout(retryTimer)
-      socket?.close()
+      if (!socket) return
+      if (socket.readyState === 0) {
+        // Still CONNECTING: closing now makes the browser log "WebSocket is closed before
+        // the connection is established" (routine under React StrictMode's dev double-mount).
+        // Let the handshake finish, then close silently.
+        const pending = socket
+        pending.onmessage = null
+        pending.onclose = null
+        pending.onopen = () => pending.close()
+      } else {
+        socket.close()
+      }
     }
   }, [ticker])
 
