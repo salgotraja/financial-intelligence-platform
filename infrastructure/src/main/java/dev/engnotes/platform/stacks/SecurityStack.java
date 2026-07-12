@@ -154,9 +154,21 @@ public class SecurityStack extends Stack {
                                         .authorizationCodeGrant(true)
                                         .build())
                                 .scopes(List.of(OAuthScope.OPENID, OAuthScope.EMAIL, OAuthScope.PROFILE))
-                                .callbackUrls(List.of(
-                                        prod ? "https://engnotes.dev/callback" : "http://localhost:3000/callback"))
-                                .logoutUrls(List.of(prod ? "https://engnotes.dev" : "http://localhost:3000"))
+                                // Dev signs in from local dev AND the Amplify-hosted app; both
+                                // redirect URIs must be registered or the Hosted UI rejects the
+                                // request with redirect_mismatch.
+                                .callbackUrls(
+                                        prod
+                                                ? List.of("https://engnotes.dev/callback")
+                                                : List.of(
+                                                        "http://localhost:3000/callback",
+                                                        "https://main.db53oxbwuxc6z.amplifyapp.com/callback"))
+                                .logoutUrls(
+                                        prod
+                                                ? List.of("https://engnotes.dev")
+                                                : List.of(
+                                                        "http://localhost:3000",
+                                                        "https://main.db53oxbwuxc6z.amplifyapp.com"))
                                 .build())
                         .build());
 
