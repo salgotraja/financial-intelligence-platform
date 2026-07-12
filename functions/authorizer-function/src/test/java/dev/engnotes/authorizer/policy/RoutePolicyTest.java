@@ -15,7 +15,7 @@ class RoutePolicyTest {
                 .extracting(rule -> rule.httpMethod() + " " + rule.resourcePattern())
                 .containsExactlyInAnyOrder(
                         "GET insights/*",
-                        "GET market/*",
+                        "GET market-data/*",
                         "GET user/consent",
                         "POST user/consent",
                         "DELETE user/consent",
@@ -30,7 +30,7 @@ class RoutePolicyTest {
                 .extracting(rule -> rule.httpMethod() + " " + rule.resourcePattern())
                 .containsExactlyInAnyOrder(
                         "GET insights/*",
-                        "GET market/*",
+                        "GET market-data/*",
                         "GET watchlist",
                         "POST watchlist/*",
                         "DELETE watchlist/*",

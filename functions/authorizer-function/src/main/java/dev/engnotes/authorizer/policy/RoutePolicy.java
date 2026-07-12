@@ -20,7 +20,7 @@ public final class RoutePolicy {
 
     private static final List<Rule> RULES = List.of(
             new Rule("GET", "insights/*", Set.of("readers", "premium", "admins")),
-            new Rule("GET", "market/*", Set.of("readers", "premium", "admins")),
+            new Rule("GET", "market-data/*", Set.of("readers", "premium", "admins")),
             new Rule("GET", "watchlist", Set.of("premium", "admins")),
             new Rule("POST", "watchlist/*", Set.of("premium", "admins")),
             new Rule("DELETE", "watchlist/*", Set.of("premium", "admins")),
