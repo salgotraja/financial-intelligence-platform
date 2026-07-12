@@ -43,4 +43,15 @@ class DataStackTest {
                                         "BudgetLimit", Match.objectLike(Map.of("Amount", 5, "Unit", "USD")))),
                         "NotificationsWithSubscribers", Match.arrayWith(List.of(emailEntry, emailEntry, emailEntry)))));
     }
+
+    @Test
+    void platformTableHasNewImageStream() {
+        synth().hasResourceProperties(
+                        "AWS::DynamoDB::Table",
+                        Match.objectLike(Map.of(
+                                "TableName",
+                                "financial-platform-dev",
+                                "StreamSpecification",
+                                Map.of("StreamViewType", "NEW_IMAGE"))));
+    }
 }
