@@ -52,7 +52,8 @@ class IngestionBeanIT extends AbstractLocalStackIT {
         when(fetchService.fetch(ArgumentMatchers.eq("INFY.NS"), ArgumentMatchers.anyString()))
                 .thenReturn(fetched);
 
-        MarketDataResponse result = fetchMarketData.apply(new MarketDataRequest("INFY.NS", "corr-2"));
+        MarketDataResponse result =
+                fetchMarketData.apply(new MarketDataRequest("INFY.NS", "corr-2", "eventbridge-schedule"));
 
         assertThat(result.stored()).isTrue();
         // AnomalyDetectionService also writes SK=BASELINE for rolling stats.

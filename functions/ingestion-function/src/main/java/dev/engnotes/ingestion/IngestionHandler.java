@@ -54,6 +54,17 @@ public class IngestionHandler {
 
             MarketDataResponse marketData = fetchService.fetch(ticker, correlationId);
             marketData = anomalyService.evaluate(marketData, correlationId);
+
+            // On-demand refreshes (POST /ingest/{ticker}) must always generate an insight,
+            // regardless of the anomaly gate's verdict; scheduled runs stay anomaly-gated.
+            if ("on-demand".equals(request.source()) && !marketData.anomaly()) {
+                log.info(
+                        "On-demand refresh: overriding anomaly gate to force insight generation. ticker={} correlationId={}",
+                        ticker,
+                        correlationId);
+                marketData = marketData.withAnomaly(true, "on-demand refresh");
+            }
+
             marketData = storeService.store(marketData, correlationId);
 
             log.info(

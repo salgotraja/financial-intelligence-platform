@@ -335,7 +335,9 @@ public class IngestionStack extends Stack {
                         "requestedAt.$",
                         "$$.Execution.StartTime",
                         "correlationId.$",
-                        "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)"))
+                        "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)",
+                        "source.$",
+                        "$$.Execution.Input.source"))
                 .toleratedFailurePercentage(100)
                 .build();
         // executionType on ProcessorConfig is the working path in this CDK version; the synth-time
