@@ -3,9 +3,9 @@ package dev.engnotes.consent;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.amazonaws.services.lambda.runtime.events.CognitoUserPoolPostConfirmationEvent;
 import dev.engnotes.consent.model.ConsentOperation;
 import dev.engnotes.consent.model.ConsentRecord;
 import dev.engnotes.consent.model.ConsentRequest;
@@ -18,6 +18,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
 class ConsentHandlerTest {
@@ -84,19 +87,64 @@ class ConsentHandlerTest {
     }
 
     @Test
-    void postConfirmationSeedsDefaultDenyAndReturnsEventUnchanged() {
-        CognitoUserPoolPostConfirmationEvent.Request request = CognitoUserPoolPostConfirmationEvent.Request.builder()
-                .withUserAttributes(Map.of("sub", "user-999", "email", "a@b.com"))
-                .build();
-        CognitoUserPoolPostConfirmationEvent event = CognitoUserPoolPostConfirmationEvent.builder()
-                .withUserName("a@b.com")
-                .withRequest(request)
-                .build();
+    void postConfirmationRoundTripsRawCognitoJsonUnchanged() {
+        // Cognito requires the trigger to echo the incoming event back unchanged. The raw payload
+        // includes "response": {} (not modeled by aws-lambda-java-events) and omits absent optionals;
+        // Jackson 3 ignores the library's Jackson-2 annotations, so a typed round-trip mutates it.
+        String rawEvent = """
+                {
+                  "version": "1",
+                  "region": "ap-south-1",
+                  "userPoolId": "ap-south-1_EXAMPLE",
+                  "userName": "a@b.com",
+                  "callerContext": {
+                    "awsSdkVersion": "aws-sdk-unknown-unknown",
+                    "clientId": "client-123"
+                  },
+                  "triggerSource": "PostConfirmation_ConfirmSignUp",
+                  "request": {
+                    "userAttributes": {
+                      "sub": "user-999",
+                      "email_verified": "true",
+                      "cognito:user_status": "CONFIRMED",
+                      "email": "a@b.com"
+                    }
+                  },
+                  "response": {}
+                }
+                """;
+        ObjectMapper mapper = JsonMapper.builder().build();
 
-        CognitoUserPoolPostConfirmationEvent result =
+        Map<String, Object> event = mapper.readValue(rawEvent, new TypeReference<Map<String, Object>>() {});
+        Map<String, Object> result =
                 new ConsentHandler().postConfirmation(store).apply(event);
 
         verify(store).seedDefaultDeny("user-999");
+        assertThat(mapper.readTree(mapper.writeValueAsString(result))).isEqualTo(mapper.readTree(rawEvent));
+    }
+
+    @Test
+    void postConfirmationSeedsDefaultDenyAndReturnsEventUnchanged() {
+        Map<String, Object> event = Map.of(
+                "userName", "a@b.com",
+                "request", Map.of("userAttributes", Map.of("sub", "user-999", "email", "a@b.com")),
+                "response", Map.of());
+
+        Map<String, Object> result =
+                new ConsentHandler().postConfirmation(store).apply(event);
+
+        verify(store).seedDefaultDeny("user-999");
+        assertThat(result).isSameAs(event);
+    }
+
+    @Test
+    void postConfirmationWithoutSubSkipsSeedingAndStillEchoesEvent() {
+        Map<String, Object> event = Map.of("userName", "a@b.com", "response", Map.of());
+
+        Map<String, Object> result =
+                new ConsentHandler().postConfirmation(store).apply(event);
+
+        verifyNoInteractions(store);
         assertThat(result).isSameAs(event);
     }
 }

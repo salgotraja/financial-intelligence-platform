@@ -1,11 +1,11 @@
 package dev.engnotes.consent;
 
-import com.amazonaws.services.lambda.runtime.events.CognitoUserPoolPostConfirmationEvent;
 import dev.engnotes.consent.model.ConsentRecord;
 import dev.engnotes.consent.model.ConsentRequest;
 import dev.engnotes.consent.model.ConsentResponse;
 import dev.engnotes.consent.service.ConsentStoreService;
 import dev.engnotes.consent.service.UserWatchlistPurgeService;
+import java.util.Map;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,18 +72,27 @@ public class ConsentHandler {
         };
     }
 
+    // Untyped on purpose: Cognito requires the trigger to echo the event back unchanged, and a
+    // round-trip through the aws-lambda-java-events type mutates the JSON (drops the unmodeled
+    // "response" object, adds nulls) because Jackson 3 ignores the library's Jackson-2 annotations.
+    // Same bug class and fix as the authorizer's hand-built policy Map.
     @Bean
-    public Function<CognitoUserPoolPostConfirmationEvent, CognitoUserPoolPostConfirmationEvent> postConfirmation(
-            ConsentStoreService store) {
+    public Function<Map<String, Object>, Map<String, Object>> postConfirmation(ConsentStoreService store) {
         return event -> {
-            String sub = event.getRequest() != null
-                    ? event.getRequest().getUserAttributes().get("sub")
-                    : null;
-            log.info("PostConfirmation seeding consent. sub={} userName={}", sub, event.getUserName());
+            String sub = userAttribute(event, "sub");
+            log.info("PostConfirmation seeding consent. sub={} userName={}", sub, event.get("userName"));
             if (sub != null && !sub.isBlank()) {
                 store.seedDefaultDeny(sub);
             }
             return event;
         };
+    }
+
+    private static String userAttribute(Map<String, Object> event, String name) {
+        return event.get("request") instanceof Map<?, ?> request
+                        && request.get("userAttributes") instanceof Map<?, ?> attributes
+                        && attributes.get(name) instanceof String value
+                ? value
+                : null;
     }
 }
