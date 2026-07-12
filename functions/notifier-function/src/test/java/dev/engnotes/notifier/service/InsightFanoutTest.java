@@ -15,12 +15,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.apigatewaymanagementapi.ApiGatewayManagementApiClient;
+import software.amazon.awssdk.services.apigatewaymanagementapi.model.ApiGatewayManagementApiException;
 import software.amazon.awssdk.services.apigatewaymanagementapi.model.GoneException;
 import software.amazon.awssdk.services.apigatewaymanagementapi.model.PostToConnectionRequest;
 import software.amazon.awssdk.services.apigatewaymanagementapi.model.PostToConnectionResponse;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.DynamoDbException;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import tools.jackson.databind.json.JsonMapper;
@@ -128,6 +130,47 @@ class InsightFanoutTest {
         ArgumentCaptor<DeleteItemRequest> captor = ArgumentCaptor.forClass(DeleteItemRequest.class);
         verify(dynamoDb).deleteItem(captor.capture());
         assertThat(captor.getValue().key().get("connectionId").s()).isEqualTo("conn-dead");
+    }
+
+    @Test
+    void nonGonePostFailureDoesNotAbortRemainingConnections() {
+        stubConnections("conn-1", "conn-2");
+        when(management.postToConnection(any(PostToConnectionRequest.class)))
+                .thenThrow(ApiGatewayManagementApiException.builder()
+                        .message("boom")
+                        .build())
+                .thenReturn(PostToConnectionResponse.builder().build());
+
+        Map<String, Object> event = Map.of(
+                "Records", List.of(insertRecord("TICKER#RELIANCE.NS", "INSIGHT#2026-07-12T12:00:00Z", insightImage())));
+
+        Map<String, Object> result = fanout.fanOut(event);
+
+        assertThat(result).containsEntry("delivered", 1).containsEntry("pruned", 0);
+        verify(management, org.mockito.Mockito.times(2)).postToConnection(any(PostToConnectionRequest.class));
+    }
+
+    @Test
+    void malformedRecordDoesNotAbortSubsequentRecords() {
+        var connections = List.of(Map.of(
+                "ticker", AttributeValue.builder().s("TCS.NS").build(),
+                "connectionId", AttributeValue.builder().s("conn-ok").build()));
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenThrow(DynamoDbException.builder().message("boom").build())
+                .thenReturn(QueryResponse.builder().items(connections).build());
+        when(management.postToConnection(any(PostToConnectionRequest.class)))
+                .thenReturn(PostToConnectionResponse.builder().build());
+
+        Map<String, Object> event = Map.of(
+                "Records",
+                List.of(
+                        insertRecord("TICKER#RELIANCE.NS", "INSIGHT#2026-07-12T12:00:00Z", insightImage()),
+                        insertRecord("TICKER#TCS.NS", "INSIGHT#2026-07-12T12:01:00Z", insightImage())));
+
+        Map<String, Object> result = fanout.fanOut(event);
+
+        assertThat(result).containsEntry("delivered", 1).containsEntry("pruned", 0);
+        verify(management, org.mockito.Mockito.times(1)).postToConnection(any(PostToConnectionRequest.class));
     }
 
     @Test

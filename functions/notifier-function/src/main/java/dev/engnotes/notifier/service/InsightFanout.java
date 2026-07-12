@@ -53,51 +53,70 @@ public class InsightFanout {
         int pruned = 0;
         var records = (List<Map<String, Object>>) streamEvent.getOrDefault("Records", List.of());
         for (Map<String, Object> record : records) {
-            if (!"INSERT".equals(record.get("eventName"))) {
-                continue;
-            }
-            var dynamodb = (Map<String, Object>) record.getOrDefault("dynamodb", Map.of());
-            var keys = (Map<String, Object>) dynamodb.getOrDefault("Keys", Map.of());
-            String pk = keyString(keys, "PK");
-            String sk = keyString(keys, "SK");
-            if (pk == null || sk == null || !pk.startsWith(TICKER_PK_PREFIX) || !sk.startsWith(INSIGHT_SK_PREFIX)) {
-                continue;
-            }
-            String ticker = pk.substring(TICKER_PK_PREFIX.length());
-            var newImage = (Map<String, Object>) dynamodb.getOrDefault("NewImage", Map.of());
-            String payload = mapper.writeValueAsString(insightPayload(ticker, newImage));
-
-            var connections = dynamoDb.query(QueryRequest.builder()
-                            .tableName(connectionsTable)
-                            .keyConditionExpression("ticker = :t")
-                            .expressionAttributeValues(Map.of(
-                                    ":t", AttributeValue.builder().s(ticker).build()))
-                            .build())
-                    .items();
-            for (Map<String, AttributeValue> connection : connections) {
-                String connectionId = connection.get("connectionId").s();
-                try {
-                    management.postToConnection(PostToConnectionRequest.builder()
-                            .connectionId(connectionId)
-                            .data(SdkBytes.fromUtf8String(payload))
-                            .build());
-                    delivered++;
-                } catch (GoneException e) {
-                    dynamoDb.deleteItem(DeleteItemRequest.builder()
-                            .tableName(connectionsTable)
-                            .key(Map.of(
-                                    "ticker", connection.get("ticker"),
-                                    "connectionId", connection.get("connectionId")))
-                            .build());
-                    pruned++;
+            String pk = null;
+            String sk = null;
+            try {
+                if (!"INSERT".equals(record.get("eventName"))) {
+                    continue;
                 }
+                var dynamodb = (Map<String, Object>) record.getOrDefault("dynamodb", Map.of());
+                var keys = (Map<String, Object>) dynamodb.getOrDefault("Keys", Map.of());
+                pk = keyString(keys, "PK");
+                sk = keyString(keys, "SK");
+                if (pk == null || sk == null || !pk.startsWith(TICKER_PK_PREFIX) || !sk.startsWith(INSIGHT_SK_PREFIX)) {
+                    continue;
+                }
+                String ticker = pk.substring(TICKER_PK_PREFIX.length());
+                var newImage = (Map<String, Object>) dynamodb.getOrDefault("NewImage", Map.of());
+                String payload = mapper.writeValueAsString(insightPayload(ticker, newImage));
+
+                var connections = dynamoDb.query(QueryRequest.builder()
+                                .tableName(connectionsTable)
+                                .keyConditionExpression("ticker = :t")
+                                .expressionAttributeValues(Map.of(
+                                        ":t", AttributeValue.builder().s(ticker).build()))
+                                .build())
+                        .items();
+                int recordDelivered = 0;
+                int recordPruned = 0;
+                for (Map<String, AttributeValue> connection : connections) {
+                    String connectionId = connection.get("connectionId").s();
+                    try {
+                        management.postToConnection(PostToConnectionRequest.builder()
+                                .connectionId(connectionId)
+                                .data(SdkBytes.fromUtf8String(payload))
+                                .build());
+                        recordDelivered++;
+                    } catch (GoneException e) {
+                        dynamoDb.deleteItem(DeleteItemRequest.builder()
+                                .tableName(connectionsTable)
+                                .key(Map.of(
+                                        "ticker", connection.get("ticker"),
+                                        "connectionId", connection.get("connectionId")))
+                                .build());
+                        recordPruned++;
+                    } catch (RuntimeException e) {
+                        log.warn(
+                                "Post to connection failed, skipping. connectionId={} error={}",
+                                connectionId,
+                                e.getMessage());
+                    }
+                }
+                delivered += recordDelivered;
+                pruned += recordPruned;
+                log.info(
+                        "Insight fan-out. ticker={} connections={} delivered={} pruned={}",
+                        ticker,
+                        connections.size(),
+                        recordDelivered,
+                        recordPruned);
+            } catch (RuntimeException e) {
+                log.warn(
+                        "Insight fan-out record processing failed, skipping. pk={} sk={} error={}",
+                        pk,
+                        sk,
+                        e.getMessage());
             }
-            log.info(
-                    "Insight fan-out. ticker={} connections={} delivered={} pruned={}",
-                    ticker,
-                    connections.size(),
-                    delivered,
-                    pruned);
         }
         return Map.of("delivered", delivered, "pruned", pruned);
     }
