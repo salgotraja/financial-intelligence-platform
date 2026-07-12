@@ -5,7 +5,7 @@ import { SignInButton } from './sign-in-button'
 import { useAuthStore } from '@/stores/auth-store'
 
 export const NavBar = () => {
-  const { status, email, groups } = useAuthStore()
+  const { status, email, username, groups } = useAuthStore()
 
   return (
     <header className="flex items-center justify-between border-b px-6 py-3">
@@ -27,7 +27,7 @@ export const NavBar = () => {
       <div className="flex items-center gap-3">
         {status === 'signed-in' && (
           <span className="text-xs text-gray-500">
-            {email ?? 'signed in'}
+            {email ?? username ?? 'signed in'}
             {groups.length > 0 && ` · ${groups.join(', ')}`}
           </span>
         )}

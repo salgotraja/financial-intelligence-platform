@@ -26,8 +26,16 @@ export const DangerZone = () => {
   const onDelete = async () => {
     try {
       const result = await deleteAccount()
+      if (result.status !== 'erased') {
+        setStatus('Deletion was not permitted.')
+        return
+      }
       setStatus(`Deleted ${result.itemsDeleted} items. Signing out…`)
-      await signOut()
+      try {
+        await signOut()
+      } catch {
+        // Deletion already succeeded; a sign-out failure must not overwrite that status.
+      }
     } catch {
       setStatus('Deletion failed.')
     }

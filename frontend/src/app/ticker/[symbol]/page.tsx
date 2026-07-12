@@ -39,6 +39,7 @@ const TickerView = ({ symbol }: { symbol: string }) => {
   useEffect(() => {
     isMountedRef.current = true
     if (status === 'signed-in') {
+      // set-state-in-effect false positive: state is set only after await inside a guarded async fn
       // eslint-disable-next-line react-hooks/set-state-in-effect
       void load()
     }

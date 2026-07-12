@@ -31,6 +31,7 @@ export const WatchlistPanel = () => {
   useEffect(() => {
     isMountedRef.current = true
     if (canManage) {
+      // set-state-in-effect false positive: state is set only after await inside a guarded async fn
       // eslint-disable-next-line react-hooks/set-state-in-effect
       void load()
     }

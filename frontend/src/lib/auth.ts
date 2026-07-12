@@ -5,6 +5,7 @@ const MANAGER_GROUPS = ['premium', 'admins']
 export interface SessionInfo {
   sub: string
   email: string | null
+  username: string | null
   groups: string[]
 }
 
@@ -35,6 +36,7 @@ export const getSessionInfo = async (): Promise<SessionInfo | null> => {
     return {
       sub: typeof payload.sub === 'string' ? payload.sub : '',
       email: typeof payload.email === 'string' ? payload.email : null,
+      username: typeof payload.username === 'string' ? payload.username : null,
       groups: parseGroups(payload),
     }
   } catch {

@@ -22,6 +22,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           break
         case 'signedOut':
         case 'signInWithRedirect_failure':
+        case 'tokenRefresh_failure':
           markSignedOut()
           break
       }
