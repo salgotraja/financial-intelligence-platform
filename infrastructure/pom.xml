@@ -16,8 +16,8 @@
     <description>AWS CDK (Java) infrastructure for the financial intelligence platform</description>
 
     <properties>
-        <cdk.version>2.260.0</cdk.version>
-        <constructs.version>10.4.2</constructs.version>
+        <cdk.version>2.261.0</cdk.version>
+        <constructs.version>10.6.0</constructs.version>
     </properties>
 
     <dependencies>
