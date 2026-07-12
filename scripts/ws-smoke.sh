@@ -27,9 +27,21 @@ log "2/2 subscribe to $T, write a fresh insight, expect a push within 30s"
 marker="ws-smoke-$(date +%s)"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 npx -y wscat -c "$WS_URL?token=$ACCESS_TOKEN" \
-  -x "{\"action\":\"subscribe\",\"tickers\":[\"$T\"]}" -w 30 < <(sleep 60) >"$out_file" 2>&1 &
+  -x "{\"action\":\"subscribe\",\"tickers\":[\"$T\"]}" -w 60 < <(sleep 90) >"$out_file" 2>&1 &
 ws_pid=$!
-sleep 5  # let $connect + subscribe land before triggering the stream
+
+# Wait until the subscribe row is actually registered (cold starts can take ~5-8s);
+# writing the trigger insight before the row exists loses the race, not the feature.
+row_count=0
+for _ in $(seq 1 20); do
+  row_count="$(aws dynamodb query --table-name "financial-connections-$ENV" \
+    --key-condition-expression "ticker = :t" \
+    --expression-attribute-values "{\":t\":{\"S\":\"$T\"}}" \
+    --select COUNT --query 'Count' --output text 2>/dev/null || echo 0)"
+  [[ "$row_count" != "0" ]] && break
+  sleep 1
+done
+[[ "$row_count" != "0" ]] || die "subscribe row never appeared in financial-connections-$ENV (cold start > 20s or subscribe failed)"
 
 aws dynamodb put-item --table-name "$TABLE" --item "{
   \"PK\": {\"S\": \"TICKER#$T\"},
