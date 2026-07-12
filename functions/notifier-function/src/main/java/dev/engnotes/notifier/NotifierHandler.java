@@ -1,6 +1,7 @@
 package dev.engnotes.notifier;
 
 import dev.engnotes.notifier.service.ConnectionRegistry;
+import dev.engnotes.notifier.service.InsightFanout;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -68,6 +69,16 @@ public class NotifierHandler {
                         e.getMessage());
                 return Map.of("statusCode", 400);
             }
+        };
+    }
+
+    /** Consumes platform-table stream INSERTs and pushes new insights to subscribed connections. */
+    @Bean
+    public Function<Map<String, Object>, Map<String, Object>> notifyInsight(InsightFanout fanout) {
+        return event -> {
+            Map<String, Object> result = fanout.fanOut(event);
+            log.info("Notify complete. delivered={} pruned={}", result.get("delivered"), result.get("pruned"));
+            return result;
         };
     }
 }
