@@ -73,4 +73,20 @@ describe('useInsightFeed', () => {
 
     expect(FakeWebSocket.instances[0].readyState).toBe(3)
   })
+
+  it('clears the previous ticker insight when the ticker changes', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const { result, rerender } = renderHook(({ ticker }) => useInsightFeed(ticker), {
+      initialProps: { ticker: 'RELIANCE' },
+    })
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.open())
+    act(() => socket.message({ ticker: 'RELIANCE', signal: 'BULLISH', found: true, drivers: [] }))
+    expect(result.current.liveInsight?.ticker).toBe('RELIANCE')
+
+    rerender({ ticker: 'TCS' })
+
+    expect(result.current.liveInsight).toBeNull()
+  })
 })

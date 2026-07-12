@@ -17,6 +17,12 @@ export const useInsightFeed = (ticker: string): InsightFeed => {
   const [connected, setConnected] = useState(false)
   const attemptRef = useRef(0)
 
+  const [lastTicker, setLastTicker] = useState(ticker)
+  if (lastTicker !== ticker) {
+    setLastTicker(ticker)
+    setLiveInsight(null)
+  }
+
   useEffect(() => {
     let socket: WebSocket | null = null
     let retryTimer: ReturnType<typeof setTimeout> | null = null
