@@ -66,4 +66,13 @@ class NotifierHandlerTest {
         assertThat(response).containsEntry("statusCode", 400);
         verifyNoInteractions(registry);
     }
+
+    @Test
+    void malformedRequestContextReturns400() {
+        var response =
+                new NotifierHandler().manageConnection(registry, mapper).apply(Map.of("requestContext", "not-a-map"));
+
+        assertThat(response).containsEntry("statusCode", 400);
+        verifyNoInteractions(registry);
+    }
 }

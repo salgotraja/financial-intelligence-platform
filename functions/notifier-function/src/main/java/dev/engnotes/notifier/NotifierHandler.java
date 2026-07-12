@@ -34,14 +34,16 @@ public class NotifierHandler {
     public Function<Map<String, Object>, Map<String, Object>> manageConnection(
             ConnectionRegistry registry, ObjectMapper mapper) {
         return event -> {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> requestContext = (Map<String, Object>) event.getOrDefault("requestContext", Map.of());
-            String routeKey = (String) requestContext.get("routeKey");
-            String connectionId = (String) requestContext.get("connectionId");
-
-            log.info("WebSocket route. routeKey={} connectionId={}", routeKey, connectionId);
-
+            String routeKey = null;
+            String connectionId = null;
             try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> requestContext =
+                        (Map<String, Object>) event.getOrDefault("requestContext", Map.of());
+                routeKey = (String) requestContext.get("routeKey");
+                connectionId = (String) requestContext.get("connectionId");
+
+                log.info("WebSocket route. routeKey={} connectionId={}", routeKey, connectionId);
                 switch (routeKey == null ? "" : routeKey) {
                     case "$connect" -> {
                         // Authorizer already validated the token; nothing to record until subscribe.
