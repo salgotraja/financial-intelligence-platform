@@ -32,7 +32,7 @@ else
 fi
 
 log "Deploying all 6 stacks (env=$ENV, alertEmail=${ALERT_EMAIL:-<stack default>})..."
-run bash -c "cd '$REPO_ROOT/infrastructure' && cdk deploy --all --context env=$ENV${ALERT_EMAIL:+ --context alertEmail=$ALERT_EMAIL} --require-approval never"
+run bash -c "cd '$REPO_ROOT/infrastructure' && $CDK deploy --all --context env=$ENV${ALERT_EMAIL:+ --context alertEmail=$ALERT_EMAIL} --require-approval never"
 
 log "Disabling ingest schedule rule to neutralize Bedrock/ingest spend..."
 run aws events disable-rule --name "$SCHEDULE_RULE"

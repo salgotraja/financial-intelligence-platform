@@ -13,7 +13,7 @@ log "Destroying $STACK_REALTIME, $STACK_QUERY, $STACK_INGESTION, $STACK_NETWORK,
 # watch, diff) fails with "Other CLIs (PID=...) are currently reading from cdk.out".
 CDK_OUT="$(mktemp -d "${TMPDIR:-/tmp}/cdk-teardown.XXXXXX")"
 trap 'rm -rf "$CDK_OUT"' EXIT
-run bash -c "cd '$REPO_ROOT/infrastructure' && cdk destroy '$STACK_REALTIME' '$STACK_QUERY' '$STACK_INGESTION' '$STACK_NETWORK' '$STACK_SECURITY' --context env=$ENV --force --output '$CDK_OUT'"
+run bash -c "cd '$REPO_ROOT/infrastructure' && $CDK destroy '$STACK_REALTIME' '$STACK_QUERY' '$STACK_INGESTION' '$STACK_NETWORK' '$STACK_SECURITY' --context env=$ENV --force --output '$CDK_OUT'"
 
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
   log "Verifying DataStack survived (audit table is deletion-protected and permanent)..."

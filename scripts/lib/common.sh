@@ -8,11 +8,14 @@ REGION="${AWS_DEFAULT_REGION:-ap-south-1}"
 export AWS_DEFAULT_REGION="$REGION"
 
 # The cdk CLI often lives on a shell-session PATH (fnm/nvm multishell) that non-interactive
-# bash does not inherit; fall back to npx so every script works from any shell. Exported so
-# `run bash -c "... cdk ..."` subshells resolve it too.
-if ! command -v cdk >/dev/null 2>&1; then
-  cdk() { npx -y aws-cdk "$@"; }
-  export -f cdk
+# bash does not inherit; fall back to npx. A plain command STRING, never an exported function:
+# npm exec runs package bins via `sh -c "cdk" ...`, and sh inherits exported bash functions, so
+# an exported cdk() shadows the real binary and recurses npx forever (observed 2026-07-13:
+# ~1500 nested processes, npm "Maximum call stack size exceeded"). Scripts use $CDK unquoted.
+if command -v cdk >/dev/null 2>&1; then
+  CDK="cdk"
+else
+  CDK="npx -y aws-cdk"
 fi
 
 STACK_DATA="FinancialPlatform-Data-$ENV"
