@@ -1,0 +1,107 @@
+'use client'
+
+import { FormEvent, useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { addToWatchlist, getWatchlist, removeFromWatchlist } from '@/lib/api'
+import { canManageWatchlist } from '@/lib/auth'
+import { useAuthStore } from '@/stores/auth-store'
+import { useAsyncData } from '@/hooks/use-async-data'
+import { useWatchlistDashboard } from '@/hooks/use-watchlist-dashboard'
+import { useInsightFeed } from '@/hooks/use-insight-feed'
+import { BrowseGrid } from './browse-grid'
+import { LiveDot } from './live-dot'
+import { TickerCard } from './ticker-card'
+
+export const WatchlistDashboard = () => {
+  const groups = useAuthStore((s) => s.groups)
+  const canManage = canManageWatchlist(groups)
+  const [draft, setDraft] = useState('')
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const { data: watchlist, error: loadError, reload } = useAsyncData(getWatchlist, canManage)
+  const tickers = watchlist?.tickers ?? []
+  const entries = useWatchlistDashboard(tickers)
+  const { insights, connected } = useInsightFeed(tickers)
+
+  if (!canManage) {
+    return (
+      <div className="space-y-6">
+        <p className="text-sm text-muted-foreground">
+          Watchlists are a premium feature. Your group: {groups.join(', ') || 'none'}.
+        </p>
+        <BrowseGrid note="Explore any ticker below, or upgrade to build your own watchlist." />
+      </div>
+    )
+  }
+
+  const onAdd = async (event: FormEvent) => {
+    event.preventDefault()
+    const ticker = draft.trim().toUpperCase()
+    if (!ticker) return
+    try {
+      await addToWatchlist(ticker)
+      setDraft('')
+      setActionError(null)
+      await reload()
+    } catch {
+      setActionError(`Could not add ${ticker}.`)
+    }
+  }
+
+  const onRemove = async (ticker: string) => {
+    try {
+      await removeFromWatchlist(ticker)
+      setActionError(null)
+      await reload()
+    } catch {
+      setActionError(`Could not remove ${ticker}.`)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <span className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold tracking-tight">Watchlist</h1>
+          <LiveDot connected={connected} />
+        </span>
+        <form onSubmit={(e) => void onAdd(e)} className="flex gap-2">
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="RELIANCE.NS"
+            className="w-40 font-mono"
+          />
+          <Button type="submit">Add</Button>
+        </form>
+      </div>
+      {loadError !== null && (
+        <p className="text-sm text-destructive">Could not load your watchlist.</p>
+      )}
+      {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+      {tickers.length === 0 && loadError === null ? (
+        <div className="space-y-6">
+          <p className="text-sm text-muted-foreground">
+            Empty watchlist. Add a ticker above, or start from a suggestion below.
+          </p>
+          <BrowseGrid />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {tickers.map((ticker) => (
+            <TickerCard
+              key={ticker}
+              ticker={ticker}
+              entry={
+                entries[ticker] ?? { loading: true, marketData: null, insight: null, error: null }
+              }
+              liveInsight={insights[ticker] ?? null}
+              onRemove={(t) => void onRemove(t)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
