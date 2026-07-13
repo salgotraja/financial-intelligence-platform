@@ -9,7 +9,9 @@ export interface SessionInfo {
   groups: string[]
 }
 
-export const parseGroups = (payload: Record<string, unknown> | undefined): string[] => {
+export const parseGroups = (
+  payload: Record<string, unknown> | undefined,
+): string[] => {
   const claim = payload?.['cognito:groups']
   if (!Array.isArray(claim)) return []
   return claim.filter((g): g is string => typeof g === 'string')
@@ -33,9 +35,13 @@ export const getSessionInfo = async (): Promise<SessionInfo | null> => {
     const token = session.tokens?.accessToken
     if (!token) return null
     const payload = token.payload as Record<string, unknown>
+    // The access token carries only groups + the sub-as-username; email lives on
+    // the id token, so read the human-facing identity from there.
+    const idPayload = session.tokens?.idToken?.payload as
+      Record<string, unknown> | undefined
     return {
       sub: typeof payload.sub === 'string' ? payload.sub : '',
-      email: typeof payload.email === 'string' ? payload.email : null,
+      email: typeof idPayload?.email === 'string' ? idPayload.email : null,
       username: typeof payload.username === 'string' ? payload.username : null,
       groups: parseGroups(payload),
     }

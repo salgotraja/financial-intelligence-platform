@@ -4,7 +4,13 @@ import { FormEvent, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { getConsent, grantConsent, withdrawConsent, type ConsentResult } from '@/lib/api'
+import {
+  getConsent,
+  grantConsent,
+  withdrawConsent,
+  type ConsentResult,
+} from '@/lib/api'
+import { formatTimestamp } from '@/lib/format'
 
 export const ConsentPanel = () => {
   const [consent, setConsent] = useState<ConsentResult | null>(null)
@@ -48,17 +54,23 @@ export const ConsentPanel = () => {
         ) : consent.consentGiven ? (
           <div className="space-y-3 text-sm">
             <p>
-              <span className="font-medium text-primary">Granted</span> · {consent.purpose} ·{' '}
-              {consent.version} · {consent.updatedAt}
+              <span className="font-medium text-primary">Granted</span> ·{' '}
+              {consent.purpose} · {consent.version} ·{' '}
+              {formatTimestamp(consent.updatedAt)}
             </p>
-            <Button variant="outline" size="sm" onClick={() => void onWithdraw()}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void onWithdraw()}
+            >
               Withdraw consent
             </Button>
           </div>
         ) : (
           <form onSubmit={(e) => void onGrant(e)} className="space-y-3 text-sm">
             <p>
-              Consent is <span className="font-medium text-warn">not granted</span>. Data
+              Consent is{' '}
+              <span className="font-medium text-warn">not granted</span>. Data
               processing features stay off until you grant it.
             </p>
             <div className="flex gap-2">

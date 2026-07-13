@@ -24,7 +24,9 @@ export const DangerZone = () => {
   const onExport = async () => {
     try {
       const data = await exportUserData()
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
@@ -58,9 +60,9 @@ export const DangerZone = () => {
   }
 
   return (
-    <Card className="border-destructive/40 bg-card">
+    <Card className="border-border bg-card">
       <CardHeader>
-        <CardTitle className="text-sm font-medium text-destructive">Your data</CardTitle>
+        <CardTitle className="text-sm font-medium">Your data</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <Button variant="outline" size="sm" onClick={() => void onExport()}>
@@ -81,8 +83,8 @@ export const DangerZone = () => {
               <DialogHeader>
                 <DialogTitle>Delete account</DialogTitle>
                 <DialogDescription>
-                  This erases your consent record, watchlist, audit trail, and Cognito user.
-                  Type DELETE to confirm.
+                  This erases your consent record, watchlist, audit trail, and
+                  Cognito user. Type DELETE to confirm.
                 </DialogDescription>
               </DialogHeader>
               <Input
