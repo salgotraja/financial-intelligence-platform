@@ -473,15 +473,32 @@ public class IngestionStack extends Stack {
                                 .build())))
                 .build();
 
-        // == EventBridge Rule ==
-        // prod: every minute during NSE market hours (9:15-15:30 IST, the 3-10 UTC window).
-        // dev: every 5 minutes.
+        // == EventBridge Rules ==
+        // Poll only during the NSE session (09:00-15:35 IST, Mon-Fri) so we never ingest
+        // flat post-close prices overnight or on weekends; manual on-demand ingest is
+        // unaffected. A single cron applies its minute pattern to every hour in its range,
+        // so the :05-past-the-hour close needs its own rule:
+        //   main:  09:00-15:29 IST (03:00-09:59 UTC; ~30m harmless pre-open padding)
+        //   close: 15:30 & 15:35 IST (10:00/10:05 UTC), capturing the closing prints.
+        // prod polls every minute, dev every 5.
+        boolean prod = env.equals("prod");
         Rule.Builder.create(this, "MarketDataSchedule")
                 .ruleName("financial-market-data-schedule-" + env)
-                .description("Triggers the financial data pipeline (prod: NSE market hours; dev: every 5 min)")
-                .schedule(Schedule.expression(env.equals("prod") ? "cron(*/1 3-10 ? * MON-FRI *)" : "rate(5 minutes)"))
+                .description("Triggers the financial data pipeline during NSE market hours")
+                .schedule(Schedule.expression(prod ? "cron(*/1 3-9 ? * MON-FRI *)" : "cron(*/5 3-9 ? * MON-FRI *)"))
                 .targets(List.of(SfnStateMachine.Builder.create(stateMachine)
                         // The pipeline reads tickers from WATCHSET, so the trigger carries no ticker.
+                        .input(RuleTargetInput.fromObject(Map.of("source", "eventbridge-schedule")))
+                        .deadLetterQueue(dlq)
+                        .retryAttempts(2)
+                        .build()))
+                .build();
+
+        Rule.Builder.create(this, "MarketDataCloseSchedule")
+                .ruleName("financial-market-data-close-schedule-" + env)
+                .description("Captures the NSE closing prints (15:30 & 15:35 IST)")
+                .schedule(Schedule.expression(prod ? "cron(0-5 10 ? * MON-FRI *)" : "cron(0,5 10 ? * MON-FRI *)"))
+                .targets(List.of(SfnStateMachine.Builder.create(stateMachine)
                         .input(RuleTargetInput.fromObject(Map.of("source", "eventbridge-schedule")))
                         .deadLetterQueue(dlq)
                         .retryAttempts(2)

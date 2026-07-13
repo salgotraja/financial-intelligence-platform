@@ -10,6 +10,7 @@ import { StatDelta } from './stat-delta'
 import { SignalBadge } from './signal-badge'
 import type { TickerEntry } from '@/hooks/use-watchlist-dashboard'
 import type { Insight } from '@/lib/api'
+import { intradaySessionPoints, isMarketOpen } from '@/lib/market-hours'
 
 export const TickerCard = ({
   ticker,
@@ -24,6 +25,8 @@ export const TickerCard = ({
 }) => {
   const insight = liveInsight ?? entry.insight
   const latest = entry.marketData?.points[0] ?? null // points are newest-first
+  const now = new Date()
+  const chartPoints = intradaySessionPoints(entry.marketData?.points ?? [], now)
 
   return (
     <Card className="group relative gap-3 border-border bg-card py-4 transition-colors hover:border-primary/40">
@@ -37,7 +40,7 @@ export const TickerCard = ({
           </Link>
         </CardTitle>
         <span className="z-10 flex items-center gap-2">
-          {liveInsight && (
+          {liveInsight && isMarketOpen(now) && (
             <Badge
               variant="outline"
               className="border-primary/40 text-[10px] text-primary"
@@ -71,7 +74,7 @@ export const TickerCard = ({
               price={latest?.price ?? null}
               changePercent={latest?.changePercent ?? null}
             />
-            <Sparkline points={entry.marketData?.points ?? []} />
+            <Sparkline points={chartPoints} changePercent={latest?.changePercent ?? null} />
             <div className="flex items-center justify-between">
               <SignalBadge
                 signal={insight?.found ? (insight.signal ?? null) : null}

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { addToWatchlist, getWatchlist, removeFromWatchlist } from '@/lib/api'
 import { canManageWatchlist } from '@/lib/auth'
+import { isMarketOpen } from '@/lib/market-hours'
 import { computeWatchlistMood, type MoodInput } from '@/lib/mood'
 import { computeMovers } from '@/lib/movers'
 import { useAuthStore } from '@/stores/auth-store'
@@ -115,7 +116,7 @@ export const WatchlistDashboard = () => {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <span className="flex items-center gap-3">
           <h1 className="text-xl font-semibold tracking-tight">Watchlist</h1>
-          <LiveDot connected={connected} />
+          <LiveDot open={isMarketOpen(new Date())} connected={connected} />
         </span>
         <form onSubmit={(e) => void onAdd(e)} className="flex gap-2">
           <Input

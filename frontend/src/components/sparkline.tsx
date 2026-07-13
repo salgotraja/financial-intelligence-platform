@@ -4,7 +4,19 @@ const WIDTH = 120
 const HEIGHT = 36
 const PAD = 3
 
-export const Sparkline = ({ points }: { points: MarketDataPoint[] }) => {
+// Below this absolute daily change (in percent) the line reads as flat rather than
+// up/down, so a barely-moved day renders muted instead of an arbitrary green/red.
+const FLAT_BAND_PCT = 0.05
+
+// Colour reflects the daily change (same source as the displayed %), not the first-vs-last
+// of whatever window was fetched, so it stays consistent and stable across refreshes.
+export const Sparkline = ({
+  points,
+  changePercent,
+}: {
+  points: MarketDataPoint[]
+  changePercent: number | null
+}) => {
   // API returns newest-first; draw left-to-right chronologically.
   const prices = [...points]
     .reverse()
@@ -26,13 +38,18 @@ export const Sparkline = ({ points }: { points: MarketDataPoint[] }) => {
       return `${x},${y}`
     })
     .join(' ')
-  const rising = prices[prices.length - 1] >= prices[0]
+  const colorClass =
+    changePercent === null || Math.abs(changePercent) < FLAT_BAND_PCT
+      ? 'text-muted-foreground'
+      : changePercent > 0
+        ? 'text-up'
+        : 'text-down'
 
   return (
     <svg
       viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
       preserveAspectRatio="none"
-      className={`h-9 w-full ${rising ? 'text-up' : 'text-down'}`}
+      className={`h-9 w-full ${colorClass}`}
       role="img"
       aria-label="24h price sparkline"
     >
