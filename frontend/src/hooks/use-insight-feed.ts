@@ -19,7 +19,7 @@ export const useInsightFeed = (tickers: string[]): InsightFeed => {
   const attemptRef = useRef(0)
 
   // Stable key so reordering does not reconnect, but membership changes do.
-  const key = [...new Set(tickers)].slice(0, MAX_TICKERS).sort().join(',')
+  const key = [...new Set(tickers)].sort().slice(0, MAX_TICKERS).join(',')
 
   const [lastKey, setLastKey] = useState(key)
   if (lastKey !== key) {

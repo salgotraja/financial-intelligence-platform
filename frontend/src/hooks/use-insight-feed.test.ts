@@ -116,6 +116,20 @@ describe('useInsightFeed', () => {
     expect(result.current.insights).toEqual({})
   })
 
+  it('does not reconnect when a list larger than the cap is merely reordered', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const many = Array.from({ length: 30 }, (_, i) => `T${String(i).padStart(2, '0')}.NS`)
+    const { rerender } = renderHook(({ tickers }) => useInsightFeed(tickers), {
+      initialProps: { tickers: many },
+    })
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+
+    rerender({ tickers: [...many].reverse() })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+
   it('does not connect for an empty ticker list', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket)
     renderHook(() => useInsightFeed([]))
