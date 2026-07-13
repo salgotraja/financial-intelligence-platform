@@ -34,4 +34,27 @@ describe('useAsyncData', () => {
     await waitFor(() => expect(result.current.data).toBe('recovered'))
     expect(result.current.error).toBeNull()
   })
+
+  it('ignores a stale in-flight fetch that resolves after a newer reload', async () => {
+    let resolveFirst: (v: string) => void = () => {}
+    const fetcher = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveFirst = r
+          }),
+      )
+      .mockResolvedValueOnce('fresh')
+    const { result } = renderHook(() => useAsyncData(fetcher, true))
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+    await result.current.reload()
+    await waitFor(() => expect(result.current.data).toBe('fresh'))
+
+    resolveFirst('stale')
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(result.current.data).toBe('fresh')
+  })
 })

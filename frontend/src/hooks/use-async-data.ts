@@ -19,22 +19,25 @@ export const useAsyncData = <T,>(fetcher: () => Promise<T>, enabled: boolean): A
   const [loading, setLoading] = useState(enabled)
   const mountedRef = useRef(true)
   const fetcherRef = useRef(fetcher)
+  const seqRef = useRef(0)
 
   useEffect(() => {
     fetcherRef.current = fetcher
   })
 
   const reload = useCallback(async () => {
+    // Sequence guard: a slow in-flight fetch must not clobber a newer one's result.
+    const seq = ++seqRef.current
     try {
       const result = await fetcherRef.current()
-      if (!mountedRef.current) return
+      if (!mountedRef.current || seq !== seqRef.current) return
       setData(result)
       setError(null)
     } catch (err) {
-      if (!mountedRef.current) return
+      if (!mountedRef.current || seq !== seqRef.current) return
       setError(err)
     } finally {
-      if (mountedRef.current) setLoading(false)
+      if (mountedRef.current && seq === seqRef.current) setLoading(false)
     }
   }, [])
 
