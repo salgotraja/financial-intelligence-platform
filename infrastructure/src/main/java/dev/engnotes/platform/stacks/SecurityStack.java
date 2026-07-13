@@ -162,13 +162,13 @@ public class SecurityStack extends Stack {
                                                 ? List.of("https://engnotes.dev/callback")
                                                 : List.of(
                                                         "http://localhost:3000/callback",
-                                                        "https://main.db53oxbwuxc6z.amplifyapp.com/callback"))
+                                                        "https://main.djak370dldxuj.amplifyapp.com/callback"))
                                 .logoutUrls(
                                         prod
                                                 ? List.of("https://engnotes.dev")
                                                 : List.of(
                                                         "http://localhost:3000",
-                                                        "https://main.db53oxbwuxc6z.amplifyapp.com"))
+                                                        "https://main.djak370dldxuj.amplifyapp.com"))
                                 .build())
                         .build());
 
