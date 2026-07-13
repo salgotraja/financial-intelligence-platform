@@ -1,17 +1,19 @@
 'use client'
 
-import { FormEvent, useState } from 'react'
+import { FormEvent, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { addToWatchlist, getWatchlist, removeFromWatchlist } from '@/lib/api'
 import { canManageWatchlist } from '@/lib/auth'
+import { computeWatchlistMood, type MoodInput } from '@/lib/mood'
 import { useAuthStore } from '@/stores/auth-store'
 import { useAsyncData } from '@/hooks/use-async-data'
 import { useWatchlistDashboard } from '@/hooks/use-watchlist-dashboard'
 import { useInsightFeed } from '@/hooks/use-insight-feed'
 import { BrowseGrid } from './browse-grid'
 import { LiveDot } from './live-dot'
+import { MoodGauge } from './mood-gauge'
 import { TickerCard } from './ticker-card'
 
 export const WatchlistDashboard = () => {
@@ -26,15 +28,30 @@ export const WatchlistDashboard = () => {
     loading,
     mutate,
   } = useAsyncData(getWatchlist, canManage)
-  const tickers = watchlist?.tickers ?? []
+  const tickers = useMemo(() => watchlist?.tickers ?? [], [watchlist])
   const entries = useWatchlistDashboard(tickers)
   const { insights, connected } = useInsightFeed(tickers)
+
+  const mood = useMemo(() => {
+    const inputs: MoodInput[] = tickers.map((ticker) => {
+      const entry = entries[ticker]
+      const insight = insights[ticker] ?? entry?.insight ?? null
+      return {
+        changePercent: entry?.marketData?.points[0]?.changePercent ?? null,
+        signal: insight?.found ? (insight.signal ?? null) : null,
+        confidence: insight?.confidence ?? 0,
+        found: insight?.found ?? false,
+      }
+    })
+    return computeWatchlistMood(inputs)
+  }, [tickers, entries, insights])
 
   if (!canManage) {
     return (
       <div className="space-y-6">
         <p className="text-sm text-muted-foreground">
-          Watchlists are a premium feature. Your group: {groups.join(', ') || 'none'}.
+          Watchlists are a premium feature. Your group:{' '}
+          {groups.join(', ') || 'none'}.
         </p>
         <BrowseGrid note="Explore any ticker below, or upgrade to build your own watchlist." />
       </div>
@@ -68,7 +85,9 @@ export const WatchlistDashboard = () => {
       await removeFromWatchlist(ticker)
       setActionError(null)
       mutate((prev) =>
-        prev ? { ...prev, tickers: prev.tickers.filter((t) => t !== ticker) } : prev,
+        prev
+          ? { ...prev, tickers: prev.tickers.filter((t) => t !== ticker) }
+          : prev,
       )
     } catch {
       setActionError(`Could not remove ${ticker}.`)
@@ -93,7 +112,9 @@ export const WatchlistDashboard = () => {
         </form>
       </div>
       {loadError !== null && (
-        <p className="text-sm text-destructive">Could not load your watchlist.</p>
+        <p className="text-sm text-destructive">
+          Could not load your watchlist.
+        </p>
       )}
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}
       {loading ? (
@@ -105,23 +126,32 @@ export const WatchlistDashboard = () => {
       ) : tickers.length === 0 && loadError === null ? (
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Empty watchlist. Add a ticker above, or start from a suggestion below.
+            Empty watchlist. Add a ticker above, or start from a suggestion
+            below.
           </p>
           <BrowseGrid />
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {tickers.map((ticker) => (
-            <TickerCard
-              key={ticker}
-              ticker={ticker}
-              entry={
-                entries[ticker] ?? { loading: true, marketData: null, insight: null, error: null }
-              }
-              liveInsight={insights[ticker] ?? null}
-              onRemove={(t) => void onRemove(t)}
-            />
-          ))}
+        <div className="space-y-6">
+          <MoodGauge mood={mood} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {tickers.map((ticker) => (
+              <TickerCard
+                key={ticker}
+                ticker={ticker}
+                entry={
+                  entries[ticker] ?? {
+                    loading: true,
+                    marketData: null,
+                    insight: null,
+                    error: null,
+                  }
+                }
+                liveInsight={insights[ticker] ?? null}
+                onRemove={(t) => void onRemove(t)}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>
