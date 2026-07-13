@@ -86,9 +86,10 @@ const TickerView = ({ symbol }: { symbol: string }) => {
 
 export default function TickerPage({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = use(params)
+  const decoded = decodeURIComponent(symbol)
   return (
     <AuthGate>
-      <TickerView symbol={decodeURIComponent(symbol)} />
+      <TickerView key={decoded} symbol={decoded} />
     </AuthGate>
   )
 }
