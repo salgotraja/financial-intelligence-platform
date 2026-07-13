@@ -442,7 +442,8 @@ public class IngestionStack extends Stack {
         // The distinct-ticker union is normally maintained by watchlist writes, but no watchlist API
         // exists yet, so seed it at deploy time. The physical id embeds the ticker set, so changing
         // the list re-seeds. Remove this once the watchlist write path maintains WATCHSET.
-        List<String> seedTickers = List.of("RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "^NSEI");
+        List<String> seedTickers =
+                List.of("RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "^NSEI", "^BSESN", "^NSEBANK");
         List<Object> seedPutRequests = seedTickers.stream()
                 .map(t -> (Object) Map.of(
                         "PutRequest",

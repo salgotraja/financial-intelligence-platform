@@ -5,7 +5,6 @@ import dev.engnotes.query.model.MarketDataResponse;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,7 +29,6 @@ public class MarketDataQuery {
 
     private static final Logger log = LoggerFactory.getLogger(MarketDataQuery.class);
 
-    private static final Pattern TICKER_PATTERN = Pattern.compile("^[A-Z0-9.^-]{1,15}$");
     private static final int MAX_POINTS = 50;
 
     private final DynamoDbClient dynamoDb;
@@ -42,10 +40,8 @@ public class MarketDataQuery {
         this.platformTable = platformTable;
     }
 
-    public MarketDataResponse findRecentPoints(String ticker) {
-        if (ticker == null || !TICKER_PATTERN.matcher(ticker).matches()) {
-            throw new IllegalArgumentException("Invalid ticker: " + ticker);
-        }
+    public MarketDataResponse findRecentPoints(String rawTicker) {
+        String ticker = Tickers.validated(rawTicker);
 
         var request = software.amazon.awssdk.services.dynamodb.model.QueryRequest.builder()
                 .tableName(platformTable)

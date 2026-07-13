@@ -3,7 +3,6 @@ package dev.engnotes.query.service;
 import dev.engnotes.query.model.QueryResponse;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,9 +27,6 @@ public class InsightQuery {
 
     private static final Logger log = LoggerFactory.getLogger(InsightQuery.class);
 
-    // Strict ticker allowlist (spec section 12): NSE/BSE symbols and indices, e.g. RELIANCE.NS, ^NSEI.
-    private static final Pattern TICKER_PATTERN = Pattern.compile("^[A-Z0-9.^-]{1,15}$");
-
     private final DynamoDbClient dynamoDb;
     private final String platformTable;
 
@@ -40,10 +36,8 @@ public class InsightQuery {
         this.platformTable = platformTable;
     }
 
-    public QueryResponse findLatestInsight(String ticker) {
-        if (ticker == null || !TICKER_PATTERN.matcher(ticker).matches()) {
-            throw new IllegalArgumentException("Invalid ticker: " + ticker);
-        }
+    public QueryResponse findLatestInsight(String rawTicker) {
+        String ticker = Tickers.validated(rawTicker);
 
         // Single-table read (spec section 4): the ticker partition also holds TS#/BASELINE items, so
         // constrain the sort key to INSIGHT# and take the newest. PK=TICKER#{ticker}, SK begins_with

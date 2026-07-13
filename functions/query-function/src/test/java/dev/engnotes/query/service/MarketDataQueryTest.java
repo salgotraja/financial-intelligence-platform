@@ -127,6 +127,22 @@ class MarketDataQueryTest {
     }
 
     @Test
+    void decodesPercentEncodedIndexTickerIntoTheDynamoKey() {
+        when(dynamoDb.query(any(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.QueryResponse.builder()
+                        .items(List.of())
+                        .build());
+
+        MarketDataResponse response = marketDataQuery.findRecentPoints("%5ENSEI");
+
+        assertThat(response.ticker()).isEqualTo("^NSEI");
+        ArgumentCaptor<software.amazon.awssdk.services.dynamodb.model.QueryRequest> captor =
+                ArgumentCaptor.forClass(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class);
+        verify(dynamoDb).query(captor.capture());
+        assertThat(captor.getValue().expressionAttributeValues()).containsValue(str("TICKER#^NSEI"));
+    }
+
+    @Test
     void rejectsMalformedTickerWithoutTouchingDynamoDb() {
         assertThatThrownBy(() -> marketDataQuery.findRecentPoints("bad ticker"))
                 .isInstanceOf(IllegalArgumentException.class)
