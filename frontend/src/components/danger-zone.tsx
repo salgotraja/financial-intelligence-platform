@@ -83,6 +83,7 @@ export const DangerZone = () => {
                 value={confirmText}
                 onChange={(e) => setConfirmText(e.target.value)}
                 placeholder="type DELETE to confirm"
+                aria-label="Deletion confirmation"
               />
               <DialogFooter>
                 <Button

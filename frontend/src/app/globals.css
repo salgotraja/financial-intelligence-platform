@@ -24,7 +24,8 @@
   --input: #1f2534;
   --ring: #38d6f5;
 
-  /* Price-direction semantics. Reserved: never use for generic UI states. */
+  /* Semantic accents. --up/--down are price-direction ONLY (never generic UI states);
+     --warn is the anomaly/attention token for advisory states. */
   --up: #2fd48f;
   --down: #ff6b6b;
   --warn: #f5b942;
