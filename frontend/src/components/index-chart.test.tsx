@@ -90,7 +90,7 @@ describe('IndexChart', () => {
       'true',
     )
     expect(
-      screen.getByText(/no intraday data for the latest session yet/i),
+      screen.getByText(/intraday data begins with the next market session/i),
     ).toBeInTheDocument()
   })
 })

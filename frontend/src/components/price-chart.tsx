@@ -23,23 +23,37 @@ export const PriceChart = ({
   if (daySeries.length < 2) {
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
-        No intraday data for the latest session yet.
+        Intraday data begins with the next market session.
       </p>
     )
   }
 
-  const last = daySeries[daySeries.length - 1]?.price ?? 0
-  const up = previousClose === null ? true : last >= previousClose
-  const color = up ? CHART_COLORS.up : CHART_COLORS.down
-  const gradientId = up ? 'price-fill-up' : 'price-fill-down'
+  const prices = daySeries.map((p) => p.price)
+  const { up, down } = CHART_COLORS
+
+  // Threshold colouring at previous close: green above the prev-close line, red below, at every
+  // point (Google-Finance baseline style). A session spent mostly under prev close reads red overall
+  // while the header/tile still shows the net % change. `offset` is where prev close sits vertically.
+  let offset = 1
+  if (previousClose !== null) {
+    const hi = Math.max(...prices, previousClose)
+    const lo = Math.min(...prices, previousClose)
+    offset = hi === lo ? 0.5 : (hi - previousClose) / (hi - lo)
+  }
 
   return (
     <ResponsiveContainer width="100%" height={240}>
       <AreaChart data={daySeries}>
         <defs>
-          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={color} stopOpacity={0.25} />
-            <stop offset="95%" stopColor={color} stopOpacity={0} />
+          <linearGradient id="price-stroke" x1="0" y1="0" x2="0" y2="1">
+            <stop offset={offset} stopColor={up} />
+            <stop offset={offset} stopColor={down} />
+          </linearGradient>
+          <linearGradient id="price-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset={0} stopColor={up} stopOpacity={0.28} />
+            <stop offset={offset} stopColor={up} stopOpacity={0.04} />
+            <stop offset={offset} stopColor={down} stopOpacity={0.04} />
+            <stop offset={1} stopColor={down} stopOpacity={0.28} />
           </linearGradient>
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
@@ -83,8 +97,8 @@ export const PriceChart = ({
           dataKey="price"
           dot={false}
           strokeWidth={2}
-          stroke={color}
-          fill={`url(#${gradientId})`}
+          stroke="url(#price-stroke)"
+          fill="url(#price-fill)"
         />
       </AreaChart>
     </ResponsiveContainer>
