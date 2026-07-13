@@ -91,6 +91,26 @@ class DailyRollupServiceTest {
     }
 
     @Test
+    void preservesEarlierVolumeWhenLaterSampleHasNone() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "open", n("100"),
+                                "high", n("110"),
+                                "low", n("95"),
+                                "close", n("108"),
+                                "samples", n("3"),
+                                "volume", n("1000000")))
+                        .build());
+
+        service.upsert(data("104", null), Instant.parse("2026-07-13T06:00:00Z"));
+
+        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamoDb).putItem(captor.capture());
+        assertThat(captor.getValue().item().get("volume").n()).isEqualTo("1000000");
+    }
+
+    @Test
     void bucketsByIstCalendarDate() {
         when(dynamoDb.getItem(any(GetItemRequest.class)))
                 .thenReturn(GetItemResponse.builder().build());

@@ -95,6 +95,8 @@ public class DailyRollupService {
                         AttributeValue.builder()
                                 .n(String.valueOf(data.volume()))
                                 .build());
+            } else if (existing.containsKey("volume")) {
+                item.put("volume", existing.get("volume"));
             }
 
             dynamoDb.putItem(
