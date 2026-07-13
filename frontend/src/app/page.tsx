@@ -2,7 +2,7 @@ import Link from 'next/link'
 
 export default function LandingPage() {
   return (
-    <main className="py-20 text-center">
+    <main className="flex min-h-[70vh] flex-col items-center justify-center py-16 text-center">
       <p className="mb-3 font-mono text-xs uppercase tracking-[0.3em] text-primary">
         NSE · realtime · AI insights
       </p>
@@ -10,8 +10,9 @@ export default function LandingPage() {
         Realtime market intelligence
       </h1>
       <p className="mx-auto mb-10 max-w-xl text-muted-foreground">
-        AI-generated insights on NSE tickers, streamed live: price history, signals, and a
-        DPDP-compliant view of everything the platform stores about you.
+        AI-generated insights on NSE tickers, streamed live: price history,
+        signals, and a DPDP-compliant view of everything the platform stores
+        about you.
       </p>
       <Link
         href="/dashboard"

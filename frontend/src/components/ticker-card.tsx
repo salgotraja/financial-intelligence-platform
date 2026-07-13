@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { X } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
@@ -37,7 +38,10 @@ export const TickerCard = ({
         </CardTitle>
         <span className="z-10 flex items-center gap-2">
           {liveInsight && (
-            <Badge variant="outline" className="border-primary/40 text-[10px] text-primary">
+            <Badge
+              variant="outline"
+              className="border-primary/40 text-[10px] text-primary"
+            >
               LIVE
             </Badge>
           )}
@@ -47,7 +51,7 @@ export const TickerCard = ({
               className="text-muted-foreground opacity-100 transition-opacity hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
               onClick={() => onRemove(ticker)}
             >
-              ✕
+              <X className="h-4 w-4" />
             </button>
           )}
         </span>
