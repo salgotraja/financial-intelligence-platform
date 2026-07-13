@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 
 import dev.engnotes.ingestion.model.MarketDataResponse;
 import java.math.BigDecimal;
+import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -20,13 +21,15 @@ class MarketDataStoreServiceTest {
 
     private DynamoDbClient dynamoDb;
     private S3Client s3;
+    private DailyRollupService rollupService;
     private MarketDataStoreService service;
 
     @BeforeEach
     void setUp() {
         dynamoDb = mock(DynamoDbClient.class);
         s3 = mock(S3Client.class);
-        service = new MarketDataStoreService(dynamoDb, s3, JsonMapper.builder().build());
+        rollupService = mock(DailyRollupService.class);
+        service = new MarketDataStoreService(dynamoDb, s3, JsonMapper.builder().build(), rollupService);
     }
 
     @Test
@@ -61,5 +64,19 @@ class MarketDataStoreServiceTest {
         ArgumentCaptor<PutObjectRequest> captor = ArgumentCaptor.forClass(PutObjectRequest.class);
         verify(s3).putObject(captor.capture(), any(RequestBody.class));
         assertThat(captor.getValue().tagging()).contains("ticker=RELIANCE.NS");
+    }
+
+    @Test
+    void invokesDailyRollupAfterSuccessfulStore() {
+        MarketDataResponse data = MarketDataResponse.builder()
+                .ticker("RELIANCE.NS")
+                .price(new BigDecimal("1316.5"))
+                .dataSource("yahoo-finance")
+                .stored(false)
+                .build();
+
+        service.store(data, "corr-3");
+
+        verify(rollupService).upsert(any(MarketDataResponse.class), any(Instant.class));
     }
 }

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Button } from '@/components/ui/button'
 import { triggerIngest } from '@/lib/api'
 import { canManageWatchlist } from '@/lib/auth'
 import { useAuthStore } from '@/stores/auth-store'
@@ -24,17 +25,18 @@ export const IngestButton = ({ ticker, onAccepted }: { ticker: string; onAccepte
 
   return (
     <span className="flex items-center gap-2">
-      <button
-        className="rounded border px-3 py-1 text-sm hover:bg-gray-100 disabled:opacity-50"
+      <Button
+        variant="outline"
+        size="sm"
         disabled={state === 'pending'}
         onClick={() => void onClick()}
       >
         Refresh data
-      </button>
+      </Button>
       {state === 'accepted' && (
-        <span className="text-xs text-gray-500">accepted — new data lands in ~30s</span>
+        <span className="text-xs text-muted-foreground">accepted — new data lands in ~30s</span>
       )}
-      {state === 'failed' && <span className="text-xs text-red-600">request failed</span>}
+      {state === 'failed' && <span className="text-xs text-destructive">request failed</span>}
     </span>
   )
 }

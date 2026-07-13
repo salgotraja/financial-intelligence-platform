@@ -2,8 +2,10 @@ package dev.engnotes.ingestion.it;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import dev.engnotes.ingestion.model.MarketDataResponse;
+import dev.engnotes.ingestion.service.DailyRollupService;
 import dev.engnotes.ingestion.service.MarketDataStoreService;
 import dev.engnotes.itsupport.AbstractLocalStackIT;
 import dev.engnotes.itsupport.PlatformSchema;
@@ -20,7 +22,8 @@ import tools.jackson.databind.json.JsonMapper;
 class MarketDataStoreIT extends AbstractLocalStackIT {
 
     private MarketDataStoreService newStore() {
-        var store = new MarketDataStoreService(ddb(), s3(), JsonMapper.builder().build());
+        var rollupService = mock(DailyRollupService.class);
+        var store = new MarketDataStoreService(ddb(), s3(), JsonMapper.builder().build(), rollupService);
         ReflectionTestUtils.setField(store, "platformTable", PlatformSchema.PLATFORM_TABLE);
         ReflectionTestUtils.setField(store, "dataLakeBucket", PlatformSchema.DATA_LAKE_BUCKET);
         return store;

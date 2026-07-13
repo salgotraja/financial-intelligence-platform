@@ -13,5 +13,5 @@ export default function CallbackPage() {
     if (status === 'signed-out') router.replace('/')
   }, [status, router])
 
-  return <main className="p-8 text-gray-500">Completing sign-in…</main>
+  return <main className="p-8 text-muted-foreground">Completing sign-in…</main>
 }

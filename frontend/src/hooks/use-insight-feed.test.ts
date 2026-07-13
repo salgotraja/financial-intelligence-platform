@@ -39,10 +39,10 @@ afterEach(() => {
 })
 
 describe('useInsightFeed', () => {
-  it('connects with the token, subscribes, and surfaces matching pushes', async () => {
+  it('connects once, subscribes to all tickers, and maps pushes per ticker', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket)
 
-    const { result } = renderHook(() => useInsightFeed('RELIANCE.NS'))
+    const { result } = renderHook(() => useInsightFeed(['RELIANCE.NS', 'TCS.NS']))
 
     await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
     const socket = FakeWebSocket.instances[0]
@@ -52,21 +52,32 @@ describe('useInsightFeed', () => {
     expect(result.current.connected).toBe(true)
     expect(JSON.parse(socket.sent[0])).toEqual({
       action: 'subscribe',
-      tickers: ['RELIANCE.NS'],
+      tickers: ['RELIANCE.NS', 'TCS.NS'],
     })
 
     act(() =>
       socket.message({ ticker: 'RELIANCE.NS', signal: 'BULLISH', found: true, drivers: [] }),
     )
-    expect(result.current.liveInsight?.signal).toBe('BULLISH')
+    act(() => socket.message({ ticker: 'TCS.NS', signal: 'BEARISH', found: true, drivers: [] }))
+    expect(result.current.insights['RELIANCE.NS']?.signal).toBe('BULLISH')
+    expect(result.current.insights['TCS.NS']?.signal).toBe('BEARISH')
+  })
+
+  it('ignores pushes for unsubscribed tickers', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const { result } = renderHook(() => useInsightFeed(['RELIANCE.NS']))
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.open())
 
     act(() => socket.message({ ticker: 'OTHER.NS', signal: 'BEARISH', found: true, drivers: [] }))
-    expect(result.current.liveInsight?.ticker).toBe('RELIANCE.NS')
+
+    expect(result.current.insights['OTHER.NS']).toBeUndefined()
   })
 
   it('closes an open socket on unmount', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket)
-    const { unmount } = renderHook(() => useInsightFeed('TCS.NS'))
+    const { unmount } = renderHook(() => useInsightFeed(['TCS.NS']))
     await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.open())
@@ -78,7 +89,7 @@ describe('useInsightFeed', () => {
 
   it('defers closing a still-connecting socket until the handshake finishes', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket)
-    const { unmount } = renderHook(() => useInsightFeed('TCS.NS'))
+    const { unmount } = renderHook(() => useInsightFeed(['TCS.NS']))
     await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
     const socket = FakeWebSocket.instances[0]
 
@@ -89,19 +100,40 @@ describe('useInsightFeed', () => {
     expect(socket.readyState).toBe(3)
   })
 
-  it('clears the previous ticker insight when the ticker changes', async () => {
+  it('clears stale insights when the ticker set changes', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket)
-    const { result, rerender } = renderHook(({ ticker }) => useInsightFeed(ticker), {
-      initialProps: { ticker: 'RELIANCE' },
+    const { result, rerender } = renderHook(({ tickers }) => useInsightFeed(tickers), {
+      initialProps: { tickers: ['RELIANCE'] },
     })
     await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.open())
     act(() => socket.message({ ticker: 'RELIANCE', signal: 'BULLISH', found: true, drivers: [] }))
-    expect(result.current.liveInsight?.ticker).toBe('RELIANCE')
+    expect(result.current.insights['RELIANCE']).toBeDefined()
 
-    rerender({ ticker: 'TCS' })
+    rerender({ tickers: ['TCS'] })
 
-    expect(result.current.liveInsight).toBeNull()
+    expect(result.current.insights).toEqual({})
+  })
+
+  it('does not reconnect when a list larger than the cap is merely reordered', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const many = Array.from({ length: 30 }, (_, i) => `T${String(i).padStart(2, '0')}.NS`)
+    const { rerender } = renderHook(({ tickers }) => useInsightFeed(tickers), {
+      initialProps: { tickers: many },
+    })
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+
+    rerender({ tickers: [...many].reverse() })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+
+  it('does not connect for an empty ticker list', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    renderHook(() => useInsightFeed([]))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(FakeWebSocket.instances).toHaveLength(0)
   })
 })

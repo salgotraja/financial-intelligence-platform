@@ -19,13 +19,17 @@ export const metadata: Metadata = {
   description: 'Realtime market insights',
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
+      <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         <AuthProvider>
           <NavBar />
-          <div className="mx-auto max-w-4xl px-6 py-8">{children}</div>
+          <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">{children}</div>
         </AuthProvider>
       </body>
     </html>

@@ -1,6 +1,71 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+:root {
+  --radius: 0.5rem;
+
+  --background: #0a0e16;
+  --foreground: #e7ebf4;
+  --card: #10141f;
+  --card-foreground: #e7ebf4;
+  --popover: #141927;
+  --popover-foreground: #e7ebf4;
+  --primary: #38d6f5;
+  --primary-foreground: #062029;
+  --secondary: #1a2030;
+  --secondary-foreground: #c6cddd;
+  --muted: #161b28;
+  --muted-foreground: #8a93a8;
+  --accent: #1a2030;
+  --accent-foreground: #e7ebf4;
+  --destructive: #f26d6d;
+  --destructive-foreground: #e7ebf4;
+  --border: #1f2534;
+  --input: #1f2534;
+  --ring: #38d6f5;
+
+  /* Semantic accents. --up/--down are price-direction ONLY (never generic UI states);
+     --warn is the anomaly/attention token for advisory states. */
+  --up: #2fd48f;
+  --down: #ff6b6b;
+  --warn: #f5b942;
+}
 
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-warn: var(--warn);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
 }

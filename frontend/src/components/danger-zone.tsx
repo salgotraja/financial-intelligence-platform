@@ -2,11 +2,24 @@
 
 import { useState } from 'react'
 import { signOut } from 'aws-amplify/auth'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { deleteAccount, exportUserData } from '@/lib/api'
 
 export const DangerZone = () => {
   const [confirmText, setConfirmText] = useState('')
   const [status, setStatus] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
 
   const onExport = async () => {
     try {
@@ -28,9 +41,11 @@ export const DangerZone = () => {
       const result = await deleteAccount()
       if (result.status !== 'erased') {
         setStatus('Deletion was not permitted.')
+        setOpen(false)
         return
       }
       setStatus(`Deleted ${result.itemsDeleted} items. Signing out…`)
+      setOpen(false)
       try {
         await signOut()
       } catch {
@@ -38,36 +53,58 @@ export const DangerZone = () => {
       }
     } catch {
       setStatus('Deletion failed.')
+      setOpen(false)
     }
   }
 
   return (
-    <section className="rounded border border-red-200 bg-white p-4">
-      <h2 className="mb-2 font-medium text-red-700">Your data</h2>
-      <div className="space-y-3 text-sm">
-        <button
-          className="rounded border px-3 py-1 hover:bg-gray-100"
-          onClick={() => void onExport()}
-        >
+    <Card className="border-destructive/40 bg-card">
+      <CardHeader>
+        <CardTitle className="text-sm font-medium text-destructive">Your data</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <Button variant="outline" size="sm" onClick={() => void onExport()}>
           Download my data (JSON)
-        </button>
-        <div className="flex items-center gap-2">
-          <input
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            placeholder="type DELETE to confirm"
-            className="rounded border px-2 py-1"
-          />
-          <button
-            className="rounded bg-red-600 px-3 py-1 text-white hover:bg-red-700 disabled:opacity-40"
-            disabled={confirmText !== 'DELETE'}
-            onClick={() => void onDelete()}
+        </Button>
+        <div>
+          <Dialog
+            open={open}
+            onOpenChange={(next) => {
+              setOpen(next)
+              if (!next) setConfirmText('')
+            }}
           >
-            Delete account
-          </button>
+            <DialogTrigger render={<Button variant="destructive" size="sm" />}>
+              Delete account
+            </DialogTrigger>
+            <DialogContent className="border-border bg-popover">
+              <DialogHeader>
+                <DialogTitle>Delete account</DialogTitle>
+                <DialogDescription>
+                  This erases your consent record, watchlist, audit trail, and Cognito user.
+                  Type DELETE to confirm.
+                </DialogDescription>
+              </DialogHeader>
+              <Input
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="type DELETE to confirm"
+                aria-label="Deletion confirmation"
+              />
+              <DialogFooter>
+                <Button
+                  variant="destructive"
+                  disabled={confirmText !== 'DELETE'}
+                  onClick={() => void onDelete()}
+                >
+                  Delete account
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
-        {status && <p className="text-gray-500">{status}</p>}
-      </div>
-    </section>
+        {status && <p className="text-muted-foreground">{status}</p>}
+      </CardContent>
+    </Card>
   )
 }
