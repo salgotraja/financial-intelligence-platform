@@ -3,6 +3,7 @@
 import { FormEvent, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
 import { addToWatchlist, getWatchlist, removeFromWatchlist } from '@/lib/api'
 import { canManageWatchlist } from '@/lib/auth'
 import { useAuthStore } from '@/stores/auth-store'
@@ -19,7 +20,12 @@ export const WatchlistDashboard = () => {
   const [draft, setDraft] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
 
-  const { data: watchlist, error: loadError, mutate } = useAsyncData(getWatchlist, canManage)
+  const {
+    data: watchlist,
+    error: loadError,
+    loading,
+    mutate,
+  } = useAsyncData(getWatchlist, canManage)
   const tickers = watchlist?.tickers ?? []
   const entries = useWatchlistDashboard(tickers)
   const { insights, connected } = useInsightFeed(tickers)
@@ -46,9 +52,11 @@ export const WatchlistDashboard = () => {
       // GET /watchlist sits behind a 60s API Gateway cache; trust the confirmed
       // mutation instead of refetching a stale list.
       mutate((prev) =>
-        prev && !prev.tickers.includes(ticker)
-          ? { ...prev, tickers: [...prev.tickers, ticker] }
-          : prev,
+        prev
+          ? prev.tickers.includes(ticker)
+            ? prev
+            : { ...prev, tickers: [...prev.tickers, ticker] }
+          : { status: 'ok', ticker: null, tickers: [ticker] },
       )
     } catch {
       setActionError(`Could not add ${ticker}.`)
@@ -88,7 +96,13 @@ export const WatchlistDashboard = () => {
         <p className="text-sm text-destructive">Could not load your watchlist.</p>
       )}
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}
-      {tickers.length === 0 && loadError === null ? (
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Skeleton className="h-44 w-full" />
+          <Skeleton className="h-44 w-full" />
+          <Skeleton className="h-44 w-full" />
+        </div>
+      ) : tickers.length === 0 && loadError === null ? (
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
             Empty watchlist. Add a ticker above, or start from a suggestion below.

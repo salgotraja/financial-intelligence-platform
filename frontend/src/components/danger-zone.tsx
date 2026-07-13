@@ -67,7 +67,13 @@ export const DangerZone = () => {
           Download my data (JSON)
         </Button>
         <div>
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog
+            open={open}
+            onOpenChange={(next) => {
+              setOpen(next)
+              if (!next) setConfirmText('')
+            }}
+          >
             <DialogTrigger render={<Button variant="destructive" size="sm" />}>
               Delete account
             </DialogTrigger>

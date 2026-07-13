@@ -14,7 +14,10 @@ export interface AsyncData<T> {
  * Centralizes the load + unmount-guard pattern previously duplicated across
  * components. `error` is the raw thrown value so callers can inspect ApiError kinds.
  */
-export const useAsyncData = <T,>(fetcher: () => Promise<T>, enabled: boolean): AsyncData<T> => {
+export const useAsyncData = <T>(
+  fetcher: () => Promise<T>,
+  enabled: boolean,
+): AsyncData<T> => {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(enabled)
@@ -43,7 +46,10 @@ export const useAsyncData = <T,>(fetcher: () => Promise<T>, enabled: boolean): A
   }, [])
 
   const mutate = useCallback((updater: (prev: T | null) => T | null) => {
+    // A mutation is newer truth than any in-flight fetch: invalidate them.
+    seqRef.current += 1
     setData(updater)
+    setLoading(false)
   }, [])
 
   useEffect(() => {

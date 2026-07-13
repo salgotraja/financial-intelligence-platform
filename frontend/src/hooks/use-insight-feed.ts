@@ -19,6 +19,8 @@ export const useInsightFeed = (tickers: string[]): InsightFeed => {
   const attemptRef = useRef(0)
 
   // Stable key so reordering does not reconnect, but membership changes do.
+  // Deliberate: sorting before slicing keeps the key stable under reorder; past the
+  // 25-cap the alphabetically-first 25 win.
   const key = [...new Set(tickers)].sort().slice(0, MAX_TICKERS).join(',')
 
   const [lastKey, setLastKey] = useState(key)

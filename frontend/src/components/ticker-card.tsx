@@ -44,7 +44,7 @@ export const TickerCard = ({
           {onRemove && (
             <button
               aria-label={`Remove ${ticker}`}
-              className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus:opacity-100 group-hover:opacity-100"
+              className="text-muted-foreground opacity-100 transition-opacity hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
               onClick={() => onRemove(ticker)}
             >
               ✕

@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { useAsyncData } from './use-async-data'
 
@@ -66,5 +66,38 @@ describe('useAsyncData', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(result.current.data).toBe('fresh')
+  })
+
+  it('mutate invalidates an in-flight reload so it cannot overwrite the mutation', async () => {
+    let resolveReload: (v: string) => void = () => {}
+    const fetcher = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce('a')
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveReload = r
+          }),
+      )
+    const { result } = renderHook(() => useAsyncData(fetcher, true))
+
+    await waitFor(() => expect(result.current.data).toBe('a'))
+
+    void result.current.reload()
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
+
+    act(() => {
+      result.current.mutate(() => 'mutated')
+    })
+    expect(result.current.data).toBe('mutated')
+    expect(result.current.loading).toBe(false)
+
+    await act(async () => {
+      resolveReload('stale')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(result.current.data).toBe('mutated')
+    expect(result.current.loading).toBe(false)
   })
 })

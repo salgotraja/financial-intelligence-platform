@@ -63,7 +63,16 @@ const TickerView = ({ symbol }: { symbol: string }) => {
         </span>
         <span className="flex items-center gap-3">
           <LiveDot connected={connected} />
-          <IngestButton ticker={symbol} onAccepted={() => setTimeout(() => void reload(), 35_000)} />
+          <IngestButton
+            ticker={symbol}
+            onAccepted={() => {
+              // GET /market-data and /insights sit behind a 60s API Gateway cache;
+              // the 35s reload can be served the pre-ingest entry, so reload again
+              // once the cache has certainly expired.
+              setTimeout(() => void reload(), 35_000)
+              setTimeout(() => void reload(), 75_000)
+            }}
+          />
         </span>
       </div>
       {errorText && (

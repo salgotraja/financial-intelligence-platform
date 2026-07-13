@@ -62,6 +62,21 @@ describe('WatchlistDashboard', () => {
     expect(getWatchlist).toHaveBeenCalledTimes(1)
   })
 
+  it('adds a ticker optimistically even while the initial watchlist load is still in flight', async () => {
+    useAuthStore.setState({ status: 'signed-in', groups: ['premium'] })
+    const { getWatchlist } = await import('@/lib/api')
+    vi.mocked(getWatchlist).mockImplementationOnce(() => new Promise(() => {}))
+
+    render(<WatchlistDashboard />)
+
+    await userEvent.type(screen.getByPlaceholderText('RELIANCE.NS'), 'wipro.ns')
+    await userEvent.click(screen.getByRole('button', { name: /add/i }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Remove WIPRO.NS' })).toBeInTheDocument(),
+    )
+  })
+
   it('removes a ticker card locally without refetching the cached list', async () => {
     useAuthStore.setState({ status: 'signed-in', groups: ['premium'] })
     const { removeFromWatchlist, getWatchlist } = await import('@/lib/api')
