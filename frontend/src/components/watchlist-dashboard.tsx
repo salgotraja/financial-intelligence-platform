@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { addToWatchlist, getWatchlist, removeFromWatchlist } from '@/lib/api'
 import { canManageWatchlist } from '@/lib/auth'
 import { computeWatchlistMood, type MoodInput } from '@/lib/mood'
+import { computeMovers } from '@/lib/movers'
 import { useAuthStore } from '@/stores/auth-store'
 import { useAsyncData } from '@/hooks/use-async-data'
 import { useWatchlistDashboard } from '@/hooks/use-watchlist-dashboard'
@@ -15,6 +16,7 @@ import { BrowseGrid } from './browse-grid'
 import { LiveDot } from './live-dot'
 import { MoodGauge } from './mood-gauge'
 import { TickerCard } from './ticker-card'
+import { WatchlistMoversRow } from './watchlist-movers'
 
 export const WatchlistDashboard = () => {
   const groups = useAuthStore((s) => s.groups)
@@ -45,6 +47,18 @@ export const WatchlistDashboard = () => {
     })
     return computeWatchlistMood(inputs)
   }, [tickers, entries, insights])
+
+  const movers = useMemo(
+    () =>
+      computeMovers(
+        tickers.map((ticker) => ({
+          ticker,
+          changePercent:
+            entries[ticker]?.marketData?.points[0]?.changePercent ?? null,
+        })),
+      ),
+    [tickers, entries],
+  )
 
   if (!canManage) {
     return (
@@ -134,6 +148,7 @@ export const WatchlistDashboard = () => {
       ) : (
         <div className="space-y-6">
           <MoodGauge mood={mood} />
+          <WatchlistMoversRow movers={movers} />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {tickers.map((ticker) => (
               <TickerCard
