@@ -6,24 +6,31 @@ import { getAccessToken } from '@/lib/auth'
 import type { Insight } from '@/lib/api'
 
 const MAX_BACKOFF_MS = 30_000
+const MAX_TICKERS = 25 // WebSocket subscribe cap
 
 interface InsightFeed {
-  liveInsight: Insight | null
+  insights: Record<string, Insight>
   connected: boolean
 }
 
-export const useInsightFeed = (ticker: string): InsightFeed => {
-  const [liveInsight, setLiveInsight] = useState<Insight | null>(null)
+export const useInsightFeed = (tickers: string[]): InsightFeed => {
+  const [insights, setInsights] = useState<Record<string, Insight>>({})
   const [connected, setConnected] = useState(false)
   const attemptRef = useRef(0)
 
-  const [lastTicker, setLastTicker] = useState(ticker)
-  if (lastTicker !== ticker) {
-    setLastTicker(ticker)
-    setLiveInsight(null)
+  // Stable key so reordering does not reconnect, but membership changes do.
+  const key = [...new Set(tickers)].slice(0, MAX_TICKERS).sort().join(',')
+
+  const [lastKey, setLastKey] = useState(key)
+  if (lastKey !== key) {
+    setLastKey(key)
+    setInsights({})
   }
 
   useEffect(() => {
+    if (key === '') return
+
+    const subscribed = new Set(key.split(','))
     let socket: WebSocket | null = null
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     let stopped = false
@@ -36,12 +43,14 @@ export const useInsightFeed = (ticker: string): InsightFeed => {
       socket.onopen = () => {
         attemptRef.current = 0
         setConnected(true)
-        socket?.send(JSON.stringify({ action: 'subscribe', tickers: [ticker] }))
+        socket?.send(JSON.stringify({ action: 'subscribe', tickers: [...subscribed] }))
       }
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data as string) as Insight
-          if (message.ticker === ticker) setLiveInsight(message)
+          if (subscribed.has(message.ticker)) {
+            setInsights((prev) => ({ ...prev, [message.ticker]: message }))
+          }
         } catch {
           // non-JSON frame: ignore
         }
@@ -74,7 +83,7 @@ export const useInsightFeed = (ticker: string): InsightFeed => {
         socket.close()
       }
     }
-  }, [ticker])
+  }, [key])
 
-  return { liveInsight, connected }
+  return { insights, connected }
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useCallback, useEffect, useRef, useState } from 'react'
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { AuthGate } from '@/components/auth-gate'
 import { IngestButton } from '@/components/ingest-button'
@@ -16,7 +16,7 @@ const TickerView = ({ symbol }: { symbol: string }) => {
   const [insight, setInsight] = useState<Insight | null>(null)
   const [marketData, setMarketData] = useState<MarketData | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const { liveInsight, connected } = useInsightFeed(symbol)
+  const { insights, connected } = useInsightFeed(useMemo(() => [symbol], [symbol]))
   const isMountedRef = useRef(true)
 
   const load = useCallback(async () => {
@@ -48,7 +48,7 @@ const TickerView = ({ symbol }: { symbol: string }) => {
     }
   }, [status, load])
 
-  const shownInsight = liveInsight ?? insight
+  const shownInsight = insights[symbol] ?? insight
 
   return (
     <main className="space-y-6">
@@ -69,7 +69,7 @@ const TickerView = ({ symbol }: { symbol: string }) => {
         <h2 className="mb-2 font-medium">Price (stored points, 24h window)</h2>
         <PriceChart points={marketData?.points ?? []} />
       </section>
-      {shownInsight && <InsightPanel insight={shownInsight} live={liveInsight !== null} />}
+      {shownInsight && <InsightPanel insight={shownInsight} live={insights[symbol] !== undefined} />}
     </main>
   )
 }
