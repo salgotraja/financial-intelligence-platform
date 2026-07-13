@@ -2,15 +2,20 @@ import Link from 'next/link'
 
 export default function LandingPage() {
   return (
-    <main className="py-16 text-center">
-      <h1 className="mb-4 text-3xl font-semibold">Realtime market intelligence</h1>
-      <p className="mx-auto mb-8 max-w-xl text-gray-600">
+    <main className="py-20 text-center">
+      <p className="mb-3 font-mono text-xs uppercase tracking-[0.3em] text-primary">
+        NSE · realtime · AI insights
+      </p>
+      <h1 className="mb-4 text-4xl font-semibold tracking-tight">
+        Realtime market intelligence
+      </h1>
+      <p className="mx-auto mb-10 max-w-xl text-muted-foreground">
         AI-generated insights on NSE tickers, streamed live: price history, signals, and a
         DPDP-compliant view of everything the platform stores about you.
       </p>
       <Link
         href="/dashboard"
-        className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+        className="rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
       >
         Open dashboard
       </Link>

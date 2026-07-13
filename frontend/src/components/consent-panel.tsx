@@ -1,6 +1,9 @@
 'use client'
 
 import { FormEvent, useEffect, useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { getConsent, grantConsent, withdrawConsent, type ConsentResult } from '@/lib/api'
 
 export const ConsentPanel = () => {
@@ -34,43 +37,42 @@ export const ConsentPanel = () => {
   }
 
   return (
-    <section className="rounded border bg-white p-4">
-      <h2 className="mb-2 font-medium">Consent (DPDP)</h2>
-      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
-      {!consent ? (
-        <p className="text-sm text-gray-400">Loading…</p>
-      ) : consent.consentGiven ? (
-        <div className="space-y-2 text-sm">
-          <p>
-            <span className="font-medium text-green-700">Granted</span> · {consent.purpose} ·{' '}
-            {consent.version} · {consent.updatedAt}
-          </p>
-          <button
-            className="rounded border px-3 py-1 text-sm hover:bg-gray-100"
-            onClick={() => void onWithdraw()}
-          >
-            Withdraw consent
-          </button>
-        </div>
-      ) : (
-        <form onSubmit={(e) => void onGrant(e)} className="space-y-2 text-sm">
-          <p>
-            Consent is <span className="font-medium text-red-700">not granted</span>. Data
-            processing features stay off until you grant it.
-          </p>
-          <div className="flex gap-2">
-            <input
-              value={purpose}
-              onChange={(e) => setPurpose(e.target.value)}
-              placeholder="purpose (e.g. portfolio insights)"
-              className="flex-1 rounded border px-2 py-1"
-            />
-            <button className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-700">
-              Grant
-            </button>
+    <Card className="border-border bg-card">
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">Consent (DPDP)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
+        {!consent ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : consent.consentGiven ? (
+          <div className="space-y-3 text-sm">
+            <p>
+              <span className="font-medium text-primary">Granted</span> · {consent.purpose} ·{' '}
+              {consent.version} · {consent.updatedAt}
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void onWithdraw()}>
+              Withdraw consent
+            </Button>
           </div>
-        </form>
-      )}
-    </section>
+        ) : (
+          <form onSubmit={(e) => void onGrant(e)} className="space-y-3 text-sm">
+            <p>
+              Consent is <span className="font-medium text-warn">not granted</span>. Data
+              processing features stay off until you grant it.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+                placeholder="purpose (e.g. portfolio insights)"
+                className="flex-1"
+              />
+              <Button type="submit">Grant</Button>
+            </div>
+          </form>
+        )}
+      </CardContent>
+    </Card>
   )
 }
