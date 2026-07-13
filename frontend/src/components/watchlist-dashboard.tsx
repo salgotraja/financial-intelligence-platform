@@ -14,7 +14,7 @@ import { useAsyncData } from '@/hooks/use-async-data'
 import { useWatchlistDashboard } from '@/hooks/use-watchlist-dashboard'
 import { useInsightFeed } from '@/hooks/use-insight-feed'
 import { BrowseGrid } from './browse-grid'
-import { IndexStrip } from './index-strip'
+import { IndexChart } from './index-chart'
 import { LiveDot } from './live-dot'
 import { MoodGauge } from './mood-gauge'
 import { TickerCard } from './ticker-card'
@@ -112,7 +112,7 @@ export const WatchlistDashboard = () => {
 
   return (
     <div className="space-y-6">
-      <IndexStrip />
+      <IndexChart />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <span className="flex items-center gap-3">
           <h1 className="text-xl font-semibold tracking-tight">Watchlist</h1>

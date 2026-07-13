@@ -38,9 +38,17 @@ export interface MarketDataPoint {
   low52Week: number | null
 }
 
+export interface SeriesPoint {
+  time: string
+  price: number
+}
+
 export interface MarketData {
   ticker: string
   points: MarketDataPoint[]
+  daySeries: SeriesPoint[]
+  previousClose: number | null
+  day: string | null
   found: boolean
 }
 

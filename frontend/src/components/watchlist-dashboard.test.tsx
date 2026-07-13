@@ -19,6 +19,9 @@ vi.mock('@/lib/api', () => ({
   getMarketData: vi.fn(async (t: string) => ({
     ticker: t,
     points: [],
+    daySeries: [],
+    previousClose: null,
+    day: null,
     found: false,
   })),
   getInsight: vi.fn(async (t: string) => ({
@@ -86,9 +89,12 @@ describe('WatchlistDashboard', () => {
                 low52Week: null,
               },
             ],
+            daySeries: [],
+            previousClose: 98,
+            day: '2026-07-13',
             found: true,
           }
-        : { ticker: t, points: [], found: false },
+        : { ticker: t, points: [], daySeries: [], previousClose: null, day: null, found: false },
     )
 
     render(<WatchlistDashboard />)

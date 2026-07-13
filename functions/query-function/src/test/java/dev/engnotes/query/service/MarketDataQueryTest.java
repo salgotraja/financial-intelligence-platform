@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -102,14 +103,22 @@ class MarketDataQueryTest {
 
         ArgumentCaptor<software.amazon.awssdk.services.dynamodb.model.QueryRequest> captor =
                 ArgumentCaptor.forClass(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class);
-        verify(dynamoDb).query(captor.capture());
-        var sent = captor.getValue();
-        assertThat(sent.tableName()).isEqualTo(TABLE);
-        assertThat(sent.scanIndexForward()).isFalse();
-        assertThat(sent.limit()).isEqualTo(50);
-        assertThat(sent.keyConditionExpression()).isEqualTo("PK = :pk AND begins_with(SK, :sk)");
-        assertThat(sent.expressionAttributeValues()).containsValue(str("TICKER#TCS.NS"));
-        assertThat(sent.expressionAttributeValues()).containsValue(str("TS#"));
+        verify(dynamoDb, times(2)).query(captor.capture());
+
+        var tsRequest = captor.getAllValues().getFirst();
+        assertThat(tsRequest.tableName()).isEqualTo(TABLE);
+        assertThat(tsRequest.scanIndexForward()).isFalse();
+        assertThat(tsRequest.limit()).isEqualTo(50);
+        assertThat(tsRequest.keyConditionExpression()).isEqualTo("PK = :pk AND begins_with(SK, :sk)");
+        assertThat(tsRequest.expressionAttributeValues()).containsValue(str("TICKER#TCS.NS"));
+        assertThat(tsRequest.expressionAttributeValues()).containsValue(str("TS#"));
+
+        var dayRequest = captor.getAllValues().getLast();
+        assertThat(dayRequest.scanIndexForward()).isFalse();
+        assertThat(dayRequest.limit()).isEqualTo(1);
+        assertThat(dayRequest.keyConditionExpression()).isEqualTo("PK = :pk AND begins_with(SK, :sk)");
+        assertThat(dayRequest.expressionAttributeValues()).containsValue(str("TICKER#TCS.NS"));
+        assertThat(dayRequest.expressionAttributeValues()).containsValue(str("DAY#"));
     }
 
     @Test
@@ -138,8 +147,8 @@ class MarketDataQueryTest {
         assertThat(response.ticker()).isEqualTo("^NSEI");
         ArgumentCaptor<software.amazon.awssdk.services.dynamodb.model.QueryRequest> captor =
                 ArgumentCaptor.forClass(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class);
-        verify(dynamoDb).query(captor.capture());
-        assertThat(captor.getValue().expressionAttributeValues()).containsValue(str("TICKER#^NSEI"));
+        verify(dynamoDb, times(2)).query(captor.capture());
+        assertThat(captor.getAllValues().getFirst().expressionAttributeValues()).containsValue(str("TICKER#^NSEI"));
     }
 
     @Test
@@ -149,6 +158,69 @@ class MarketDataQueryTest {
                 .hasMessageStartingWith("Invalid ticker:");
         assertThatThrownBy(() -> marketDataQuery.findRecentPoints(null)).isInstanceOf(IllegalArgumentException.class);
         verify(dynamoDb, never()).query(any(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class));
+    }
+
+    @Test
+    void enrichesResponseWithLatestDaySeries() {
+        Map<String, AttributeValue> tsPoint = Map.of(
+                "timestamp", str("2026-07-13T10:00:00Z"),
+                "price", num("2960.00"));
+        Map<String, AttributeValue> dayItem = Map.of(
+                "SK", str("DAY#2026-07-13"),
+                "previousClose", num("2900.00"),
+                "series",
+                        AttributeValue.builder()
+                                .l(seriesEntry("09:15", "2905.00"), seriesEntry("09:16", "2910.50"))
+                                .build());
+        when(dynamoDb.query(any(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.QueryResponse.builder()
+                        .items(List.of(tsPoint))
+                        .build())
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.QueryResponse.builder()
+                        .items(List.of(dayItem))
+                        .build());
+
+        MarketDataResponse response = marketDataQuery.findRecentPoints("RELIANCE.NS");
+
+        assertThat(response.found()).isTrue();
+        assertThat(response.points()).hasSize(1);
+        assertThat(response.daySeries()).hasSize(2);
+        assertThat(response.daySeries().getFirst().time()).isEqualTo("09:15");
+        assertThat(response.daySeries().getFirst().price()).isEqualByComparingTo(new BigDecimal("2905.00"));
+        assertThat(response.daySeries().getLast().time()).isEqualTo("09:16");
+        assertThat(response.daySeries().getLast().price()).isEqualByComparingTo(new BigDecimal("2910.50"));
+        assertThat(response.previousClose()).isEqualByComparingTo(new BigDecimal("2900.00"));
+        assertThat(response.day()).isEqualTo("2026-07-13");
+    }
+
+    @Test
+    void returnsFoundWithDaySeriesWhenNoRecentPointsButDayItemExists() {
+        Map<String, AttributeValue> dayItem = Map.of(
+                "day", str("2026-07-13"),
+                "series",
+                        AttributeValue.builder()
+                                .l(seriesEntry("09:15", "2905.00"))
+                                .build());
+        when(dynamoDb.query(any(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.QueryResponse.builder()
+                        .items(List.of())
+                        .build())
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.QueryResponse.builder()
+                        .items(List.of(dayItem))
+                        .build());
+
+        MarketDataResponse response = marketDataQuery.findRecentPoints("RELIANCE.NS");
+
+        assertThat(response.found()).isTrue();
+        assertThat(response.points()).isEmpty();
+        assertThat(response.daySeries()).hasSize(1);
+        assertThat(response.day()).isEqualTo("2026-07-13");
+    }
+
+    private static AttributeValue seriesEntry(String time, String price) {
+        return AttributeValue.builder()
+                .m(Map.of("t", str(time), "p", num(price)))
+                .build();
     }
 
     private static AttributeValue str(String value) {

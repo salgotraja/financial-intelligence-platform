@@ -50,7 +50,10 @@ class QueryHandlerTest {
         var expected = new MarketDataResponse(
                 "RELIANCE.NS",
                 List.of(new MarketDataPoint("2026-07-12T10:00:00Z", null, null, null, null, null, null, null)),
-                true);
+                true,
+                List.of(),
+                null,
+                null);
         when(marketDataQuery.findRecentPoints("RELIANCE.NS")).thenReturn(expected);
 
         var actual =

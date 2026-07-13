@@ -5,7 +5,10 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +40,9 @@ public class DailyRollupService {
     private static final Logger log = LoggerFactory.getLogger(DailyRollupService.class);
 
     static final ZoneId TRADING_ZONE = ZoneId.of("Asia/Kolkata");
+
+    private static final DateTimeFormatter SERIES_TIME =
+            DateTimeFormatter.ofPattern("HH:mm").withZone(TRADING_ZONE);
 
     private final DynamoDbClient dynamoDb;
     private final String platformTable;
@@ -97,6 +103,30 @@ public class DailyRollupService {
                                 .build());
             } else if (existing.containsKey("volume")) {
                 item.put("volume", existing.get("volume"));
+            }
+
+            if (data.previousClose() != null) {
+                item.put("previousClose", num(data.previousClose()));
+            } else if (existing.containsKey("previousClose")) {
+                item.put("previousClose", existing.get("previousClose"));
+            }
+
+            List<AttributeValue> series = existing.containsKey("series")
+                    ? new ArrayList<>(existing.get("series").l())
+                    : new ArrayList<>();
+            if (MarketHours.isSession(observedAt)) {
+                String t = SERIES_TIME.format(observedAt);
+                AttributeValue point = AttributeValue.builder()
+                        .m(Map.of("t", str(t), "p", num(price)))
+                        .build();
+                if (!series.isEmpty() && t.equals(series.getLast().m().get("t").s())) {
+                    series.set(series.size() - 1, point);
+                } else {
+                    series.add(point);
+                }
+            }
+            if (!series.isEmpty()) {
+                item.put("series", AttributeValue.builder().l(series).build());
             }
 
             dynamoDb.putItem(

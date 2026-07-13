@@ -11,7 +11,7 @@ import { StatDelta } from '@/components/stat-delta'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError, getInsight, getMarketData } from '@/lib/api'
-import { intradaySessionPoints, isMarketOpen } from '@/lib/market-hours'
+import { isMarketOpen } from '@/lib/market-hours'
 import { useAsyncData } from '@/hooks/use-async-data'
 import { useInsightFeed } from '@/hooks/use-insight-feed'
 import { useAuthStore } from '@/stores/auth-store'
@@ -83,10 +83,13 @@ const TickerView = ({ symbol }: { symbol: string }) => {
       )}
       <Card className="border-border bg-card">
         <CardHeader>
-          <CardTitle className="text-sm font-medium">Price (stored points, 24h window)</CardTitle>
+          <CardTitle className="text-sm font-medium">Intraday (latest NSE session)</CardTitle>
         </CardHeader>
         <CardContent>
-          <PriceChart points={intradaySessionPoints(data?.marketData.points ?? [], new Date())} />
+          <PriceChart
+            daySeries={data?.marketData.daySeries ?? []}
+            previousClose={data?.marketData.previousClose ?? null}
+          />
         </CardContent>
       </Card>
       {shownInsight && <InsightPanel insight={shownInsight} live={liveInsight !== null} />}

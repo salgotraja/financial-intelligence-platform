@@ -7,7 +7,14 @@ vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
   return {
     ...actual,
-    getMarketData: vi.fn(async (t: string) => ({ ticker: t, points: [], found: false })),
+    getMarketData: vi.fn(async (t: string) => ({
+      ticker: t,
+      points: [],
+      daySeries: [],
+      previousClose: null,
+      day: null,
+      found: false,
+    })),
     getInsight: vi.fn(async (t: string) => ({
       ticker: t,
       generatedAt: null,

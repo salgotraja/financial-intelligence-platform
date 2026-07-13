@@ -10,7 +10,14 @@ vi.mock('@/lib/api', () => ({
 
 import { useWatchlistDashboard } from './use-watchlist-dashboard'
 
-const marketData = (ticker: string) => ({ ticker, points: [], found: true })
+const marketData = (ticker: string) => ({
+  ticker,
+  points: [],
+  daySeries: [],
+  previousClose: null,
+  day: null,
+  found: true,
+})
 const insight = (ticker: string) => ({
   ticker,
   generatedAt: null,
