@@ -53,6 +53,7 @@ public class MarketDataStoreService {
     private final DynamoDbClient dynamoDb;
     private final S3Client s3;
     private final ObjectMapper objectMapper;
+    private final DailyRollupService rollupService;
 
     @Value("${PLATFORM_TABLE:financial-platform-dev}")
     private String platformTable;
@@ -60,10 +61,12 @@ public class MarketDataStoreService {
     @Value("${DATA_LAKE_BUCKET:financial-platform-datalake-dev}")
     private String dataLakeBucket;
 
-    public MarketDataStoreService(DynamoDbClient dynamoDb, S3Client s3, ObjectMapper objectMapper) {
+    public MarketDataStoreService(
+            DynamoDbClient dynamoDb, S3Client s3, ObjectMapper objectMapper, DailyRollupService rollupService) {
         this.dynamoDb = dynamoDb;
         this.s3 = s3;
         this.objectMapper = objectMapper;
+        this.rollupService = rollupService;
     }
 
     /**
@@ -71,11 +74,13 @@ public class MarketDataStoreService {
      * persistence.
      */
     public MarketDataResponse store(MarketDataResponse data, String correlationId) {
-        String timestamp = Instant.now().toString();
+        Instant observedAt = Instant.now();
+        String timestamp = observedAt.toString();
 
         try {
             storeToDynamoDB(data, timestamp, correlationId);
             storeToS3(data, timestamp, correlationId);
+            rollupService.upsert(data, observedAt);
 
             log.info(
                     "Market data stored. ticker={} timestamp={} correlationId={}",
