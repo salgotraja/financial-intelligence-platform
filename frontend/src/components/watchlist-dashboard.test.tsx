@@ -46,9 +46,10 @@ describe('WatchlistDashboard', () => {
     await waitFor(() => expect(screen.getByText('RELIANCE.NS')).toBeInTheDocument())
   })
 
-  it('adds a ticker through the header form', async () => {
+  it('adds a ticker through the header form without refetching the cached list', async () => {
     useAuthStore.setState({ status: 'signed-in', groups: ['premium'] })
-    const { addToWatchlist } = await import('@/lib/api')
+    const { addToWatchlist, getWatchlist } = await import('@/lib/api')
+    vi.mocked(getWatchlist).mockClear()
 
     render(<WatchlistDashboard />)
     await waitFor(() => expect(screen.getByText('RELIANCE.NS')).toBeInTheDocument())
@@ -57,5 +58,30 @@ describe('WatchlistDashboard', () => {
     await userEvent.click(screen.getByRole('button', { name: /add/i }))
 
     expect(addToWatchlist).toHaveBeenCalledWith('TCS.NS')
+    await waitFor(() => expect(screen.getByText('TCS.NS')).toBeInTheDocument())
+    expect(getWatchlist).toHaveBeenCalledTimes(1)
+  })
+
+  it('removes a ticker card locally without refetching the cached list', async () => {
+    useAuthStore.setState({ status: 'signed-in', groups: ['premium'] })
+    const { removeFromWatchlist, getWatchlist } = await import('@/lib/api')
+    vi.mocked(getWatchlist).mockClear()
+    vi.mocked(removeFromWatchlist).mockResolvedValue({
+      status: 'removed',
+      ticker: 'RELIANCE.NS',
+      tickers: [],
+    })
+
+    render(<WatchlistDashboard />)
+    await waitFor(() => expect(screen.getByText('RELIANCE.NS')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove RELIANCE.NS' }))
+
+    expect(removeFromWatchlist).toHaveBeenCalledWith('RELIANCE.NS')
+    // The card (with its remove button) disappears; the BrowseGrid suggestion link may remain.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Remove RELIANCE.NS' })).not.toBeInTheDocument(),
+    )
+    expect(getWatchlist).toHaveBeenCalledTimes(1)
   })
 })

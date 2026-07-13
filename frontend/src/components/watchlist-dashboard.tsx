@@ -19,7 +19,7 @@ export const WatchlistDashboard = () => {
   const [draft, setDraft] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
 
-  const { data: watchlist, error: loadError, reload } = useAsyncData(getWatchlist, canManage)
+  const { data: watchlist, error: loadError, mutate } = useAsyncData(getWatchlist, canManage)
   const tickers = watchlist?.tickers ?? []
   const entries = useWatchlistDashboard(tickers)
   const { insights, connected } = useInsightFeed(tickers)
@@ -43,7 +43,13 @@ export const WatchlistDashboard = () => {
       await addToWatchlist(ticker)
       setDraft('')
       setActionError(null)
-      await reload()
+      // GET /watchlist sits behind a 60s API Gateway cache; trust the confirmed
+      // mutation instead of refetching a stale list.
+      mutate((prev) =>
+        prev && !prev.tickers.includes(ticker)
+          ? { ...prev, tickers: [...prev.tickers, ticker] }
+          : prev,
+      )
     } catch {
       setActionError(`Could not add ${ticker}.`)
     }
@@ -53,7 +59,9 @@ export const WatchlistDashboard = () => {
     try {
       await removeFromWatchlist(ticker)
       setActionError(null)
-      await reload()
+      mutate((prev) =>
+        prev ? { ...prev, tickers: prev.tickers.filter((t) => t !== ticker) } : prev,
+      )
     } catch {
       setActionError(`Could not remove ${ticker}.`)
     }

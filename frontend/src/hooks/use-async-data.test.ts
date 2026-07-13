@@ -35,6 +35,16 @@ describe('useAsyncData', () => {
     expect(result.current.error).toBeNull()
   })
 
+  it('mutate transforms the current data locally', async () => {
+    const fetcher = vi.fn(async () => 'a')
+    const { result } = renderHook(() => useAsyncData(fetcher, true))
+
+    await waitFor(() => expect(result.current.data).toBe('a'))
+
+    result.current.mutate((prev) => (prev === null ? prev : prev + 'b'))
+    await waitFor(() => expect(result.current.data).toBe('ab'))
+  })
+
   it('ignores a stale in-flight fetch that resolves after a newer reload', async () => {
     let resolveFirst: (v: string) => void = () => {}
     const fetcher = vi

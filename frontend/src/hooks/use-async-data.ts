@@ -7,6 +7,7 @@ export interface AsyncData<T> {
   error: unknown
   loading: boolean
   reload: () => Promise<void>
+  mutate: (updater: (prev: T | null) => T | null) => void
 }
 
 /**
@@ -41,6 +42,10 @@ export const useAsyncData = <T,>(fetcher: () => Promise<T>, enabled: boolean): A
     }
   }, [])
 
+  const mutate = useCallback((updater: (prev: T | null) => T | null) => {
+    setData(updater)
+  }, [])
+
   useEffect(() => {
     mountedRef.current = true
     if (enabled) {
@@ -51,5 +56,5 @@ export const useAsyncData = <T,>(fetcher: () => Promise<T>, enabled: boolean): A
     }
   }, [enabled, reload])
 
-  return { data, error, loading, reload }
+  return { data, error, loading, reload, mutate }
 }
