@@ -68,22 +68,28 @@ describe('WatchlistDashboard', () => {
   it('shows a scored mood gauge once market data loads', async () => {
     useAuthStore.setState({ status: 'signed-in', groups: ['premium'] })
     const { getMarketData } = await import('@/lib/api')
-    vi.mocked(getMarketData).mockResolvedValueOnce({
-      ticker: 'RELIANCE.NS',
-      points: [
-        {
-          timestamp: '2026-07-13T12:00:00Z',
-          price: 100,
-          previousClose: 98,
-          change: 2,
-          changePercent: 2,
-          volume: 1,
-          high52Week: null,
-          low52Week: null,
-        },
-      ],
-      found: true,
-    })
+    // Key by ticker: the index strip also calls getMarketData on mount, so an
+    // order-dependent mockResolvedValueOnce would be consumed by the wrong call.
+    vi.mocked(getMarketData).mockImplementation(async (t: string) =>
+      t === 'RELIANCE.NS'
+        ? {
+            ticker: t,
+            points: [
+              {
+                timestamp: '2026-07-13T12:00:00Z',
+                price: 100,
+                previousClose: 98,
+                change: 2,
+                changePercent: 2,
+                volume: 1,
+                high52Week: null,
+                low52Week: null,
+              },
+            ],
+            found: true,
+          }
+        : { ticker: t, points: [], found: false },
+    )
 
     render(<WatchlistDashboard />)
 
