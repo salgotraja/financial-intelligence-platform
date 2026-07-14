@@ -37,7 +37,7 @@ public class RuleBasedStoryComposer implements StoryComposer {
     private static final int DISPLAY_SCALE = 2;
 
     @Override
-    public String compose(
+    public Composition compose(
             String ticker,
             List<DailyPoint> days,
             Optional<FeedInsight> insight,
@@ -49,9 +49,11 @@ public class RuleBasedStoryComposer implements StoryComposer {
         insight.flatMap(RuleBasedStoryComposer::insightSentence).ifPresent(sentences::add);
 
         if (sentences.isEmpty()) {
-            return "Not enough history yet for " + ticker + "; the story builds as market sessions accumulate.";
+            return new Composition(
+                    "Not enough history yet for " + ticker + "; the story builds as market sessions accumulate.",
+                    false);
         }
-        return String.join(" ", sentences);
+        return new Composition(String.join(" ", sentences), true);
     }
 
     // Trend: close vs first-available close over the window. Requires >=2 days (days is

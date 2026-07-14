@@ -56,10 +56,17 @@ public class StoryQuery {
         Optional<FeedInsight> insight = insightFeedQuery.latestForTicker(ticker);
         Optional<MarketDataPoint> latestPoint = marketDataQuery.findLatestPoint(ticker);
 
-        String story = storyComposer.compose(ticker, dailyResponse.days(), insight, latestPoint);
+        StoryComposer.Composition composition =
+                storyComposer.compose(ticker, dailyResponse.days(), insight, latestPoint);
         StoryInputs inputs = new StoryInputs(dailyResponse.days().size(), insight.isPresent() ? 1 : 0);
 
-        log.info("Story composed. ticker={} days={} insightPresent={}", ticker, inputs.days(), insight.isPresent());
-        return new StoryResponse(ticker, story, Instant.now(clock).toString(), "RULE_BASED", inputs);
+        log.info(
+                "Story composed. ticker={} days={} insightPresent={} found={}",
+                ticker,
+                inputs.days(),
+                insight.isPresent(),
+                composition.found());
+        return new StoryResponse(
+                ticker, composition.story(), Instant.now(clock).toString(), "RULE_BASED", inputs, composition.found());
     }
 }

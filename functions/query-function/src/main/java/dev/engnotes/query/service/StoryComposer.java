@@ -15,12 +15,19 @@ import java.util.Optional;
 public interface StoryComposer {
 
     /**
+     * The composed narrative plus whether any sentence derived from real data. {@code found} is
+     * false only when the composer fell back to its fixed no-history sentence ({@code story} is
+     * still never null or blank), mirroring the sibling routes' found=false-on-empty semantics.
+     */
+    record Composition(String story, boolean found) {}
+
+    /**
      * @param ticker the validated ticker the story is about
      * @param days up to 7 daily rollups, newest first (may be empty)
      * @param insight the ticker's latest insight, group-aware, if one exists
      * @param latestPoint the ticker's latest stored price point, if one exists
-     * @return a deterministic multi-sentence story; never null or blank
+     * @return a deterministic multi-sentence story and its found flag
      */
-    String compose(
+    Composition compose(
             String ticker, List<DailyPoint> days, Optional<FeedInsight> insight, Optional<MarketDataPoint> latestPoint);
 }

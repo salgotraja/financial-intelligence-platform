@@ -97,7 +97,7 @@ class QueryHandlerTest {
     @Test
     void serveStoryDelegatesToStoryQuery() {
         var expected = new StoryResponse(
-                "RELIANCE.NS", "a composed story", "2026-07-14T10:00:00Z", "RULE_BASED", new StoryInputs(7, 1));
+                "RELIANCE.NS", "a composed story", "2026-07-14T10:00:00Z", "RULE_BASED", new StoryInputs(7, 1), true);
         when(storyQuery.story("RELIANCE.NS")).thenReturn(expected);
 
         var actual = new QueryHandler().serveStory(storyQuery).apply(new QueryRequest("RELIANCE.NS", "corr-5"));

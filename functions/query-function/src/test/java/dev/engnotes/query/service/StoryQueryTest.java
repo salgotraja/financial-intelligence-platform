@@ -13,6 +13,7 @@ import dev.engnotes.query.model.DailyPoint;
 import dev.engnotes.query.model.FeedInsight;
 import dev.engnotes.query.model.MarketDataPoint;
 import dev.engnotes.query.model.StoryResponse;
+import dev.engnotes.query.service.StoryComposer.Composition;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -60,7 +61,7 @@ class StoryQueryTest {
         MarketDataPoint latest = new MarketDataPoint("2026-07-14T09:55:00Z", null, null, null, null, null, null, null);
         when(marketDataQuery.findLatestPoint("RELIANCE.NS")).thenReturn(Optional.of(latest));
         when(storyComposer.compose(eq("RELIANCE.NS"), eq(days), eq(Optional.of(insight)), eq(Optional.of(latest))))
-                .thenReturn("a composed story");
+                .thenReturn(new Composition("a composed story", true));
 
         StoryResponse response = storyQuery.story("RELIANCE.NS");
 
@@ -70,6 +71,7 @@ class StoryQueryTest {
         assertThat(response.generatedAt()).isEqualTo(FIXED_NOW.toString());
         assertThat(response.inputs().days()).isEqualTo(1);
         assertThat(response.inputs().insightCount()).isEqualTo(1);
+        assertThat(response.found()).isTrue();
     }
 
     @Test
@@ -81,7 +83,8 @@ class StoryQueryTest {
                 .thenReturn(new DailyMarketDataResponse("^NSEI", List.of(), false));
         when(insightFeedQuery.latestForTicker("^NSEI")).thenReturn(Optional.empty());
         when(marketDataQuery.findLatestPoint("^NSEI")).thenReturn(Optional.empty());
-        when(storyComposer.compose(eq("^NSEI"), anyList(), any(), any())).thenReturn("fallback");
+        when(storyComposer.compose(eq("^NSEI"), anyList(), any(), any()))
+                .thenReturn(new Composition("fallback", false));
 
         StoryResponse response = storyQuery.story("%5ENSEI");
 
@@ -97,7 +100,9 @@ class StoryQueryTest {
         when(insightFeedQuery.latestForTicker("NEWTICKER")).thenReturn(Optional.empty());
         when(marketDataQuery.findLatestPoint("NEWTICKER")).thenReturn(Optional.empty());
         when(storyComposer.compose(eq("NEWTICKER"), eq(List.of()), eq(Optional.empty()), eq(Optional.empty())))
-                .thenReturn("Not enough history yet for NEWTICKER; the story builds as market sessions accumulate.");
+                .thenReturn(new Composition(
+                        "Not enough history yet for NEWTICKER; the story builds as market sessions accumulate.",
+                        false));
 
         StoryResponse response = storyQuery.story("NEWTICKER");
 
@@ -105,5 +110,6 @@ class StoryQueryTest {
         assertThat(response.inputs().insightCount()).isEqualTo(0);
         assertThat(response.story())
                 .isEqualTo("Not enough history yet for NEWTICKER; the story builds as market sessions accumulate.");
+        assertThat(response.found()).isFalse();
     }
 }
