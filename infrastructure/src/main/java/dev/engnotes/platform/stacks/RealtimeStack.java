@@ -255,15 +255,20 @@ public class RealtimeStack extends Stack {
         notifierFn.addEnvironment("WS_CALLBACK_URL", stage.getCallbackUrl());
         stage.grantManagementApiAccess(notifierRole);
 
-        // Fan-out trigger: INSERTs on the platform table. SK filtering to INSIGHT# happens in
-        // code; the coarse INSERT filter is enough at this scale (market-data INSERTs invoke the
-        // Lambda but exit fast on the SK check). Bounded retries: a poison batch must not block
-        // the shard forever; missed pushes are tolerable (clients re-query on load).
+        // Fan-out trigger: INSERTs on the platform table whose SK begins with INSIGHT#. The event
+        // source filter (not just the code-level SK check in the notifier) stops market-data
+        // INSERTs from invoking the Lambda at all, since market-data volume dwarfs insight volume.
+        // Bounded retries: a poison batch must not block the shard forever; missed pushes are
+        // tolerable (clients re-query on load).
         notifierFnAlias.addEventSource(DynamoEventSource.Builder.create(data.getPlatformTable())
                 .startingPosition(StartingPosition.LATEST)
                 .batchSize(10)
                 .retryAttempts(2)
-                .filters(List.of(FilterCriteria.filter(Map.of("eventName", FilterRule.isEqual("INSERT")))))
+                .filters(List.of(FilterCriteria.filter(Map.of(
+                        "eventName",
+                        FilterRule.isEqual("INSERT"),
+                        "dynamodb",
+                        Map.of("Keys", Map.of("SK", Map.of("S", FilterRule.beginsWith("INSIGHT#"))))))))
                 .build());
 
         new CfnOutput(

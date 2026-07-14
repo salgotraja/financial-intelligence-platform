@@ -54,7 +54,9 @@ class QueryStackTest {
     // published while SnapStart is ON_PUBLISHED_VERSIONS). QueryFnAlias used to set
     // provisionedConcurrentExecutions(2) prod-only on the same alias SnapStart requires, which would
     // fail the first prod deploy (found 2026-07-12, STATUS.md "Known gaps"). Assert the combination
-    // never recurs, on any Lambda in this stack, under prod context.
+    // never recurs, on any Lambda in this stack, under prod context. The check logic itself lives in
+    // LiveAliasAssertions so PlatformWideHardeningTest can run the identical assertion over every
+    // other stack without duplicating it.
     @Test
     @SuppressWarnings("unchecked")
     void noSnapStartFunctionCombinesWithProvisionedConcurrency() {
@@ -70,23 +72,51 @@ class QueryStackTest {
                 .collect(Collectors.toUnmodifiableSet());
         assertFalse(snapStartFunctionLogicalIds.isEmpty(), "expected at least one SnapStart-enabled function");
 
+        LiveAliasAssertions.assertNoSnapStartFunctionCombinesWithProvisionedConcurrency("Query", template);
+    }
+
+    // Pins the SnapStart-$LATEST regression class (STATUS.md "Known gaps" item 3) for every REST API
+    // Gateway route at once, current and future: a non-proxy Lambda integration that targets the bare
+    // function, or an alias other than "live", silently pays the full Spring Boot cold start on every
+    // invocation instead of restoring from the SnapStart snapshot.
+    @Test
+    @SuppressWarnings("unchecked")
+    void everyLambdaApiGatewayIntegrationTargetsLiveAlias() {
+        var template = synth();
         var aliases = template.findResources("AWS::Lambda::Alias");
-        var provisionedAliases = aliases.entrySet().stream()
-                .filter(e -> {
+
+        var lambdaIntegrationUris = template.findResources("AWS::ApiGateway::Method").entrySet().stream()
+                .map(e -> {
                     var props = (Map<String, Object>) e.getValue().get("Properties");
-                    return props.get("ProvisionedConcurrencyConfig") != null;
+                    var integration = (Map<String, Object>) props.get("Integration");
+                    return Map.entry(e.getKey(), integration);
                 })
+                .filter(e -> e.getValue() != null && "AWS".equals(e.getValue().get("Type")))
+                .map(e ->
+                        Map.entry(e.getKey(), (Map<String, Object>) e.getValue().get("Uri")))
+                .filter(e -> LiveAliasAssertions.isLambdaInvocationUri(e.getValue()))
                 .toList();
 
-        for (var entry : provisionedAliases) {
-            var props = (Map<String, Object>) entry.getValue().get("Properties");
-            var functionRef = (Map<String, Object>) props.get("FunctionName");
-            var functionLogicalId = (String) functionRef.get("Ref");
-            assertFalse(
-                    snapStartFunctionLogicalIds.contains(functionLogicalId),
-                    "alias " + entry.getKey() + " combines provisioned concurrency with SnapStart function "
-                            + functionLogicalId);
+        assertFalse(lambdaIntegrationUris.isEmpty(), "expected Lambda-backed API Gateway method integrations");
+        for (var entry : lambdaIntegrationUris) {
+            LiveAliasAssertions.assertUriTargetsLiveAlias(entry.getKey(), entry.getValue(), aliases);
         }
+    }
+
+    // Item 5: the TokenAuthorizer used to target $LATEST directly, so the authorizer paid the full
+    // Spring Boot cold start on every request even though SnapStart was enabled on the function.
+    @Test
+    @SuppressWarnings("unchecked")
+    void tokenAuthorizerTargetsLiveAlias() {
+        var template = synth();
+        var aliases = template.findResources("AWS::Lambda::Alias");
+
+        var authorizers = template.findResources("AWS::ApiGateway::Authorizer");
+        assertEquals(1, authorizers.size(), "expected exactly one REST TokenAuthorizer");
+        var entry = authorizers.entrySet().iterator().next();
+        var props = (Map<String, Object>) entry.getValue().get("Properties");
+        var uri = (Map<String, Object>) props.get("AuthorizerUri");
+        LiveAliasAssertions.assertUriTargetsLiveAlias(entry.getKey(), uri, aliases);
     }
 
     @Test

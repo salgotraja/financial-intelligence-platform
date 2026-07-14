@@ -51,6 +51,8 @@ public class WatchlistHandler {
                     request.correlationId());
 
             // Consent gate (spec decision 5): no active consent -> no watchlist interaction at all.
+            // The "consent required" prefix keeps QueryStack's CLIENT_ERROR_PATTERN 400 mapping in
+            // sync; changing it here requires the matching change in QueryStack.
             if (!consentGate.isActive(owner)) {
                 throw new WatchlistException("consent required: no active consent for owner");
             }

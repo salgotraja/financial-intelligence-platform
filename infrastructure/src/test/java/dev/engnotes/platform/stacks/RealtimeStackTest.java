@@ -1,5 +1,6 @@
 package dev.engnotes.platform.stacks;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -50,13 +51,22 @@ class RealtimeStackTest {
                                 List.of("route.request.querystring.token"))));
     }
 
+    // Item 4: the event-source filter itself excludes market-data INSERTs (SK begins_with
+    // INSIGHT#), not just the code-level check in the notifier, so the Lambda is never invoked for
+    // the far more numerous market-data writes. The "Pattern" property is a JSON-encoded string, so
+    // this uses Match.serializedJson to compare its structure regardless of the key order Map.of()
+    // happens to iterate in (unspecified and JVM-salted, unlike a literal string comparison).
     @Test
-    void notifierConsumesInsertEventsFromTheTableStream() {
+    void notifierConsumesOnlyInsightInsertEventsFromTheTableStream() {
+        var skBeginsWithInsight = Map.of("S", List.of(Map.of("prefix", "INSIGHT#")));
+        var expectedPattern =
+                Map.of("eventName", List.of("INSERT"), "dynamodb", Map.of("Keys", Map.of("SK", skBeginsWithInsight)));
+
         synth().hasResourceProperties(
                         "AWS::Lambda::EventSourceMapping",
                         Match.objectLike(Map.of(
                                 "FilterCriteria",
-                                Map.of("Filters", List.of(Map.of("Pattern", "{\"eventName\":[\"INSERT\"]}"))))));
+                                Map.of("Filters", List.of(Map.of("Pattern", Match.serializedJson(expectedPattern)))))));
     }
 
     @Test
@@ -81,5 +91,21 @@ class RealtimeStackTest {
         for (var uri : uris) {
             assertTrue(uri.contains("live") || uri.contains("Alias"), "integration must target the live alias: " + uri);
         }
+    }
+
+    // Item 5: the WebSocket $connect authorizer must also target a published-version "live" alias,
+    // not $LATEST, or SnapStart never engages for it either.
+    @Test
+    @SuppressWarnings("unchecked")
+    void connectAuthorizerTargetsLiveAlias() {
+        var template = synth();
+        var aliases = template.findResources("AWS::Lambda::Alias");
+
+        var authorizers = template.findResources("AWS::ApiGatewayV2::Authorizer");
+        assertEquals(1, authorizers.size(), "expected exactly one WebSocket $connect authorizer");
+        var entry = authorizers.entrySet().iterator().next();
+        var props = (Map<String, Object>) entry.getValue().get("Properties");
+        var uri = (Map<String, Object>) props.get("AuthorizerUri");
+        LiveAliasAssertions.assertUriTargetsLiveAlias(entry.getKey(), uri, aliases);
     }
 }

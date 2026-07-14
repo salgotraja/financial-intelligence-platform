@@ -11,6 +11,10 @@ import java.util.regex.Pattern;
  * key-injection and log-forging vectors in one place. The rejection message omits the raw value,
  * since echoing attacker-controlled input into a log line is itself the log-forging vector this
  * guard closes. Duplicated per module by design: the function modules share no code.
+ *
+ * <p>The message keeps the "allowlist validation" substring that QueryStack's CLIENT_ERROR_PATTERN
+ * matches to map this exception to HTTP 400 instead of 500; changing it here requires the matching
+ * change in QueryStack.
  */
 public final class TickerValidator {
 

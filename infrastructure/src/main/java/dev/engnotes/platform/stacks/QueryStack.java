@@ -68,7 +68,7 @@ public class QueryStack extends Stack {
         // Query Lambda
         var queryFn = Function.Builder.create(this, "QueryFn")
                 .functionName("financial-query-" + env)
-                .description("Serves insight and market data API requests")
+                .description("Serves insight API requests")
                 .runtime(Runtime.JAVA_25)
                 .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
                 .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
@@ -419,7 +419,7 @@ public class QueryStack extends Stack {
                 .proxy(false)
                 .requestTemplates(Map.of(
                         "application/json",
-                        "{ \"ticker\": \"$input.params('ticker')\", "
+                        "{ \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\", "
                                 + "  \"correlationId\": \"$context.requestId\" }"))
                 // {ticker} must be a cache key, else the 60s stage cache serves one ticker's
                 // response for every ticker (wrong data + collapses the load-test cache mix).
@@ -445,7 +445,7 @@ public class QueryStack extends Stack {
                 .proxy(false)
                 .requestTemplates(Map.of(
                         "application/json",
-                        "{ \"ticker\": \"$input.params('ticker')\", "
+                        "{ \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\", "
                                 + "  \"correlationId\": \"$context.requestId\" }"))
                 .cacheKeyParameters(List.of("method.request.path.ticker"))
                 .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
@@ -948,6 +948,14 @@ public class QueryStack extends Stack {
     // pattern excludes them because API Gateway's pattern match order is undefined. The 500
     // pattern requires at least one character (+, not *): API Gateway evaluates patterns against
     // an EMPTY errorMessage on successful invocations, so a pattern matching "" hijacks every 200.
+    //
+    // No shared Java constant backs this string: each phrase below is duplicated in a Lambda
+    // exception message in a separate Maven module, and those modules cannot depend on
+    // infrastructure/. Changing a phrase here or in any of the sites below without updating the
+    // other silently reclassifies that error as a 500. Sites, by phrase:
+    //   "Invalid ticker"        - query-function Tickers.java, notifier-function ConnectionRegistry.java
+    //   "allowlist validation"  - watchlist-function TickerValidator.java
+    //   "consent required"      - watchlist-function WatchlistHandler.java
     private static final String CLIENT_ERROR_PATTERN = "Invalid ticker|allowlist validation|consent required";
     private static final String CORS_HEADER = "method.response.header.Access-Control-Allow-Origin";
 
