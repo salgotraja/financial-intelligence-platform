@@ -18,6 +18,8 @@ import software.amazon.awscdk.services.logs.LogGroupProps;
 import software.amazon.awscdk.services.logs.RetentionDays;
 import software.amazon.awscdk.services.stepfunctions.*;
 import software.amazon.awscdk.services.stepfunctions.tasks.*;
+import software.amazon.awscdk.services.wafv2.CfnWebACL;
+import software.amazon.awscdk.services.wafv2.CfnWebACLAssociation;
 import software.constructs.Construct;
 
 /**
@@ -654,6 +656,102 @@ public class QueryStack extends Stack {
                         .type(ResponseType.DEFAULT_5_XX)
                         .responseHeaders(Map.of("Access-Control-Allow-Origin", "'" + allowOrigin + "'"))
                         .build());
+
+        // == WAF (spec s12, Task 13) ==
+        // Regional Web ACL on the deployed stage, every env (user accepted the cost). Rules run in
+        // priority order: the two AWS managed rule groups (OverrideAction none, so each managed
+        // rule's own action - almost always Block - applies directly instead of only being counted),
+        // then the rate-based rule (300 requests per 5-minute window per source IP, generous for a
+        // single-user dev account but a real ceiling). Each rule and the ACL itself carry CloudWatch
+        // metrics + sampled requests for visibility.
+        var commonRuleSetVisibility = CfnWebACL.VisibilityConfigProperty.builder()
+                .sampledRequestsEnabled(true)
+                .cloudWatchMetricsEnabled(true)
+                .metricName("financial-waf-common-" + env)
+                .build();
+        var commonRuleSetRule = CfnWebACL.RuleProperty.builder()
+                .name("AWSManagedRulesCommonRuleSet")
+                .priority(0)
+                .overrideAction(CfnWebACL.OverrideActionProperty.builder()
+                        .none(Map.of())
+                        .build())
+                .statement(CfnWebACL.StatementProperty.builder()
+                        .managedRuleGroupStatement(CfnWebACL.ManagedRuleGroupStatementProperty.builder()
+                                .vendorName("AWS")
+                                .name("AWSManagedRulesCommonRuleSet")
+                                .build())
+                        .build())
+                .visibilityConfig(commonRuleSetVisibility)
+                .build();
+
+        var knownBadInputsVisibility = CfnWebACL.VisibilityConfigProperty.builder()
+                .sampledRequestsEnabled(true)
+                .cloudWatchMetricsEnabled(true)
+                .metricName("financial-waf-badinputs-" + env)
+                .build();
+        var knownBadInputsRule = CfnWebACL.RuleProperty.builder()
+                .name("AWSManagedRulesKnownBadInputsRuleSet")
+                .priority(1)
+                .overrideAction(CfnWebACL.OverrideActionProperty.builder()
+                        .none(Map.of())
+                        .build())
+                .statement(CfnWebACL.StatementProperty.builder()
+                        .managedRuleGroupStatement(CfnWebACL.ManagedRuleGroupStatementProperty.builder()
+                                .vendorName("AWS")
+                                .name("AWSManagedRulesKnownBadInputsRuleSet")
+                                .build())
+                        .build())
+                .visibilityConfig(knownBadInputsVisibility)
+                .build();
+
+        var rateLimitVisibility = CfnWebACL.VisibilityConfigProperty.builder()
+                .sampledRequestsEnabled(true)
+                .cloudWatchMetricsEnabled(true)
+                .metricName("financial-waf-ratelimit-" + env)
+                .build();
+        var rateLimitRule = CfnWebACL.RuleProperty.builder()
+                .name("RateLimitPerIp")
+                .priority(2)
+                .action(CfnWebACL.RuleActionProperty.builder()
+                        .block(CfnWebACL.BlockActionProperty.builder().build())
+                        .build())
+                .statement(CfnWebACL.StatementProperty.builder()
+                        .rateBasedStatement(CfnWebACL.RateBasedStatementProperty.builder()
+                                .limit(300)
+                                .evaluationWindowSec(300)
+                                .aggregateKeyType("IP")
+                                .build())
+                        .build())
+                .visibilityConfig(rateLimitVisibility)
+                .build();
+
+        var webAcl = CfnWebACL.Builder.create(this, "ApiWebAcl")
+                .name("financial-waf-" + env)
+                .description("Regional Web ACL protecting the Financial Intelligence API")
+                .scope("REGIONAL")
+                .defaultAction(CfnWebACL.DefaultActionProperty.builder()
+                        .allow(CfnWebACL.AllowActionProperty.builder().build())
+                        .build())
+                .rules(List.of(commonRuleSetRule, knownBadInputsRule, rateLimitRule))
+                .visibilityConfig(CfnWebACL.VisibilityConfigProperty.builder()
+                        .sampledRequestsEnabled(true)
+                        .cloudWatchMetricsEnabled(true)
+                        .metricName("financial-waf-acl-" + env)
+                        .build())
+                .build();
+
+        // Stage ARN is derived from the RestApi construct (restApiId + deployed stage name), not
+        // hardcoded: arn:aws:apigateway:{region}::/restapis/{restApiId}/stages/{stageName}.
+        var deployedStage = api.getDeploymentStage();
+        String apiStageArn = "arn:aws:apigateway:" + this.getRegion() + "::/restapis/" + api.getRestApiId() + "/stages/"
+                + deployedStage.getStageName();
+
+        var webAclAssociation = CfnWebACLAssociation.Builder.create(this, "ApiWebAclAssociation")
+                .resourceArn(apiStageArn)
+                .webAclArn(webAcl.getAttrArn())
+                .build();
+        // Explicit dependency: associating before the stage exists fails the deploy.
+        webAclAssociation.getNode().addDependency(deployedStage);
 
         // Non-proxy: the request template maps the path ticker + request id onto the function's
         // QueryRequest record. With the default proxy integration the template is ignored and the

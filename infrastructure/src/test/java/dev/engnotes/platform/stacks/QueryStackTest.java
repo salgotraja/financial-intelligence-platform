@@ -2,6 +2,7 @@ package dev.engnotes.platform.stacks;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -626,6 +627,152 @@ class QueryStackTest {
         }
         var body = requestTemplates.get("application/json");
         return body == null ? "" : body.toString();
+    }
+
+    // == WAF (spec s12, Task 13) ==
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void webAclHasManagedRuleGroupsThenRateLimitRuleInPriorityOrder() {
+        var template = synth();
+        var acls = template.findResources("AWS::WAFv2::WebACL");
+        assertEquals(1, acls.size(), "expected exactly one regional Web ACL");
+        var props = (Map<String, Object>) acls.values().iterator().next().get("Properties");
+        assertEquals("REGIONAL", props.get("Scope"));
+
+        var rules = (List<Map<String, Object>>) props.get("Rules");
+        assertEquals(3, rules.size(), "expected the 2 managed rule groups plus the rate-based rule");
+
+        var byPriority = rules.stream().collect(Collectors.toMap(r -> ((Number) r.get("Priority")).intValue(), r -> r));
+        assertEquals("AWSManagedRulesCommonRuleSet", byPriority.get(0).get("Name"));
+        assertEquals("AWSManagedRulesKnownBadInputsRuleSet", byPriority.get(1).get("Name"));
+        assertEquals("RateLimitPerIp", byPriority.get(2).get("Name"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void managedRuleGroupsRunInOverrideActionNoneModeWithTheRightRuleSetNames() {
+        var rules = webAclRules();
+        var managedRules = rules.stream()
+                .filter(r -> {
+                    var statement = (Map<String, Object>) r.get("Statement");
+                    return statement.containsKey("ManagedRuleGroupStatement");
+                })
+                .toList();
+        assertEquals(2, managedRules.size());
+
+        var ruleSetNames = managedRules.stream()
+                .map(r -> {
+                    var statement = (Map<String, Object>) r.get("Statement");
+                    var managedRuleGroupStatement = (Map<String, Object>) statement.get("ManagedRuleGroupStatement");
+                    return (String) managedRuleGroupStatement.get("Name");
+                })
+                .sorted()
+                .toList();
+        assertEquals(List.of("AWSManagedRulesCommonRuleSet", "AWSManagedRulesKnownBadInputsRuleSet"), ruleSetNames);
+
+        for (var rule : managedRules) {
+            var statement = (Map<String, Object>) rule.get("Statement");
+            var managedRuleGroupStatement = (Map<String, Object>) statement.get("ManagedRuleGroupStatement");
+            assertEquals("AWS", managedRuleGroupStatement.get("VendorName"));
+
+            var overrideAction = (Map<String, Object>) rule.get("OverrideAction");
+            assertTrue(
+                    overrideAction != null && overrideAction.containsKey("None"),
+                    "expected OverrideAction: none on managed rule " + rule.get("Name"));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void rateBasedRuleBlocksAt300RequestsPerIpPer5MinuteWindow() {
+        var rules = webAclRules();
+        var rateRules = rules.stream()
+                .filter(r -> {
+                    var statement = (Map<String, Object>) r.get("Statement");
+                    return statement.containsKey("RateBasedStatement");
+                })
+                .toList();
+        assertEquals(1, rateRules.size(), "expected exactly one rate-based rule");
+
+        var rateRule = rateRules.get(0);
+        var statement = (Map<String, Object>) rateRule.get("Statement");
+        var rateBasedStatement = (Map<String, Object>) statement.get("RateBasedStatement");
+        assertEquals(300, ((Number) rateBasedStatement.get("Limit")).intValue());
+        assertEquals("IP", rateBasedStatement.get("AggregateKeyType"));
+        assertEquals(300, ((Number) rateBasedStatement.get("EvaluationWindowSec")).intValue());
+
+        var action = (Map<String, Object>) rateRule.get("Action");
+        assertTrue(action != null && action.containsKey("Block"), "expected the rate-based rule to Block");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void everyWebAclRuleAndTheAclItselfHaveCloudWatchMetricsAndSamplingEnabled() {
+        var template = synth();
+        var props = (Map<String, Object>) template.findResources("AWS::WAFv2::WebACL")
+                .values()
+                .iterator()
+                .next()
+                .get("Properties");
+
+        var aclVisibility = (Map<String, Object>) props.get("VisibilityConfig");
+        assertEquals(Boolean.TRUE, aclVisibility.get("CloudWatchMetricsEnabled"));
+        assertEquals(Boolean.TRUE, aclVisibility.get("SampledRequestsEnabled"));
+        assertNotNull(aclVisibility.get("MetricName"));
+
+        for (var rule : webAclRules()) {
+            var visibility = (Map<String, Object>) rule.get("VisibilityConfig");
+            assertEquals(
+                    Boolean.TRUE,
+                    visibility.get("CloudWatchMetricsEnabled"),
+                    "expected CloudWatch metrics enabled on rule " + rule.get("Name"));
+            assertEquals(
+                    Boolean.TRUE,
+                    visibility.get("SampledRequestsEnabled"),
+                    "expected sampled requests enabled on rule " + rule.get("Name"));
+        }
+    }
+
+    // The association must target the deployed REST stage (not the API or a resource), and must not
+    // deploy before that stage exists - associating an ARN that doesn't exist yet fails the deploy.
+    @Test
+    @SuppressWarnings("unchecked")
+    void webAclAssociationTargetsTheDeployedStageArnAndDependsOnIt() {
+        var template = synth();
+        var associations = template.findResources("AWS::WAFv2::WebACLAssociation");
+        assertEquals(1, associations.size(), "expected exactly one Web ACL association");
+        var association = associations.values().iterator().next();
+
+        var props = (Map<String, Object>) association.get("Properties");
+        var resourceArn = props.get("ResourceArn").toString();
+        assertTrue(resourceArn.contains("/restapis/"), "expected the association to target a REST API stage ARN");
+        assertTrue(resourceArn.contains("/stages/"), "expected the association to target a stage, not the bare API");
+
+        var webAclArn = (Map<String, Object>) props.get("WebACLArn");
+        assertTrue(
+                webAclArn.containsKey("Fn::GetAtt")
+                        && ((List<Object>) webAclArn.get("Fn::GetAtt")).get(0).equals("ApiWebAcl"),
+                "expected WebACLArn to reference the ApiWebAcl resource's Arn attribute");
+
+        var stages = template.findResources("AWS::ApiGateway::Stage");
+        assertEquals(1, stages.size());
+        var stageLogicalId = stages.keySet().iterator().next();
+        var dependsOn = (List<String>) association.get("DependsOn");
+        assertTrue(
+                dependsOn != null && dependsOn.contains(stageLogicalId),
+                "expected the Web ACL association to explicitly depend on the deployed stage");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> webAclRules() {
+        var template = synth();
+        var props = (Map<String, Object>) template.findResources("AWS::WAFv2::WebACL")
+                .values()
+                .iterator()
+                .next()
+                .get("Properties");
+        return (List<Map<String, Object>>) props.get("Rules");
     }
 
     // Authorizer 401/403 (ACCESS_DENIED/UNAUTHORIZED, both DEFAULT_4XX) and any DEFAULT_5XX are
