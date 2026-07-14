@@ -15,6 +15,7 @@ import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
 import software.amazon.awscdk.services.cloudwatch.actions.SnsAction;
 import software.amazon.awscdk.services.events.*;
 import software.amazon.awscdk.services.events.Schedule;
+import software.amazon.awscdk.services.events.targets.LambdaFunction;
 import software.amazon.awscdk.services.events.targets.SfnStateMachine;
 import software.amazon.awscdk.services.iam.*;
 import software.amazon.awscdk.services.lambda.*;
@@ -218,6 +219,77 @@ public class IngestionStack extends Stack {
                 .logGroupName("/aws/lambda/" + generateInsightFn.getFunctionName())
                 .retention(RetentionDays.ONE_MONTH)
                 .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // == Compute Correlations Lambda (spec section 7) ==
+        // A second bean in the insight-function jar (dev.engnotes.insight.InsightHandler), selected by
+        // SPRING_CLOUD_FUNCTION_DEFINITION like GenerateInsightFn above. EventBridge invokes it directly
+        // (no Step Functions state machine): it reads the WATCHSET, not a single ticker, so it has no
+        // place in the per-ticker fan-out chain.
+        //
+        // Dedicated least-privilege role, NOT the shared ingestionRole: this Lambda only ever reads and
+        // writes the platform table (WATCHSET, TS# points, GROUP#/META, TICKER#/GROUP), so it gets none
+        // of ingestionRole's Bedrock, Secrets Manager, or S3 grants.
+        Role correlationsRole = Role.Builder.create(this, "CorrelationsLambdaRole")
+                .roleName("financial-correlations-lambda-role-" + env)
+                .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
+                .managedPolicies(List.of(
+                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
+                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .build();
+        data.getPlatformTable().grantReadWriteData(correlationsRole);
+        data.getEncryptionKey().grantEncryptDecrypt(correlationsRole);
+
+        Map<String, String> correlationsEnv = new HashMap<>(commonEnvVars);
+        correlationsEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "computeCorrelations");
+        correlationsEnv.put("MAIN_CLASS", "dev.engnotes.insight.InsightHandler");
+        // Threshold clustering tunable (spec section 7), set to the CorrelationService code default so
+        // it is operable without a redeploy.
+        correlationsEnv.put("CORRELATION_THRESHOLD", "0.6");
+
+        Function computeCorrelationsFn = Function.Builder.create(this, "ComputeCorrelationsFn")
+                .functionName("financial-correlations-" + env)
+                .description("Computes cross-ticker return correlations and persists threshold-clustered groups")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker")
+                .code(Code.fromAsset("../functions/insight-function/target/insight-function.jar"))
+                .role(correlationsRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(30))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(correlationsEnv)
+                .vpc(network.getVpc())
+                .build();
+
+        Alias correlationsAlias = Alias.Builder.create(this, "ComputeCorrelationsAlias")
+                .aliasName("live")
+                .version(computeCorrelationsFn.getCurrentVersion())
+                .build();
+
+        LogGroup.Builder.create(this, "ComputeCorrelationsLogs")
+                .logGroupName("/aws/lambda/" + computeCorrelationsFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // 15-minute refresh (spec section 7) inside the same market-hours cron envelope as
+        // MarketDataSchedule's main session rule (03:00-09:59 UTC = ~08:30-15:25 IST, Mon-Fri; see that
+        // rule's comment for the derivation), stepped by minute 0/15/30/45 instead of every 5. Fixed
+        // cadence in every env (unlike ingestion's dev/prod poll-frequency split): the brief's 15-minute
+        // refresh isn't an env-tiering knob. Doesn't chase the 15:30/15:35 IST closing-print ticks the
+        // way MarketDataCloseSchedule does for ingestion: a correlation group is a rolling-window signal
+        // over up to 30 points, not a point-in-time capture, so ending ~20 minutes before the literal
+        // close is an acceptable trade rather than a second rule. The bean's own MarketHours guard still
+        // no-ops on a holiday, since cron cannot express the NSE holiday calendar.
+        Rule.Builder.create(this, "CorrelationsSchedule")
+                .ruleName("financial-correlations-schedule-" + env)
+                .description("Triggers the correlation pass every 15 minutes during NSE market hours")
+                .schedule(Schedule.expression("cron(0/15 3-9 ? * MON-FRI *)"))
+                .targets(List.of(LambdaFunction.Builder.create(correlationsAlias)
+                        .event(RuleTargetInput.fromObject(Map.of("source", "eventbridge-schedule")))
+                        .retryAttempts(2)
+                        .build()))
                 .build();
 
         // == Step Functions Workflow ==
