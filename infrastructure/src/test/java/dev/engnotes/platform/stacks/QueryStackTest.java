@@ -424,6 +424,177 @@ class QueryStackTest {
         }
     }
 
+    // == Erasure Step Functions workflow (spec s11, Task 11) ==
+
+    @Test
+    void erasureStateMachineIsStandardTypeWithFixedName() {
+        synth().hasResourceProperties(
+                        "AWS::StepFunctions::StateMachine",
+                        Match.objectLike(
+                                Map.of("StateMachineName", "financial-erasure-dev", "StateMachineType", "STANDARD")));
+    }
+
+    @Test
+    void erasureStatesRunInTheSpecifiedOrderWithTheRightOperationEach() {
+        String definition = erasureDefinitionString();
+
+        // Next-pointer chain: MarkDeletionPending -> DeleteUserItems -> S3SafeguardDelete ->
+        // DeleteCognitoUser -> SendConfirmationEmail -> WriteErasureAudit -> ErasureCompleted.
+        assertTrue(definition.contains("\"MarkDeletionPending\":{\"Next\":\"DeleteUserItems\""));
+        assertTrue(definition.contains("\"DeleteUserItems\":{\"Next\":\"S3SafeguardDelete\""));
+        assertTrue(definition.contains("\"S3SafeguardDelete\":{\"Next\":\"DeleteCognitoUser\""));
+        assertTrue(definition.contains("\"DeleteCognitoUser\":{\"Next\":\"SendConfirmationEmail\""));
+        assertTrue(definition.contains("\"SendConfirmationEmail\":{\"Next\":\"WriteErasureAudit\""));
+        assertTrue(definition.contains("\"WriteErasureAudit\":{\"Next\":\"ErasureCompleted\""));
+
+        assertTrue(definition.contains("\"operation\":\"MARK_PENDING\""));
+        assertTrue(definition.contains("\"operation\":\"DELETE_USER_ITEMS\""));
+        assertTrue(definition.contains("\"operation\":\"S3_SAFEGUARD\""));
+        assertTrue(definition.contains("\"operation\":\"DELETE_COGNITO_USER\""));
+        assertTrue(definition.contains("\"operation\":\"SEND_CONFIRMATION_EMAIL\""));
+        assertTrue(definition.contains("\"operation\":\"WRITE_ERASURE_AUDIT\""));
+    }
+
+    @Test
+    void everyErasureStateRetriesTwiceWithDoublingBackoff() {
+        String definition = erasureDefinitionString();
+        String retryFragment = "\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2";
+
+        int count = 0;
+        int from = 0;
+        while ((from = definition.indexOf(retryFragment, from)) != -1) {
+            count++;
+            from += retryFragment.length();
+        }
+        assertEquals(6, count, "expected all 6 Task states to carry the 2-attempt, 2x-backoff retry");
+    }
+
+    @Test
+    void sendConfirmationEmailFailureCatchesToEmailFailedThenWriteErasureAudit() {
+        String definition = erasureDefinitionString();
+
+        assertTrue(
+                definition.contains(
+                        "\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.errorInfo\",\"Next\":\"EmailFailed\"}]"),
+                "expected SendConfirmationEmail to catch all errors into EmailFailed without losing"
+                        + " subjectSub/callerSub/etc (ResultPath must not be $)");
+        assertTrue(
+                definition.contains(
+                        "\"EmailFailed\":{\"Type\":\"Pass\",\"Comment\":\"Confirmation email failed after retries;"
+                                + " erasure still completes\",\"Result\":false,\"ResultPath\":\"$.emailSent\",\"Next\":\"WriteErasureAudit\"}"),
+                "expected EmailFailed to record emailSent=false and proceed to WriteErasureAudit,"
+                        + " so a failed email never fails the erasure");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void dsrRoleHasStartExecutionScopedToTheErasureStateMachineOnly() {
+        var template = synth();
+        var statements = dsrLambdaRolePolicyStatements(template);
+
+        var startExecutionStatements = statements.stream()
+                .filter(s -> actionsOf(s).contains("states:StartExecution"))
+                .toList();
+        assertEquals(
+                1,
+                startExecutionStatements.size(),
+                "expected exactly one states:StartExecution statement on DsrLambdaRole");
+        assertEquals(
+                "arn:aws:states:ap-south-1:123456789012:stateMachine:financial-erasure-dev",
+                startExecutionStatements.get(0).get("Resource"),
+                "expected StartExecution scoped to a literal ARN naming only the erasure state"
+                        + " machine (not a wildcard, not the ingestion state machine) - a construct-ref"
+                        + " grant here would close a dependency cycle back through DsrFnAlias");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void dsrRoleHasSesSendEmailScopedToTheSenderIdentityNotAWildcard() {
+        var template = synth();
+        var statements = dsrLambdaRolePolicyStatements(template);
+
+        var sesStatements = statements.stream()
+                .filter(s -> actionsOf(s).contains("ses:SendEmail"))
+                .toList();
+        assertEquals(1, sesStatements.size(), "expected exactly one ses:SendEmail statement on DsrLambdaRole");
+        assertEquals(
+                List.of("ses:SendEmail"),
+                actionsOf(sesStatements.get(0)),
+                "expected only ses:SendEmail, not the broader ses:SendRawEmail EmailIdentity.grantSendEmail() adds");
+        Object resource = sesStatements.get(0).get("Resource");
+        assertFalse("*".equals(resource), "ses:SendEmail must be scoped to the sender identity, not '*'");
+        assertTrue(resource.toString().contains("identity/"), "expected an SES identity ARN resource: " + resource);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void accountDeleteRouteReturns202OnAcceptedAndKeeps400500ForErrors() {
+        var method = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> "DELETE".equals(p.get("HttpMethod")))
+                .filter(p -> requestTemplateBody(p).contains("\"operation\": \"ERASE\""))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("expected the DELETE /user/account method to synth"));
+
+        var integration = (Map<String, Object>) method.get("Integration");
+        var integrationStatusCodes = ((List<Map<String, Object>>) integration.get("IntegrationResponses"))
+                .stream().map(r -> r.get("StatusCode")).toList();
+        assertEquals(List.of("202", "400", "500"), integrationStatusCodes);
+
+        var methodStatusCodes = ((List<Map<String, Object>>) method.get("MethodResponses"))
+                .stream().map(r -> r.get("StatusCode")).toList();
+        assertEquals(List.of("202", "400", "500"), methodStatusCodes);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String erasureDefinitionString() {
+        var props = synth().findResources("AWS::StepFunctions::StateMachine").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> "financial-erasure-dev".equals(p.get("StateMachineName")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("expected the erasure state machine to synth"));
+        var definitionString = (Map<String, Object>) props.get("DefinitionString");
+        var joinParts = (List<Object>) definitionString.get("Fn::Join");
+        return ((List<Object>) joinParts.get(1))
+                .stream()
+                        .filter(String.class::isInstance)
+                        .map(String.class::cast)
+                        .collect(Collectors.joining());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> dsrLambdaRolePolicyStatements(Template template) {
+        var dsrRoleLogicalId = template.findResources("AWS::IAM::Role").entrySet().stream()
+                .filter(e -> {
+                    var props = (Map<String, Object>) e.getValue().get("Properties");
+                    return "financial-dsr-lambda-role-dev".equals(props.get("RoleName"));
+                })
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("expected a DsrLambdaRole to synth"));
+
+        return template.findResources("AWS::IAM::Policy").values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .filter(p -> {
+                    var roleRefs = (List<Map<String, Object>>) p.get("Roles");
+                    return roleRefs != null
+                            && roleRefs.stream().anyMatch(ref -> dsrRoleLogicalId.equals(ref.get("Ref")));
+                })
+                .flatMap(p -> ((List<Map<String, Object>>)
+                                ((Map<String, Object>) p.get("PolicyDocument")).get("Statement"))
+                        .stream())
+                .toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> actionsOf(Map<String, Object> statement) {
+        Object action = statement.get("Action");
+        if (action instanceof List<?> list) {
+            return (List<String>) list;
+        }
+        return action == null ? List.of() : List.of((String) action);
+    }
+
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> userScopedGetMethods() {
         return synth().findResources("AWS::ApiGateway::Method").values().stream()

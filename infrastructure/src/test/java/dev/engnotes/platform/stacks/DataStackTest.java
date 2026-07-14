@@ -54,4 +54,12 @@ class DataStackTest {
                                 "StreamSpecification",
                                 Map.of("StreamViewType", "NEW_IMAGE"))));
     }
+
+    // The erasure workflow's confirmation email (spec s11, Task 11) reuses this identity as its
+    // sender, so it must default to the same alertEmail address the SNS topics already use.
+    @Test
+    void hasSesSenderIdentityForTheDefaultAlertEmail() {
+        synth().hasResourceProperties(
+                        "AWS::SES::EmailIdentity", Match.objectLike(Map.of("EmailIdentity", "alerts@engnotes.dev")));
+    }
 }
