@@ -1,6 +1,7 @@
 package dev.engnotes.query.config;
 
 import java.net.URI;
+import java.time.Clock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -35,5 +36,10 @@ public class AwsClientConfig {
         return withEndpoint(DynamoDbClient.builder())
                 .httpClient(UrlConnectionHttpClient.create())
                 .build();
+    }
+
+    @Bean
+    public Clock clock() {
+        return Clock.systemUTC();
     }
 }

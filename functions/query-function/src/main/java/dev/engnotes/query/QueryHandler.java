@@ -7,10 +7,12 @@ import dev.engnotes.query.model.InsightFeedResponse;
 import dev.engnotes.query.model.MarketDataResponse;
 import dev.engnotes.query.model.QueryRequest;
 import dev.engnotes.query.model.QueryResponse;
+import dev.engnotes.query.model.StoryResponse;
 import dev.engnotes.query.service.DailyMarketDataQuery;
 import dev.engnotes.query.service.InsightFeedQuery;
 import dev.engnotes.query.service.InsightQuery;
 import dev.engnotes.query.service.MarketDataQuery;
+import dev.engnotes.query.service.StoryQuery;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -104,6 +106,28 @@ public class QueryHandler {
                     ticker,
                     response.found(),
                     response.days().size(),
+                    correlationId);
+
+            return response;
+        };
+    }
+
+    /** Returns the rule-based per-ticker narrative (spec sub-project C, Task 16). */
+    @Bean
+    public Function<QueryRequest, StoryResponse> serveStory(StoryQuery storyQuery) {
+        return request -> {
+            String ticker = request.ticker();
+            String correlationId = request.correlationId();
+
+            log.info("Serving story. ticker={} correlationId={}", ticker, correlationId);
+
+            StoryResponse response = storyQuery.story(ticker);
+
+            log.info(
+                    "Story query complete. ticker={} days={} insightCount={} correlationId={}",
+                    ticker,
+                    response.inputs().days(),
+                    response.inputs().insightCount(),
                     correlationId);
 
             return response;

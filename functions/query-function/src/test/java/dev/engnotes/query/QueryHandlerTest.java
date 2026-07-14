@@ -12,10 +12,13 @@ import dev.engnotes.query.model.MarketDataPoint;
 import dev.engnotes.query.model.MarketDataResponse;
 import dev.engnotes.query.model.QueryRequest;
 import dev.engnotes.query.model.QueryResponse;
+import dev.engnotes.query.model.StoryInputs;
+import dev.engnotes.query.model.StoryResponse;
 import dev.engnotes.query.service.DailyMarketDataQuery;
 import dev.engnotes.query.service.InsightFeedQuery;
 import dev.engnotes.query.service.InsightQuery;
 import dev.engnotes.query.service.MarketDataQuery;
+import dev.engnotes.query.service.StoryQuery;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +39,9 @@ class QueryHandlerTest {
 
     @Mock
     private DailyMarketDataQuery dailyMarketDataQuery;
+
+    @Mock
+    private StoryQuery storyQuery;
 
     @Test
     void serveInsightDelegatesToInsightQuery() {
@@ -84,6 +90,17 @@ class QueryHandlerTest {
         var actual = new QueryHandler()
                 .serveDailyMarketData(dailyMarketDataQuery)
                 .apply(new DailyMarketDataRequest("RELIANCE.NS", "30", "corr-4"));
+
+        assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveStoryDelegatesToStoryQuery() {
+        var expected = new StoryResponse(
+                "RELIANCE.NS", "a composed story", "2026-07-14T10:00:00Z", "RULE_BASED", new StoryInputs(7, 1));
+        when(storyQuery.story("RELIANCE.NS")).thenReturn(expected);
+
+        var actual = new QueryHandler().serveStory(storyQuery).apply(new QueryRequest("RELIANCE.NS", "corr-5"));
 
         assertThat(actual).isEqualTo(expected);
     }

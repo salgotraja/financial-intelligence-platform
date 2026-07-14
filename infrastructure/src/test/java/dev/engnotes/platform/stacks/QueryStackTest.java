@@ -108,8 +108,8 @@ class QueryStackTest {
     // it in $util.escapeJavaScript: a quote-breaking ticker in an unescaped template can inject a
     // duplicate JSON key after the legitimate one (e.g. flipping the watchlist "operation" from ADD
     // to REMOVE), since Jackson keeps the last duplicate. Pins the class for every current template
-    // (insight GET, market-data GET, market-data daily GET, watchlist POST/DELETE, ingest POST) and
-    // any future one.
+    // (insight GET, market-data GET, market-data daily GET, stories GET, watchlist POST/DELETE,
+    // ingest POST) and any future one.
     @Test
     @SuppressWarnings("unchecked")
     void everyTickerInterpolatingRequestTemplateEscapesTheTicker() {
@@ -119,10 +119,10 @@ class QueryStackTest {
                 .filter(body -> body.contains("$input.params('ticker')"))
                 .toList();
         assertEquals(
-                6,
+                7,
                 tickerTemplates.size(),
-                "expected 6 ticker-interpolating request templates (insight GET, market-data GET,"
-                        + " market-data daily GET, watchlist POST/DELETE, ingest POST)");
+                "expected 7 ticker-interpolating request templates (insight GET, market-data GET,"
+                        + " market-data daily GET, stories GET, watchlist POST/DELETE, ingest POST)");
         for (var body : tickerTemplates) {
             var unescapedRemainder = body.replace("$util.escapeJavaScript($input.params('ticker'))", "");
             assertFalse(
@@ -274,6 +274,31 @@ class QueryStackTest {
         assertTrue(pathParts.contains("market-data"), "expected a market-data API resource");
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void hasStoriesResourceUnderApiRoot() {
+        var pathParts = synth().findResources("AWS::ApiGateway::Resource").values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .map(p -> (String) p.get("PathPart"))
+                .toList();
+        assertTrue(pathParts.contains("stories"), "expected a stories API resource");
+    }
+
+    // Confirms GET /stories/{ticker} resolves to the dedicated StoriesFn Lambda via
+    // SPRING_CLOUD_FUNCTION_DEFINITION=serveStory (spec sub-project C, Task 16).
+    @Test
+    void hasStoriesLambdaServingServeStory() {
+        synth().hasResourceProperties(
+                        "AWS::Lambda::Function",
+                        Match.objectLike(Map.of(
+                                "FunctionName",
+                                "financial-stories-dev",
+                                "Environment",
+                                Match.objectLike(Map.of(
+                                        "Variables",
+                                        Match.objectLike(Map.of("SPRING_CLOUD_FUNCTION_DEFINITION", "serveStory")))))));
+    }
+
     // The OPTIONS preflight response carries Access-Control-Allow-Origin (CDK's
     // defaultCorsPreflightOptions handles that), but browsers also read the header off the actual
     // GET/POST/DELETE response. Non-proxy integrations never emit it unless every IntegrationResponse
@@ -393,7 +418,10 @@ class QueryStackTest {
                 .filter(p -> !requestTemplateBody(p).contains("\"operation\""))
                 .filter(p -> !requestTemplateBody(p).contains("\"days\""))
                 .toList();
-        assertEquals(2, methods.size(), "expected /insights/{ticker} and /market-data/{ticker} GET methods");
+        assertEquals(
+                3,
+                methods.size(),
+                "expected /insights/{ticker}, /market-data/{ticker}, and /stories/{ticker} GET methods");
         for (var props : methods) {
             var integration = (Map<String, Object>) props.get("Integration");
             var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");

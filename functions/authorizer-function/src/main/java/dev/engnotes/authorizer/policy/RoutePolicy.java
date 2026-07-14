@@ -24,6 +24,7 @@ public final class RoutePolicy {
             new Rule("GET", "insights", Set.of("readers", "premium", "admins")),
             new Rule("GET", "insights/*", Set.of("readers", "premium", "admins")),
             new Rule("GET", "market-data/*", Set.of("readers", "premium", "admins")),
+            new Rule("GET", "stories/*", Set.of("readers", "premium", "admins")),
             new Rule("GET", "watchlist", Set.of("premium", "admins")),
             new Rule("POST", "watchlist/*", Set.of("premium", "admins")),
             new Rule("DELETE", "watchlist/*", Set.of("premium", "admins")),

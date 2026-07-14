@@ -87,6 +87,28 @@ public class InsightFeedQuery {
         return new InsightFeedResponse(combined, !combined.isEmpty());
     }
 
+    /**
+     * Latest insight for a single ticker outside a watchlist context, group-aware: the newer of the
+     * ticker's own per-ticker insight and any group insight covering it (spec sub-project C, Task
+     * 16 - StoryQuery's third assembled input). Reuses the same GSI1-plus-per-ticker read {@link
+     * #feed} performs per watched ticker. Delegates to {@link InsightQuery} first, which both
+     * validates the ticker (throwing before the GSI1 query below would otherwise run) and returns
+     * the canonical decoded ticker on {@link QueryResponse#ticker()} - reused for the GSI1 query so
+     * a percent-encoded index symbol (e.g. {@code %5ENSEI}) resolves group insights under the same
+     * decoded key ingestion wrote them under, matching every sibling query class's convention of
+     * building DynamoDB key expressions only from an already-validated ticker.
+     */
+    public Optional<FeedInsight> latestForTicker(String ticker) {
+        QueryResponse perTickerResponse = insightQuery.findLatestInsight(ticker);
+        String canonicalTicker = perTickerResponse.ticker();
+        List<FeedInsight> groupInsights = dedupeByGroupId(queryGroupInsights(canonicalTicker));
+        Optional<FeedInsight> perTicker = perTickerResponse.found()
+                ? fromPerTickerResponse(perTickerResponse).filter(insight -> !supersededByGroup(insight, groupInsights))
+                : Optional.empty();
+        return Stream.concat(groupInsights.stream(), perTicker.stream())
+                .max(Comparator.comparing(insight -> Instant.parse(insight.generatedAt())));
+    }
+
     private List<String> watchlistTickers(String ownerSub) {
         QueryRequest request = QueryRequest.builder()
                 .tableName(platformTable)

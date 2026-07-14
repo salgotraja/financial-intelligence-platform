@@ -29,6 +29,7 @@ import software.constructs.Construct;
  *   GET /insights/{ticker} - latest insight for a ticker
  *   GET /insights - watchlist-scoped insight feed (group insights + ungrouped tickers' latest)
  *   GET /market-data/{ticker} - recent market-data points for a ticker
+ *   GET /stories/{ticker} - rule-based per-ticker narrative
  *   GET /health - health check
  * <p>
  * Production decisions:
@@ -171,6 +172,42 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "DailyMarketDataFnLogs")
                 .logGroupName("/aws/lambda/" + dailyMarketDataFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // Story Lambda: rule-based per-ticker narrative (spec sub-project C, Task 16), a fourth
+        // function from the same query-function asset alongside queryFn/marketDataFn/
+        // dailyMarketDataFn. Shares the read-only queryRole: StoryQuery only reads the platform
+        // table (DAY# rollups, INSIGHT# items, GSI1 group mirrors, TS# points), never writes and
+        // never calls Bedrock.
+        var storiesFn = Function.Builder.create(this, "StoriesFn")
+                .functionName("financial-stories-" + env)
+                .description("Serves the rule-based per-ticker story")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
+                .role(queryRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
+                        "ENVIRONMENT",
+                        env,
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "serveStory",
+                        "MAIN_CLASS",
+                        "dev.engnotes.query.QueryHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "StoriesFnLogs")
+                .logGroupName("/aws/lambda/" + storiesFn.getFunctionName())
                 .retention(RetentionDays.ONE_MONTH)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
@@ -454,6 +491,11 @@ public class QueryStack extends Stack {
         var insightsFeedFnAlias = Alias.Builder.create(this, "InsightsFeedFnAlias")
                 .aliasName("live")
                 .version(insightsFeedFn.getCurrentVersion())
+                .build();
+
+        var storiesFnAlias = Alias.Builder.create(this, "StoriesFnAlias")
+                .aliasName("live")
+                .version(storiesFn.getCurrentVersion())
                 .build();
 
         // == Erasure Step Functions workflow (spec s11, Task 11) ==
@@ -900,6 +942,32 @@ public class QueryStack extends Stack {
                                 .methodResponses(standardMethodResponses())
                                 .build());
 
+        // /stories/{ticker} - protected (readers+), rule-based per-ticker narrative (spec
+        // sub-project C, Task 16). Ticker-only cache key, same as /insights/{ticker} and
+        // /market-data/{ticker}: the response is identical for every caller.
+        var storiesIntegration = LambdaIntegration.Builder.create(storiesFnAlias)
+                .proxy(false)
+                .requestTemplates(Map.of(
+                        "application/json",
+                        "{ \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\", "
+                                + "  \"correlationId\": \"$context.requestId\" }"))
+                .cacheKeyParameters(List.of("method.request.path.ticker"))
+                .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                .build();
+
+        api.getRoot()
+                .addResource("stories")
+                .addResource("{ticker}")
+                .addMethod(
+                        "GET",
+                        storiesIntegration,
+                        MethodOptions.builder()
+                                .authorizer(apiAuthorizer)
+                                .authorizationType(AuthorizationType.CUSTOM)
+                                .requestParameters(Map.of("method.request.path.ticker", true))
+                                .methodResponses(standardMethodResponses())
+                                .build());
+
         // /health - Lambda-free health check (mock integration, public) for smoke tests and uptime monitors
         api.getRoot()
                 .addResource("health")
@@ -1226,6 +1294,7 @@ public class QueryStack extends Stack {
                 "marketdata", marketDataFn,
                 "marketdatadaily", dailyMarketDataFn,
                 "insightsfeed", insightsFeedFn,
+                "stories", storiesFn,
                 "watchlist", watchlistFn,
                 "consent", consentFn,
                 "dsr", dsrFn,

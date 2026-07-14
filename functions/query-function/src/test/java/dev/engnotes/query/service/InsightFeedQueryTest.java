@@ -3,6 +3,7 @@ package dev.engnotes.query.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -13,6 +14,7 @@ import dev.engnotes.query.model.QueryResponse;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,7 +43,10 @@ class InsightFeedQueryTest {
     @BeforeEach
     void setUp() {
         feedQuery = new InsightFeedQuery(dynamoDb, TABLE, insightQuery);
-        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+        // lenient: the latestForTicker(String) tests never page the watchlist, so this stub goes
+        // unused for them; the feed(String) tests below all rely on it.
+        lenient()
+                .when(dynamoDb.queryPaginator(any(QueryRequest.class)))
                 .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
     }
 
@@ -317,6 +322,57 @@ class InsightFeedQueryTest {
         verify(dynamoDb).queryPaginator(captor.capture());
         assertThat(captor.getValue().expressionAttributeValues().get(":pk").s()).isEqualTo("USER#" + OWNER);
         assertThat(captor.getValue().expressionAttributeValues().get(":sk").s()).isEqualTo("WATCH#");
+    }
+
+    @Test
+    void latestForTickerPrefersThePerTickerInsightWhenNewerThanAnyGroupInsight() {
+        groupInsightsFor("A", groupItem("G1", "2026-07-14T08:00:00Z", "A"));
+        when(insightQuery.findLatestInsight("A"))
+                .thenReturn(new QueryResponse(
+                        "A", "2026-07-14T10:00:00Z", "BULLISH", 0.7, "r", List.of(), "RULE_BASED", "r", "m", true));
+
+        Optional<FeedInsight> latest = feedQuery.latestForTicker("A");
+
+        assertThat(latest).isPresent();
+        assertThat(latest.get().groupId()).isNull();
+        assertThat(latest.get().generatedAt()).isEqualTo("2026-07-14T10:00:00Z");
+    }
+
+    @Test
+    void latestForTickerPrefersTheGroupInsightWhenNewerAndReturnsItsTickers() {
+        groupInsightsFor("A", groupItem("G1", "2026-07-14T11:00:00Z", "A", "B"));
+        when(insightQuery.findLatestInsight("A"))
+                .thenReturn(new QueryResponse(
+                        "A", "2026-07-14T10:00:00Z", "BULLISH", 0.7, "r", List.of(), "RULE_BASED", "r", "m", true));
+
+        Optional<FeedInsight> latest = feedQuery.latestForTicker("A");
+
+        assertThat(latest).isPresent();
+        assertThat(latest.get().groupId()).isEqualTo("G1");
+        assertThat(latest.get().tickers()).containsExactly("A", "B");
+    }
+
+    @Test
+    void latestForTickerUsesTheCanonicalDecodedTickerFromInsightQueryForTheGsi1Lookup() {
+        // A percent-encoded index symbol (e.g. %5ENSEI) must resolve group insights under the
+        // decoded key ingestion wrote them under (^NSEI), not the raw undecoded path value.
+        groupInsightsFor("^NSEI", groupItem("G1", "2026-07-14T11:00:00Z", "^NSEI"));
+        when(insightQuery.findLatestInsight("%5ENSEI")).thenReturn(QueryResponse.notFound("^NSEI"));
+
+        Optional<FeedInsight> latest = feedQuery.latestForTicker("%5ENSEI");
+
+        assertThat(latest).isPresent();
+        assertThat(latest.get().groupId()).isEqualTo("G1");
+    }
+
+    @Test
+    void latestForTickerIsEmptyWhenNeitherAPerTickerNorAGroupInsightExists() {
+        groupInsightsFor("Z");
+        when(insightQuery.findLatestInsight("Z")).thenReturn(QueryResponse.notFound("Z"));
+
+        Optional<FeedInsight> latest = feedQuery.latestForTicker("Z");
+
+        assertThat(latest).isEmpty();
     }
 
     private static Map<String, AttributeValue> groupItem(String groupId, String generatedAt, String... tickers) {
