@@ -108,7 +108,8 @@ class QueryStackTest {
     // it in $util.escapeJavaScript: a quote-breaking ticker in an unescaped template can inject a
     // duplicate JSON key after the legitimate one (e.g. flipping the watchlist "operation" from ADD
     // to REMOVE), since Jackson keeps the last duplicate. Pins the class for every current template
-    // (insight GET, market-data GET, watchlist POST/DELETE, ingest POST) and any future one.
+    // (insight GET, market-data GET, market-data daily GET, watchlist POST/DELETE, ingest POST) and
+    // any future one.
     @Test
     @SuppressWarnings("unchecked")
     void everyTickerInterpolatingRequestTemplateEscapesTheTicker() {
@@ -118,10 +119,10 @@ class QueryStackTest {
                 .filter(body -> body.contains("$input.params('ticker')"))
                 .toList();
         assertEquals(
-                5,
+                6,
                 tickerTemplates.size(),
-                "expected 5 ticker-interpolating request templates (insight GET, market-data GET,"
-                        + " watchlist POST/DELETE, ingest POST)");
+                "expected 6 ticker-interpolating request templates (insight GET, market-data GET,"
+                        + " market-data daily GET, watchlist POST/DELETE, ingest POST)");
         for (var body : tickerTemplates) {
             var unescapedRemainder = body.replace("$util.escapeJavaScript($input.params('ticker'))", "");
             assertFalse(
@@ -379,7 +380,9 @@ class QueryStackTest {
     }
 
     // Ticker-scoped routes serve the same data to every caller, so their existing {ticker}-only
-    // cache key must not change.
+    // cache key must not change. /market-data/{ticker}/daily is excluded by the "days" filter: it is
+    // also ticker-scoped and serves identical data to every caller, but its cache key additionally
+    // varies by "days" (asserted separately by dailyMarketDataCacheKeyIncludesTickerAndDays).
     @Test
     @SuppressWarnings("unchecked")
     void tickerScopedGetMethodsKeepTickerOnlyCacheKey() {
@@ -388,6 +391,7 @@ class QueryStackTest {
                 .filter(p -> "GET".equals(p.get("HttpMethod")))
                 .filter(p -> requestTemplateBody(p).contains("$input.params('ticker')"))
                 .filter(p -> !requestTemplateBody(p).contains("\"operation\""))
+                .filter(p -> !requestTemplateBody(p).contains("\"days\""))
                 .toList();
         assertEquals(2, methods.size(), "expected /insights/{ticker} and /market-data/{ticker} GET methods");
         for (var props : methods) {
@@ -395,6 +399,51 @@ class QueryStackTest {
             var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");
             assertEquals(List.of("method.request.path.ticker"), cacheKeyParameters);
         }
+    }
+
+    // /market-data/{ticker}/daily varies by both the ticker AND the days window: without "days" in
+    // the cache key, the 60s stage cache would serve one days-window's response (e.g. 30) for every
+    // other days-window (e.g. 90) requested on the same ticker within the TTL.
+    @Test
+    @SuppressWarnings("unchecked")
+    void dailyMarketDataCacheKeyIncludesTickerAndDays() {
+        var methods = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> "GET".equals(p.get("HttpMethod")))
+                .filter(p -> requestTemplateBody(p).contains("$input.params('ticker')"))
+                .filter(p -> requestTemplateBody(p).contains("\"days\""))
+                .toList();
+        assertEquals(1, methods.size(), "expected exactly one GET /market-data/{ticker}/daily method");
+        var integration = (Map<String, Object>) methods.get(0).get("Integration");
+        var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");
+        assertTrue(
+                cacheKeyParameters != null
+                        && cacheKeyParameters.contains("method.request.path.ticker")
+                        && cacheKeyParameters.contains("method.request.querystring.days"),
+                "expected ticker + days cache keys on /market-data/{ticker}/daily: " + cacheKeyParameters);
+
+        var requestParameters = (Map<String, Object>) methods.get(0).get("RequestParameters");
+        assertEquals(
+                Boolean.FALSE,
+                requestParameters.get("method.request.querystring.days"),
+                "days must stay optional (absent defaults to 30)");
+    }
+
+    // Confirms the new /market-data/{ticker}/daily resource is nested under {ticker}, not a sibling
+    // top-level resource, and that GET /market-data/{ticker}/daily resolves to the dedicated
+    // DailyMarketDataFn Lambda via SPRING_CLOUD_FUNCTION_DEFINITION=serveDailyMarketData.
+    @Test
+    void hasDailyMarketDataLambdaServingServeDailyMarketData() {
+        synth().hasResourceProperties(
+                        "AWS::Lambda::Function",
+                        Match.objectLike(Map.of(
+                                "FunctionName",
+                                "financial-market-data-daily-dev",
+                                "Environment",
+                                Match.objectLike(Map.of(
+                                        "Variables",
+                                        Match.objectLike(Map.of(
+                                                "SPRING_CLOUD_FUNCTION_DEFINITION", "serveDailyMarketData")))))));
     }
 
     // API Gateway only activates caching for GET methods by default even when the stage-level

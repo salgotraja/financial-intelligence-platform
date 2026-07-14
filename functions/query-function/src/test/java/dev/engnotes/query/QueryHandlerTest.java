@@ -3,12 +3,16 @@ package dev.engnotes.query;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import dev.engnotes.query.model.DailyMarketDataRequest;
+import dev.engnotes.query.model.DailyMarketDataResponse;
+import dev.engnotes.query.model.DailyPoint;
 import dev.engnotes.query.model.InsightFeedRequest;
 import dev.engnotes.query.model.InsightFeedResponse;
 import dev.engnotes.query.model.MarketDataPoint;
 import dev.engnotes.query.model.MarketDataResponse;
 import dev.engnotes.query.model.QueryRequest;
 import dev.engnotes.query.model.QueryResponse;
+import dev.engnotes.query.service.DailyMarketDataQuery;
 import dev.engnotes.query.service.InsightFeedQuery;
 import dev.engnotes.query.service.InsightQuery;
 import dev.engnotes.query.service.MarketDataQuery;
@@ -29,6 +33,9 @@ class QueryHandlerTest {
 
     @Mock
     private InsightFeedQuery insightFeedQuery;
+
+    @Mock
+    private DailyMarketDataQuery dailyMarketDataQuery;
 
     @Test
     void serveInsightDelegatesToInsightQuery() {
@@ -64,6 +71,19 @@ class QueryHandlerTest {
 
         var actual =
                 new QueryHandler().serveMarketData(marketDataQuery).apply(new QueryRequest("RELIANCE.NS", "corr-2"));
+
+        assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveDailyMarketDataDelegatesToDailyMarketDataQuery() {
+        var expected = new DailyMarketDataResponse(
+                "RELIANCE.NS", List.of(new DailyPoint("2026-07-14", null, null, null, null, null, null)), true);
+        when(dailyMarketDataQuery.findDailyPoints("RELIANCE.NS", "30")).thenReturn(expected);
+
+        var actual = new QueryHandler()
+                .serveDailyMarketData(dailyMarketDataQuery)
+                .apply(new DailyMarketDataRequest("RELIANCE.NS", "30", "corr-4"));
 
         assertThat(actual).isEqualTo(expected);
     }

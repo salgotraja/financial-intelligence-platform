@@ -138,6 +138,43 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        // Daily market-data Lambda: serves GET /market-data/{ticker}/daily (spec sub-project B, Task
+        // 14), a third function from the same query-function asset. A separate Lambda rather than a
+        // branch inside serveMarketData: it returns a distinct response shape (DailyMarketDataResponse,
+        // one row per trading day, no intraday series blob), mirroring how insightsFeedFn already gets
+        // its own Lambda alongside queryFn/marketDataFn for a related-but-differently-shaped route
+        // nested under the same resource tree. Shares the read-only queryRole.
+        var dailyMarketDataFn = Function.Builder.create(this, "DailyMarketDataFn")
+                .functionName("financial-market-data-daily-" + env)
+                .description("Serves daily OHLCV rollups for weekly/period charting")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
+                .role(queryRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
+                        "ENVIRONMENT",
+                        env,
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "serveDailyMarketData",
+                        "MAIN_CLASS",
+                        "dev.engnotes.query.QueryHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "DailyMarketDataFnLogs")
+                .logGroupName("/aws/lambda/" + dailyMarketDataFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
         // Insight-feed Lambda: watchlist-scoped insight feed (GET /insights, no ticker). Third
         // function from the same query-function asset, sharing the read-only queryRole: it reads the
         // caller's watchlist plus GSI1 (group-insight mirror items written by insight-function on
@@ -407,6 +444,11 @@ public class QueryStack extends Stack {
         var marketDataFnAlias = Alias.Builder.create(this, "MarketDataFnAlias")
                 .aliasName("live")
                 .version(marketDataFn.getCurrentVersion())
+                .build();
+
+        var dailyMarketDataFnAlias = Alias.Builder.create(this, "DailyMarketDataFnAlias")
+                .aliasName("live")
+                .version(dailyMarketDataFn.getCurrentVersion())
                 .build();
 
         var insightsFeedFnAlias = Alias.Builder.create(this, "InsightsFeedFnAlias")
@@ -817,16 +859,44 @@ public class QueryStack extends Stack {
                 .build();
 
         // /market-data/{ticker} - protected (readers+), chart data for the frontend
-        api.getRoot()
-                .addResource("market-data")
-                .addResource("{ticker}")
+        var marketDataTickerResource = api.getRoot().addResource("market-data").addResource("{ticker}");
+        marketDataTickerResource.addMethod(
+                "GET",
+                marketDataIntegration,
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.path.ticker", true))
+                        .methodResponses(standardMethodResponses())
+                        .build());
+
+        // /market-data/{ticker}/daily - protected (readers+), daily OHLCV rollups for weekly/period
+        // charts (spec sub-project B, Task 14). `days` (default 30, capped 90) is validated and
+        // clamped in DailyMarketDataQuery, never in VTL, so it stays optional here; both caller-
+        // supplied params are escaped to guard the non-proxy request template against JSON injection.
+        var dailyMarketDataIntegration = LambdaIntegration.Builder.create(dailyMarketDataFnAlias)
+                .proxy(false)
+                .requestTemplates(Map.of(
+                        "application/json",
+                        "{ \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\", "
+                                + "  \"days\": \"$util.escapeJavaScript($input.params('days'))\", "
+                                + "  \"correlationId\": \"$context.requestId\" }"))
+                // ticker AND days must both be cache keys, else the 60s stage cache would serve one
+                // days-window's response for every other days-window on the same ticker.
+                .cacheKeyParameters(List.of("method.request.path.ticker", "method.request.querystring.days"))
+                .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                .build();
+
+        marketDataTickerResource
+                .addResource("daily")
                 .addMethod(
                         "GET",
-                        marketDataIntegration,
+                        dailyMarketDataIntegration,
                         MethodOptions.builder()
                                 .authorizer(apiAuthorizer)
                                 .authorizationType(AuthorizationType.CUSTOM)
-                                .requestParameters(Map.of("method.request.path.ticker", true))
+                                .requestParameters(Map.of(
+                                        "method.request.path.ticker", true, "method.request.querystring.days", false))
                                 .methodResponses(standardMethodResponses())
                                 .build());
 
@@ -1154,6 +1224,7 @@ public class QueryStack extends Stack {
         var fns = Map.of(
                 "query", queryFn,
                 "marketdata", marketDataFn,
+                "marketdatadaily", dailyMarketDataFn,
                 "insightsfeed", insightsFeedFn,
                 "watchlist", watchlistFn,
                 "consent", consentFn,
