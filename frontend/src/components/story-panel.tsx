@@ -1,19 +1,20 @@
 'use client'
 
 import { ReactNode, useMemo } from 'react'
-import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getStory } from '@/lib/api'
 import { formatTimestamp } from '@/lib/format'
+import { SourceBadge } from '@/components/source-badge'
 import { useAsyncData } from '@/hooks/use-async-data'
 
-const StoryCard = ({ children }: { children: ReactNode }) => (
+const StoryCard = ({ children, badge }: { children: ReactNode; badge?: ReactNode }) => (
   <Card className="border-border bg-card">
-    <CardHeader>
+    <CardHeader className="flex flex-row items-center gap-2">
       <CardTitle className="text-sm font-medium">Story</CardTitle>
+      {badge}
     </CardHeader>
-    <CardContent>{children}</CardContent>
+    <CardContent className="space-y-2">{children}</CardContent>
   </Card>
 )
 
@@ -59,21 +60,9 @@ export const StoryPanel = ({
   }
 
   return (
-    <Card className="border-border bg-card">
-      <CardHeader className="flex flex-row items-center gap-2">
-        <CardTitle className="text-sm font-medium">Story</CardTitle>
-        {data.source && (
-          <Badge variant="outline" className="border-border text-[10px] text-muted-foreground">
-            {data.source}
-          </Badge>
-        )}
-      </CardHeader>
-      <CardContent className="space-y-2">
-        <p className="text-sm leading-relaxed">{data.story}</p>
-        <p className="font-mono text-xs text-muted-foreground">
-          {formatTimestamp(data.generatedAt)}
-        </p>
-      </CardContent>
-    </Card>
+    <StoryCard badge={data.source && <SourceBadge>{data.source}</SourceBadge>}>
+      <p className="text-sm leading-relaxed">{data.story}</p>
+      <p className="font-mono text-xs text-muted-foreground">{formatTimestamp(data.generatedAt)}</p>
+    </StoryCard>
   )
 }

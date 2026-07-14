@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge'
+import { SourceBadge } from '@/components/source-badge'
 
 const SIGNAL_CLASSES: Record<string, string> = {
   BULLISH: 'border-up/40 bg-up/10 text-up',
@@ -22,11 +23,7 @@ export const SignalBadge = ({
       <Badge variant="outline" className={`font-mono text-[11px] tabular-nums ${classes}`}>
         {signal} · {(confidence * 100).toFixed(0)}%
       </Badge>
-      {source && (
-        <Badge variant="outline" className="border-border text-[10px] text-muted-foreground">
-          {source}
-        </Badge>
-      )}
+      {source && <SourceBadge>{source}</SourceBadge>}
     </span>
   )
 }
