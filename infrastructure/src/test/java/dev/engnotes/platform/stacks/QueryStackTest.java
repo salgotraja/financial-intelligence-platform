@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import software.amazon.awscdk.App;
 import software.amazon.awscdk.Environment;
@@ -31,6 +32,61 @@ class QueryStackTest {
         var ingestion = new IngestionStack(app, "Ingestion", props, "dev", network, data);
         var query = new QueryStack(app, "Query", props, "dev", network, data, ingestion, security);
         return Template.fromStack(query);
+    }
+
+    static Template synthProd() {
+        var app = new App();
+        var props = StackProps.builder()
+                .env(Environment.builder()
+                        .account("123456789012")
+                        .region("ap-south-1")
+                        .build())
+                .build();
+        var data = new DataStack(app, "Data", props, "prod");
+        var security = new SecurityStack(app, "Security", props, "prod", data);
+        var network = new NetworkStack(app, "Network", props, "prod");
+        var ingestion = new IngestionStack(app, "Ingestion", props, "prod", network, data);
+        var query = new QueryStack(app, "Query", props, "prod", network, data, ingestion, security);
+        return Template.fromStack(query);
+    }
+
+    // AWS rejects provisioned concurrency on a SnapStart-enabled function version/alias (a version
+    // published while SnapStart is ON_PUBLISHED_VERSIONS). QueryFnAlias used to set
+    // provisionedConcurrentExecutions(2) prod-only on the same alias SnapStart requires, which would
+    // fail the first prod deploy (found 2026-07-12, STATUS.md "Known gaps"). Assert the combination
+    // never recurs, on any Lambda in this stack, under prod context.
+    @Test
+    @SuppressWarnings("unchecked")
+    void noSnapStartFunctionCombinesWithProvisionedConcurrency() {
+        var template = synthProd();
+
+        var functions = template.findResources("AWS::Lambda::Function");
+        var snapStartFunctionLogicalIds = functions.entrySet().stream()
+                .filter(e -> {
+                    var props = (Map<String, Object>) e.getValue().get("Properties");
+                    return props.get("SnapStart") != null;
+                })
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toUnmodifiableSet());
+        assertFalse(snapStartFunctionLogicalIds.isEmpty(), "expected at least one SnapStart-enabled function");
+
+        var aliases = template.findResources("AWS::Lambda::Alias");
+        var provisionedAliases = aliases.entrySet().stream()
+                .filter(e -> {
+                    var props = (Map<String, Object>) e.getValue().get("Properties");
+                    return props.get("ProvisionedConcurrencyConfig") != null;
+                })
+                .toList();
+
+        for (var entry : provisionedAliases) {
+            var props = (Map<String, Object>) entry.getValue().get("Properties");
+            var functionRef = (Map<String, Object>) props.get("FunctionName");
+            var functionLogicalId = (String) functionRef.get("Ref");
+            assertFalse(
+                    snapStartFunctionLogicalIds.contains(functionLogicalId),
+                    "alias " + entry.getKey() + " combines provisioned concurrency with SnapStart function "
+                            + functionLogicalId);
+        }
     }
 
     @Test

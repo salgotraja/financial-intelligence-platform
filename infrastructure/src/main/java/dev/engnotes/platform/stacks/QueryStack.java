@@ -24,10 +24,14 @@ import software.constructs.Construct;
  *   GET /health - health check
  * <p>
  * Production decisions:
- *   - Provisioned concurrency: eliminates cold starts on the user-facing path
+ *   - SnapStart: eliminates Spring Boot cold starts on the user-facing path
  *   - API Gateway caching: 60s TTL reduces DynamoDB reads for popular tickers
  *   - WAF: rate limiting and known bad input patterns
  *   - CloudWatch alarms: p99 > 500ms pages on-call via SNS
+ * <p>
+ * Provisioned concurrency is not configured on any alias here: AWS rejects it on the same
+ * version/alias as SnapStart, and every Lambda in this stack is SnapStart-enabled. It could be
+ * reintroduced on a future Lambda that opts out of SnapStart.
  */
 public class QueryStack extends Stack {
     public QueryStack(
@@ -332,14 +336,12 @@ public class QueryStack extends Stack {
                 .build();
 
         // Invoke the query Lambda via a published-version alias so SnapStart engages; invoking
-        // $LATEST would run the full Spring Boot init (~5-10s) on every cold start. Provisioned
-        // concurrency (paid even when idle) stays prod-only.
-        var queryAliasBuilder =
-                Alias.Builder.create(this, "QueryFnAlias").aliasName("live").version(queryFn.getCurrentVersion());
-        if (env.equals("prod")) {
-            queryAliasBuilder.provisionedConcurrentExecutions(2); // adjust based on load test
-        }
-        var queryFnAlias = queryAliasBuilder.build();
+        // $LATEST would run the full Spring Boot init (~5-10s) on every cold start. No provisioned
+        // concurrency: AWS rejects it on a SnapStart-enabled version/alias.
+        var queryFnAlias = Alias.Builder.create(this, "QueryFnAlias")
+                .aliasName("live")
+                .version(queryFn.getCurrentVersion())
+                .build();
 
         // Same SnapStart rule for the remaining API Lambdas: only a published version restores from
         // the snapshot, so every integration below targets a live alias, never $LATEST.
