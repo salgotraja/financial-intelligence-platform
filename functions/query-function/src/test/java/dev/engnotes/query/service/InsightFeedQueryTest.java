@@ -149,6 +149,28 @@ class InsightFeedQueryTest {
     }
 
     @Test
+    void nullFiltersDriversInAPerTickerInsightInsteadOfThrowing() {
+        groupInsightsFor("A");
+        when(insightQuery.findLatestInsight("A"))
+                .thenReturn(new QueryResponse(
+                        "A",
+                        "2026-07-14T08:00:00Z",
+                        "BULLISH",
+                        0.7,
+                        "r",
+                        java.util.Arrays.asList("volume-spike", null),
+                        "RULE_BASED",
+                        "r",
+                        "m",
+                        true));
+
+        InsightFeedResponse response = feedQuery.feed(OWNER);
+
+        assertThat(response.insights()).hasSize(1);
+        assertThat(response.insights().getFirst().drivers()).containsExactly("volume-spike");
+    }
+
+    @Test
     void notFoundPerTickerInsightIsOmittedFromTheFeed() {
         groupInsightsFor("D");
         when(insightQuery.findLatestInsight("D")).thenReturn(QueryResponse.notFound("D"));

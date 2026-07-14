@@ -183,6 +183,9 @@ public class InsightFeedQuery {
                     response.generatedAt());
             return Optional.empty();
         }
+        List<String> drivers = response.drivers() == null
+                ? List.of()
+                : response.drivers().stream().filter(Objects::nonNull).toList();
         return Optional.of(new FeedInsight(
                 null,
                 List.of(response.ticker()),
@@ -190,7 +193,7 @@ public class InsightFeedQuery {
                 response.signal(),
                 response.confidence(),
                 response.rationale(),
-                response.drivers(),
+                drivers,
                 response.source()));
     }
 
@@ -205,7 +208,14 @@ public class InsightFeedQuery {
         Optional<List<String>> tickers = stringList(item, "tickers");
         Optional<List<String>> drivers = stringList(item, "drivers");
         if (groupId == null || parseInstant(generatedAt).isEmpty() || tickers.isEmpty() || drivers.isEmpty()) {
-            log.warn("Skipping malformed group insight item. groupId={} generatedAt={}", groupId, generatedAt);
+            String failingField = groupId == null
+                    ? "groupId"
+                    : parseInstant(generatedAt).isEmpty() ? "generatedAt" : tickers.isEmpty() ? "tickers" : "drivers";
+            log.warn(
+                    "Skipping malformed group insight item, invalid field={}. groupId={} generatedAt={}",
+                    failingField,
+                    groupId,
+                    generatedAt);
             return Optional.empty();
         }
         return Optional.of(new FeedInsight(
