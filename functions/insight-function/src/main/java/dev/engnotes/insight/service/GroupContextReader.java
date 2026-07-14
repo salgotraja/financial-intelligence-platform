@@ -50,8 +50,7 @@ public class GroupContextReader {
                 trigger.getAnomalyReason(),
                 members,
                 group.pairwiseRhos(),
-                group.window(),
-                group.computedAt());
+                group.window());
     }
 
     private MemberSnapshot readSnapshot(String ticker) {
@@ -63,11 +62,10 @@ public class GroupContextReader {
                     decimal(latest, "price"),
                     decimal(latest, "changePercent"),
                     longValue(latest, "volume"),
-                    number(baseline, "volumeMean"),
-                    volumeStdDev(baseline));
+                    number(baseline, "volumeMean"));
         } catch (Exception e) {
             log.warn("Failed to read group member snapshot, using nulls. ticker={} error={}", ticker, e.toString());
-            return new MemberSnapshot(ticker, null, null, null, null, null);
+            return new MemberSnapshot(ticker, null, null, null, null);
         }
     }
 
@@ -89,16 +87,6 @@ public class GroupContextReader {
                 .key(Map.of("PK", s(TICKER_PREFIX + ticker), "SK", s(BASELINE_SK)))
                 .build());
         return response.hasItem() ? response.item() : Map.of();
-    }
-
-    /** Sample standard deviation from the Welford volumeM2/volumeCount pair; null before warmup. */
-    private Double volumeStdDev(Map<String, AttributeValue> baseline) {
-        Double count = number(baseline, "volumeCount");
-        Double m2 = number(baseline, "volumeM2");
-        if (count == null || m2 == null || count <= 1) {
-            return null;
-        }
-        return Math.sqrt(m2 / (count - 1));
     }
 
     private static BigDecimal decimal(Map<String, AttributeValue> item, String key) {

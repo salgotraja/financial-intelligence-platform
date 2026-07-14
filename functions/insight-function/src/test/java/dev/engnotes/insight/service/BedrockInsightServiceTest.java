@@ -199,12 +199,10 @@ class BedrockInsightServiceTest {
                 "RELIANCE.NS",
                 "return z=5.20",
                 List.of(
-                        new MemberSnapshot(
-                                "RELIANCE.NS", new BigDecimal("2900"), new BigDecimal("3.2"), 1000L, 800.0, 50.0),
-                        new MemberSnapshot("TCS.NS", new BigDecimal("3900"), new BigDecimal("2.8"), 900L, 700.0, 40.0)),
+                        new MemberSnapshot("RELIANCE.NS", new BigDecimal("2900"), new BigDecimal("3.2"), 1000L, 800.0),
+                        new MemberSnapshot("TCS.NS", new BigDecimal("3900"), new BigDecimal("2.8"), 900L, 700.0)),
                 List.of(new CorrelationEdge("RELIANCE.NS", "TCS.NS", 0.82)),
-                "30-point window",
-                "2026-07-14T10:15:00Z");
+                "30-point window");
     }
 
     private static InvokeModelResponse modelResponse(String json) {

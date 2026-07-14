@@ -16,5 +16,4 @@ public record GroupInsightContext(
         String anomalyReason,
         List<MemberSnapshot> members,
         List<CorrelationEdge> pairwiseRhos,
-        String window,
-        String computedAt) {}
+        String window) {}

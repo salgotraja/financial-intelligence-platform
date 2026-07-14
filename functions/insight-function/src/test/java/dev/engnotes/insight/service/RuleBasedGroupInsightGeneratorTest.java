@@ -72,10 +72,9 @@ class RuleBasedGroupInsightGeneratorTest {
                 List.of("RELIANCE.NS"),
                 "RELIANCE.NS",
                 null,
-                List.of(new MemberSnapshot("RELIANCE.NS", null, null, null, null, null)),
+                List.of(new MemberSnapshot("RELIANCE.NS", null, null, null, null)),
                 List.of(),
-                "window",
-                "2026-07-14T10:15:00Z");
+                "window");
 
         StructuredInsight insight = generator.generate(context);
 
@@ -92,8 +91,7 @@ class RuleBasedGroupInsightGeneratorTest {
     }
 
     private static MemberSnapshot member(String ticker, String changePercent, Long volume, Double baselineMean) {
-        return new MemberSnapshot(
-                ticker, new BigDecimal("100"), new BigDecimal(changePercent), volume, baselineMean, 10.0);
+        return new MemberSnapshot(ticker, new BigDecimal("100"), new BigDecimal(changePercent), volume, baselineMean);
     }
 
     private static GroupInsightContext context(MemberSnapshot... members) {
@@ -104,7 +102,6 @@ class RuleBasedGroupInsightGeneratorTest {
                 "return z=5.20",
                 List.of(members),
                 List.of(new CorrelationEdge("RELIANCE.NS", "TCS.NS", 0.82)),
-                "30-point window",
-                "2026-07-14T10:15:00Z");
+                "30-point window");
     }
 }

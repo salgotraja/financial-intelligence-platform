@@ -44,8 +44,8 @@ class GroupContextReaderTest {
                 .thenReturn(latestPoint("RELIANCE.NS", "2900", "3.2", 1200L))
                 .thenReturn(latestPoint("TCS.NS", "3900", "2.8", 900L));
         when(dynamoDb.getItem(any(GetItemRequest.class)))
-                .thenReturn(baseline(800.0, 4.0, 50.0))
-                .thenReturn(baseline(700.0, 6.0, 45.0));
+                .thenReturn(baseline(800.0))
+                .thenReturn(baseline(700.0));
 
         CorrelationGroup group = new CorrelationGroup(
                 "g1",
@@ -71,7 +71,6 @@ class GroupContextReaderTest {
         assertThat(reliance.changePercent().toPlainString()).isEqualTo("3.2");
         assertThat(reliance.volume()).isEqualTo(1200L);
         assertThat(reliance.baselineVolumeMean()).isEqualTo(800.0);
-        assertThat(reliance.baselineVolumeStdDev()).isGreaterThan(0.0);
     }
 
     @Test
@@ -93,7 +92,6 @@ class GroupContextReaderTest {
         assertThat(snapshot.changePercent()).isNull();
         assertThat(snapshot.volume()).isNull();
         assertThat(snapshot.baselineVolumeMean()).isNull();
-        assertThat(snapshot.baselineVolumeStdDev()).isNull();
     }
 
     @Test
@@ -120,12 +118,9 @@ class GroupContextReaderTest {
                 .build();
     }
 
-    private static GetItemResponse baseline(double volumeMean, double volumeCount, double volumeM2) {
+    private static GetItemResponse baseline(double volumeMean) {
         return GetItemResponse.builder()
-                .item(Map.of(
-                        "volumeMean", n(String.valueOf(volumeMean)),
-                        "volumeCount", n(String.valueOf(volumeCount)),
-                        "volumeM2", n(String.valueOf(volumeM2))))
+                .item(Map.of("volumeMean", n(String.valueOf(volumeMean))))
                 .build();
     }
 

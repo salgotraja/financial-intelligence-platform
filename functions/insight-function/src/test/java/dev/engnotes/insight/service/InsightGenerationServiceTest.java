@@ -108,14 +108,7 @@ class InsightGenerationServiceTest {
         when(groupInsightStoreService.latestGeneratedAt("g1"))
                 .thenReturn(Optional.of(Instant.parse("2026-07-14T10:15:00Z")));
         GroupInsightContext context = new GroupInsightContext(
-                "g1",
-                List.of("RELIANCE.NS", "TCS.NS"),
-                "RELIANCE.NS",
-                null,
-                List.of(),
-                List.of(),
-                "window",
-                "computedAt");
+                "g1", List.of("RELIANCE.NS", "TCS.NS"), "RELIANCE.NS", null, List.of(), List.of(), "window");
         when(contextReader.buildContext(group, request)).thenReturn(context);
         GroupInsightResponse groupInsight = new GroupInsightResponse(
                 "g1",
@@ -158,7 +151,7 @@ class InsightGenerationServiceTest {
         when(groupResolutionService.resolve("RELIANCE.NS")).thenReturn(Optional.of(group));
         when(groupInsightStoreService.latestGeneratedAt("g1")).thenReturn(Optional.empty());
         GroupInsightContext context = new GroupInsightContext(
-                "g1", List.of("RELIANCE.NS"), "RELIANCE.NS", null, List.of(), List.of(), "window", "computedAt");
+                "g1", List.of("RELIANCE.NS"), "RELIANCE.NS", null, List.of(), List.of(), "window");
         when(contextReader.buildContext(group, request)).thenReturn(context);
         GroupInsightResponse groupInsight = new GroupInsightResponse(
                 "g1",
