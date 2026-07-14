@@ -91,15 +91,16 @@ public class AnomalyDetectionService {
             boolean anomaly = returnAnomaly || volumeAnomaly || weekBreak;
             String reason = anomaly ? buildReason(returnAnomaly, returnZ, volumeAnomaly, volumeZ, weekBreak) : null;
 
-            persistBaselineWithRetry(ticker, baseline, returnObs, volumeObs, correlationId);
+            long returnCount = persistBaselineWithRetry(ticker, baseline, returnObs, volumeObs, correlationId);
 
             log.info(
-                    "Anomaly evaluation. ticker={} anomaly={} reason={} returnZ={} volumeZ={} correlationId={}",
+                    "Anomaly evaluation. ticker={} anomaly={} reason={} returnZ={} volumeZ={} returnCount={} correlationId={}",
                     ticker,
                     anomaly,
                     reason,
                     returnZ,
                     volumeZ,
+                    returnCount,
                     correlationId);
 
             return data.withAnomaly(anomaly, reason);
@@ -175,13 +176,19 @@ public class AnomalyDetectionService {
      * anomaly verdict for this point was already decided against the baseline read in {@link
      * #evaluate}, so a dropped sample here only means the baseline warms up one point slower.
      */
-    private void persistBaselineWithRetry(
+    /**
+     * Persists the folded-in baseline and returns its returnCount for the caller's observability log
+     * - on a give-up (race lost {@link #MAX_WRITE_ATTEMPTS} times), returns the last computed,
+     * unpersisted candidate count instead, since the caller logs unconditionally either way.
+     */
+    private long persistBaselineWithRetry(
             String ticker,
             Map<String, AttributeValue> initialBaseline,
             Double returnObs,
             Double volumeObs,
             String correlationId) {
         Map<String, AttributeValue> baseline = initialBaseline;
+        long returnCount = readStats(baseline, "return").count();
 
         for (int attempt = 1; attempt <= MAX_WRITE_ATTEMPTS; attempt++) {
             RunningStats returnStats = readStats(baseline, "return");
@@ -189,10 +196,11 @@ public class AnomalyDetectionService {
             RunningStats updatedReturn = returnObs == null ? returnStats : returnStats.accept(returnObs);
             RunningStats updatedVolume = volumeObs == null ? volumeStats : volumeStats.accept(volumeObs);
             long expectedVersion = readVersion(baseline);
+            returnCount = updatedReturn.count();
 
             try {
                 writeBaseline(ticker, updatedReturn, updatedVolume, expectedVersion);
-                return;
+                return returnCount;
             } catch (ConditionalCheckFailedException e) {
                 if (attempt == MAX_WRITE_ATTEMPTS) {
                     log.warn(
@@ -200,12 +208,13 @@ public class AnomalyDetectionService {
                             MAX_WRITE_ATTEMPTS,
                             ticker,
                             correlationId);
-                    return;
+                    return returnCount;
                 }
                 sleepWithJitter(attempt);
                 baseline = readBaseline(ticker);
             }
         }
+        return returnCount;
     }
 
     private void writeBaseline(
@@ -243,6 +252,7 @@ public class AnomalyDetectionService {
                     BACKOFF_BASE_MILLIS * attempt + ThreadLocalRandom.current().nextLong(BACKOFF_JITTER_MILLIS);
             Thread.sleep(delay);
         } catch (InterruptedException e) {
+            // Restore the flag and let the retry loop continue; there is no cancellation path to honor here.
             Thread.currentThread().interrupt();
         }
     }
