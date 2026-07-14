@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, getInsight, getWatchlist, grantConsent } from './api'
+import { ApiError, getDailyMarketData, getInsight, getWatchlist, grantConsent } from './api'
 
 vi.mock('./auth', () => ({
   getAccessToken: vi.fn(async () => 'token-123'),
@@ -62,5 +62,31 @@ describe('api client', () => {
   it('is an ApiError instance', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(500, { error: 'internal error' })))
     await expect(getInsight('X')).rejects.toBeInstanceOf(ApiError)
+  })
+
+  it('requests the daily route with an optional days query param', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, { ticker: 'X', days: [], found: false }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await getDailyMarketData('X', 10)
+
+    expect(result).toEqual({ ticker: 'X', days: [], found: false })
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/market-data/X/daily?days=10')
+  })
+
+  it('omits the days query param when not given', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, { ticker: 'X', days: [], found: false }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getDailyMarketData('X')
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/market-data/X/daily')
+    expect(url).not.toContain('?days=')
   })
 })

@@ -1,9 +1,10 @@
 'use client'
 
-import { use, useEffect, useMemo } from 'react'
+import { use, useEffect, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { AuthGate } from '@/components/auth-gate'
+import { DailyRangeChart } from '@/components/daily-range-chart'
 import { IngestButton } from '@/components/ingest-button'
 import { InsightPanel } from '@/components/insight-panel'
 import { LiveDot } from '@/components/live-dot'
@@ -11,6 +12,7 @@ import { StatDelta } from '@/components/stat-delta'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError, getInsight, getMarketData } from '@/lib/api'
+import type { ChartRange } from '@/lib/daily-range'
 import { isMarketOpen } from '@/lib/market-hours'
 import { useAsyncData } from '@/hooks/use-async-data'
 import { useInsightFeed } from '@/hooks/use-insight-feed'
@@ -21,10 +23,45 @@ const PriceChart = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-60 w-full" /> },
 )
 
+const CHART_RANGES: ChartRange[] = ['1D', '1W', '1M']
+
+const RANGE_TITLES: Record<ChartRange, string> = {
+  '1D': 'Intraday (latest NSE session)',
+  '1W': 'Past week',
+  '1M': 'Past month',
+}
+
+const RangeSwitcher = ({
+  value,
+  onChange,
+}: {
+  value: ChartRange
+  onChange: (range: ChartRange) => void
+}) => (
+  <div className="flex gap-1">
+    {CHART_RANGES.map((range) => (
+      <button
+        key={range}
+        type="button"
+        aria-pressed={value === range}
+        onClick={() => onChange(range)}
+        className={`rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
+          value === range
+            ? 'border-primary bg-primary/10 text-primary'
+            : 'border-border text-muted-foreground hover:border-foreground/20'
+        }`}
+      >
+        {range}
+      </button>
+    ))}
+  </div>
+)
+
 const TickerView = ({ symbol }: { symbol: string }) => {
   const router = useRouter()
   const status = useAuthStore((s) => s.status)
   const { insights, connected } = useInsightFeed(useMemo(() => [symbol], [symbol]))
+  const [range, setRange] = useState<ChartRange>('1D')
 
   const { data, error, reload } = useAsyncData(
     useMemo(
@@ -83,13 +120,26 @@ const TickerView = ({ symbol }: { symbol: string }) => {
       )}
       <Card className="border-border bg-card">
         <CardHeader>
-          <CardTitle className="text-sm font-medium">Intraday (latest NSE session)</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-sm font-medium">{RANGE_TITLES[range]}</CardTitle>
+            <RangeSwitcher value={range} onChange={setRange} />
+          </div>
         </CardHeader>
         <CardContent>
-          <PriceChart
-            daySeries={data?.marketData.daySeries ?? []}
-            previousClose={data?.marketData.previousClose ?? null}
-          />
+          {range === '1D' ? (
+            <PriceChart
+              daySeries={data?.marketData.daySeries ?? []}
+              previousClose={data?.marketData.previousClose ?? null}
+            />
+          ) : (
+            <DailyRangeChart
+              key={range}
+              symbol={symbol}
+              range={range}
+              enabled={status === 'signed-in'}
+              PriceChart={PriceChart}
+            />
+          )}
         </CardContent>
       </Card>
       {shownInsight && <InsightPanel insight={shownInsight} live={liveInsight !== null} />}

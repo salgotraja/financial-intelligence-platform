@@ -36,6 +36,7 @@ vi.mock('@/lib/api', () => ({
     modelId: null,
     found: false,
   })),
+  getDailyMarketData: vi.fn(async (t: string) => ({ ticker: t, days: [], found: false })),
 }))
 
 vi.mock('@/hooks/use-insight-feed', () => ({

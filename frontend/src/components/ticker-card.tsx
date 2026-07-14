@@ -70,10 +70,23 @@ export const TickerCard = ({
           <p className="py-4 text-sm text-destructive">{entry.error}</p>
         ) : (
           <>
-            <StatDelta
-              price={latest?.price ?? null}
-              changePercent={latest?.changePercent ?? null}
-            />
+            <span className="flex items-center gap-2">
+              <StatDelta
+                price={latest?.price ?? null}
+                changePercent={latest?.changePercent ?? null}
+              />
+              {entry.weeklyChangePercent !== null && (
+                <span className="flex items-baseline gap-1 font-mono text-xs tabular-nums">
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    1W
+                  </span>
+                  <span className={entry.weeklyChangePercent >= 0 ? 'text-up' : 'text-down'}>
+                    {entry.weeklyChangePercent >= 0 ? '+' : ''}
+                    {entry.weeklyChangePercent.toFixed(2)}%
+                  </span>
+                </span>
+              )}
+            </span>
             <Sparkline points={chartPoints} changePercent={latest?.changePercent ?? null} />
             <div className="flex items-center justify-between">
               <SignalBadge
