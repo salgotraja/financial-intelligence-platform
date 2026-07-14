@@ -17,19 +17,28 @@ import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 
 /**
  * Persists each pass's correlation groups and per-member reverse lookups, then removes whatever the
  * previous pass wrote that this one did not reproduce.
  *
  * <p>Design: {@code GROUP#{groupId}/META} holds the group; {@code TICKER#{ticker}/GROUP} is an
- * overwritten reverse lookup for O(1) group resolution from a ticker. Neither key is reachable by a
- * targeted Query (no GSI indexes the GROUP# prefix or the reverse-lookup SK; the table's GSI1 is
- * reserved for the ticker-scoped insight feed, spec section 4), so the stale-item diff backs onto a
- * full-table Scan. At this table's size (a handful of watchlist tickers) a Scan every 15 minutes is
- * cheap; revisit with a dedicated GSI if the watchlist grows large enough to matter.
+ * overwritten reverse lookup for O(1) group resolution from a ticker. A distinct-index item mirrors
+ * WATCHSET: {@code GROUPSET / GROUP#{groupId}} is written alongside every group META item and deleted
+ * alongside it, so the previous pass's group ids are a partition-key Query, never a Scan. Reverse-lookup
+ * cleanup reads the previous pass's group META items (found via that same Query) for their member
+ * lists, unions them, and diffs against this pass's members — again no Scan.
+ *
+ * <p>Migration note: groups written before this index existed have a META item but no GROUPSET mirror.
+ * {@link GroupIdGenerator} ids are a hash of the sorted member list, so a group whose membership is
+ * unchanged recomputes the same id and self-heals (its GROUPSET mirror is created the next time it is
+ * put). A META item whose membership shape never recurs is never queried and is never cleaned up by
+ * this pass; it is a bounded, cosmetic amount of dead storage at dev's watchlist scale and is
+ * acceptable to leave, not worth a one-off Scan to purge.
  */
 @Service
 public class CorrelationStoreService {
@@ -40,6 +49,7 @@ public class CorrelationStoreService {
     private static final String META_SK = "META";
     private static final String TICKER_PREFIX = "TICKER#";
     private static final String REVERSE_LOOKUP_SK = "GROUP";
+    private static final String GROUPSET_PK = "GROUPSET";
 
     private final DynamoDbClient dynamoDb;
     private final String platformTable;
@@ -58,12 +68,14 @@ public class CorrelationStoreService {
             Set<String> newGroupIds =
                     groups.stream().map(CorrelationGroup::groupId).collect(Collectors.toSet());
 
-            Set<String> staleGroupIds = difference(scanGroupIds(), newGroupIds);
-            Set<String> staleReverseLookupTickers = difference(scanReverseLookupTickers(), newReverseLookups.keySet());
+            Set<String> previousGroupIds = queryGroupIds();
+            Set<String> staleGroupIds = difference(previousGroupIds, newGroupIds);
+            Set<String> staleReverseLookupTickers =
+                    difference(previousMembers(previousGroupIds), newReverseLookups.keySet());
 
             groups.forEach(this::putGroup);
             newReverseLookups.forEach(this::putReverseLookup);
-            staleGroupIds.forEach(groupId -> deleteItem(GROUP_PREFIX + groupId, META_SK));
+            staleGroupIds.forEach(this::deleteGroup);
             staleReverseLookupTickers.forEach(ticker -> deleteItem(TICKER_PREFIX + ticker, REVERSE_LOOKUP_SK));
 
             log.info(
@@ -84,32 +96,39 @@ public class CorrelationStoreService {
         return result;
     }
 
-    private Set<String> scanGroupIds() {
-        ScanRequest request = ScanRequest.builder()
+    /** Group ids the previous pass produced, via the GROUPSET distinct-index partition (a Query). */
+    private Set<String> queryGroupIds() {
+        QueryRequest request = QueryRequest.builder()
                 .tableName(platformTable)
-                .filterExpression("begins_with(PK, :p) AND SK = :sk")
-                .expressionAttributeValues(Map.of(":p", s(GROUP_PREFIX), ":sk", s(META_SK)))
+                .keyConditionExpression("PK = :pk")
+                .expressionAttributeValues(Map.of(":pk", s(GROUPSET_PK)))
                 .build();
-        return dynamoDb.scanPaginator(request).items().stream()
-                .map(item -> item.get("PK"))
+        return dynamoDb.queryPaginator(request).items().stream()
+                .map(item -> item.get("SK"))
                 .filter(Objects::nonNull)
                 .map(AttributeValue::s)
-                .map(pk -> pk.substring(GROUP_PREFIX.length()))
+                .map(sk -> sk.substring(GROUP_PREFIX.length()))
                 .collect(Collectors.toSet());
     }
 
-    private Set<String> scanReverseLookupTickers() {
-        ScanRequest request = ScanRequest.builder()
-                .tableName(platformTable)
-                .filterExpression("begins_with(PK, :p) AND SK = :sk")
-                .expressionAttributeValues(Map.of(":p", s(TICKER_PREFIX), ":sk", s(REVERSE_LOOKUP_SK)))
-                .build();
-        return dynamoDb.scanPaginator(request).items().stream()
-                .map(item -> item.get("PK"))
-                .filter(Objects::nonNull)
-                .map(AttributeValue::s)
-                .map(pk -> pk.substring(TICKER_PREFIX.length()))
+    /** Union of member tickers across the previous pass's groups, read from each group's META item. */
+    private Set<String> previousMembers(Set<String> previousGroupIds) {
+        return previousGroupIds.stream()
+                .flatMap(groupId -> groupMembers(groupId).stream())
                 .collect(Collectors.toSet());
+    }
+
+    private List<String> groupMembers(String groupId) {
+        GetItemResponse response = dynamoDb.getItem(GetItemRequest.builder()
+                .tableName(platformTable)
+                .key(Map.of("PK", s(GROUP_PREFIX + groupId), "SK", s(META_SK)))
+                .build());
+        AttributeValue members =
+                response.item() == null ? null : response.item().get("members");
+        if (members == null || members.l() == null) {
+            return List.of();
+        }
+        return members.l().stream().map(AttributeValue::s).toList();
     }
 
     private void putGroup(CorrelationGroup group) {
@@ -123,6 +142,18 @@ public class CorrelationStoreService {
         item.put("computedAt", s(group.computedAt()));
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(platformTable).item(item).build());
+        dynamoDb.putItem(PutItemRequest.builder()
+                .tableName(platformTable)
+                .item(Map.of(
+                        "PK", s(GROUPSET_PK),
+                        "SK", s(GROUP_PREFIX + group.groupId()),
+                        "groupId", s(group.groupId())))
+                .build());
+    }
+
+    private void deleteGroup(String groupId) {
+        deleteItem(GROUP_PREFIX + groupId, META_SK);
+        deleteItem(GROUPSET_PK, GROUP_PREFIX + groupId);
     }
 
     private void putReverseLookup(String ticker, String groupId) {
