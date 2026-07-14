@@ -20,6 +20,7 @@ import software.constructs.Construct;
  * <p>
  * Serves user-facing API requests:
  *   GET /insights/{ticker} - latest insight for a ticker
+ *   GET /insights - watchlist-scoped insight feed (group insights + ungrouped tickers' latest)
  *   GET /market-data/{ticker} - recent market-data points for a ticker
  *   GET /health - health check
  * <p>
@@ -126,6 +127,44 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "MarketDataFnLogs")
                 .logGroupName("/aws/lambda/" + marketDataFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // Insight-feed Lambda: watchlist-scoped insight feed (GET /insights, no ticker). Third
+        // function from the same query-function asset, sharing the read-only queryRole: it reads the
+        // caller's watchlist plus GSI1 (group-insight mirror items written by insight-function on
+        // correlation groups, DataStack's "GSI1 (insight-by-ticker)" comment). GSI1 access needs no
+        // extra grant: CDK's Table.grantReadData covers Query on the base table AND every index
+        // (tableArn + tableArn/index/*) once the table has an index, which platformTable already does
+        // (queryRoleGrantCoversGsi1Index in QueryStackTest pins this).
+        var insightsFeedFn = Function.Builder.create(this, "InsightsFeedFn")
+                .functionName("financial-insights-feed-" + env)
+                .description("Serves the watchlist-scoped insight feed")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
+                .role(queryRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
+                        "ENVIRONMENT",
+                        env,
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "serveInsightFeed",
+                        "MAIN_CLASS",
+                        "dev.engnotes.query.QueryHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "InsightsFeedFnLogs")
+                .logGroupName("/aws/lambda/" + insightsFeedFn.getFunctionName())
                 .retention(RetentionDays.ONE_MONTH)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
@@ -363,6 +402,11 @@ public class QueryStack extends Stack {
                 .version(marketDataFn.getCurrentVersion())
                 .build();
 
+        var insightsFeedFnAlias = Alias.Builder.create(this, "InsightsFeedFnAlias")
+                .aliasName("live")
+                .version(insightsFeedFn.getCurrentVersion())
+                .build();
+
         // API Gateway
         var apiGwLogs = LogGroup.Builder.create(this, "ApiGwAccessLogs")
                 .logGroupName("/aws/apigateway/financial-platform-" + env)
@@ -427,9 +471,10 @@ public class QueryStack extends Stack {
                 .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                 .build();
 
+        var insightsResource = api.getRoot().addResource("insights");
+
         // /insights/{ticker} - protected (readers+)
-        api.getRoot()
-                .addResource("insights")
+        insightsResource
                 .addResource("{ticker}")
                 .addMethod(
                         "GET",
@@ -440,6 +485,29 @@ public class QueryStack extends Stack {
                                 .requestParameters(Map.of("method.request.path.ticker", true))
                                 .methodResponses(standardMethodResponses())
                                 .build());
+
+        // /insights - protected (readers+), watchlist-scoped insight feed (no ticker). Bare resource,
+        // separate from /insights/{ticker} above and from RoutePolicy's "insights/*" rule.
+        insightsResource.addMethod(
+                "GET",
+                LambdaIntegration.Builder.create(insightsFeedFnAlias)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"ownerSub\": \"$context.authorizer.sub\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        // Authorization must be a cache key, else the 60s stage cache serves one
+                        // caller's feed to every other caller for up to 60s (Task 1's user-scoped
+                        // cache-key rule).
+                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.header.Authorization", true))
+                        .methodResponses(standardMethodResponses())
+                        .build());
 
         var marketDataIntegration = LambdaIntegration.Builder.create(marketDataFnAlias)
                 .proxy(false)
@@ -784,6 +852,7 @@ public class QueryStack extends Stack {
         var fns = Map.of(
                 "query", queryFn,
                 "marketdata", marketDataFn,
+                "insightsfeed", insightsFeedFn,
                 "watchlist", watchlistFn,
                 "consent", consentFn,
                 "dsr", dsrFn,

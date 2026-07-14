@@ -204,6 +204,64 @@ class QueryStackTest {
                                                 Map.of("SPRING_CLOUD_FUNCTION_DEFINITION", "serveMarketData")))))));
     }
 
+    // The bare /insights feed (watchlist-scoped, no ticker) must be a separate GET method from
+    // /insights/{ticker}: same resource path prefix, different resource/integration entirely.
+    @Test
+    @SuppressWarnings("unchecked")
+    void bareInsightsFeedRouteIsDistinctFromPerTickerRoute() {
+        var feedMethods = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> "GET".equals(p.get("HttpMethod")))
+                .filter(p -> {
+                    var body = requestTemplateBody(p);
+                    return body.contains("\"ownerSub\": \"$context.authorizer.sub\"")
+                            && !body.contains("\"operation\"");
+                })
+                .toList();
+        assertEquals(1, feedMethods.size(), "expected exactly one GET /insights feed method");
+
+        var requestParameters = (Map<String, Object>) feedMethods.get(0).get("RequestParameters");
+        assertTrue(
+                requestParameters == null || !requestParameters.containsKey("method.request.path.ticker"),
+                "the bare /insights feed route must not require a ticker path param");
+    }
+
+    // GSI1 access for the insight feed's per-ticker group-insight query needs no extra grant: CDK's
+    // Table.grantReadData already covers Query on every index (tableArn + tableArn/index/*) once the
+    // table has one, which platformTable does (DataStack's GSI1). Pins that the synthesized
+    // QueryLambdaRole policy actually carries the index resource, so a future refactor that narrows
+    // the grant is caught here rather than at runtime.
+    @Test
+    @SuppressWarnings("unchecked")
+    void queryRoleGrantCoversGsi1Index() {
+        var template = synth();
+        var queryRoleLogicalId = template.findResources("AWS::IAM::Role").entrySet().stream()
+                .filter(e -> {
+                    var props = (Map<String, Object>) e.getValue().get("Properties");
+                    return "financial-query-lambda-role-dev".equals(props.get("RoleName"));
+                })
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("expected a QueryLambdaRole to synth"));
+
+        var attachedPolicies = template.findResources("AWS::IAM::Policy").values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .filter(p -> {
+                    var roleRefs = (List<Map<String, Object>>) p.get("Roles");
+                    return roleRefs != null
+                            && roleRefs.stream().anyMatch(ref -> queryRoleLogicalId.equals(ref.get("Ref")));
+                })
+                .toList();
+        assertFalse(attachedPolicies.isEmpty(), "expected an IAM policy attached to QueryLambdaRole");
+
+        boolean coversIndex =
+                attachedPolicies.stream().anyMatch(p -> p.toString().contains("/index/*"));
+        assertTrue(
+                coversIndex,
+                "expected QueryLambdaRole's DynamoDB grant to cover the GSI1 index resource"
+                        + " (tableArn/index/*), required by the insight feed's GSI1 query");
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void hasMarketDataResourceUnderApiRoot() {
@@ -267,15 +325,18 @@ class QueryStackTest {
     }
 
     // The 60s stage cache has no caller identity in its key by default: one user's cached GET could
-    // be served to another for up to 60s. `/watchlist`, `/user/consent`, `/user/export` all return
-    // caller-scoped data, so Authorization must be part of the cache key on each (found 2026-07-13,
-    // STATUS.md "Recommended next steps" item 0, LEARNING-GUIDE 13.9).
+    // be served to another for up to 60s. `/watchlist`, `/user/consent`, `/user/export`, `/insights`
+    // (the watchlist feed) all return caller-scoped data, so Authorization must be part of the cache
+    // key on each (found 2026-07-13, STATUS.md "Recommended next steps" item 0, LEARNING-GUIDE 13.9).
     @Test
     @SuppressWarnings("unchecked")
     void userScopedGetMethodsCacheKeyOnAuthorizationHeader() {
         var methods = userScopedGetMethods();
         assertEquals(
-                3, methods.size(), "expected LIST/VIEW/EXPORT GET methods (/watchlist, /user/consent, /user/export)");
+                4,
+                methods.size(),
+                "expected LIST/VIEW/EXPORT GET methods plus the bare /insights feed"
+                        + " (/watchlist, /user/consent, /user/export, /insights)");
         for (var props : methods) {
             var integration = (Map<String, Object>) props.get("Integration");
             var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");
@@ -372,7 +433,12 @@ class QueryStackTest {
                     var body = requestTemplateBody(p);
                     return body.contains("\"operation\": \"LIST\"")
                             || body.contains("\"operation\": \"VIEW\"")
-                            || body.contains("\"operation\": \"EXPORT\"");
+                            || body.contains("\"operation\": \"EXPORT\"")
+                            // The bare /insights feed has no "operation" field (it is its own Lambda
+                            // function, selected via SPRING_CLOUD_FUNCTION_DEFINITION, not an
+                            // operation-dispatch handler), so it is identified by ownerSub alone.
+                            || (body.contains("\"ownerSub\": \"$context.authorizer.sub\"")
+                                    && !body.contains("\"operation\""));
                 })
                 .toList();
     }
