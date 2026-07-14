@@ -1,6 +1,7 @@
 package dev.engnotes.consent;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -10,6 +11,7 @@ import dev.engnotes.consent.model.ConsentOperation;
 import dev.engnotes.consent.model.ConsentRecord;
 import dev.engnotes.consent.model.ConsentRequest;
 import dev.engnotes.consent.model.ConsentResponse;
+import dev.engnotes.consent.model.LoginGate;
 import dev.engnotes.consent.service.ConsentStoreService;
 import dev.engnotes.consent.service.UserWatchlistPurgeService;
 import java.util.Map;
@@ -146,5 +148,88 @@ class ConsentHandlerTest {
 
         verifyNoInteractions(store);
         assertThat(result).isSameAs(event);
+    }
+
+    @Test
+    void preAuthenticationAllowsAndReturnsEventUnchangedWhenGateAllows() {
+        when(store.gateLogin("user-999", "login")).thenReturn(LoginGate.ALLOWED);
+        Map<String, Object> event = Map.of(
+                "userName", "a@b.com",
+                "request", Map.of("userAttributes", Map.of("sub", "user-999")),
+                "response", Map.of());
+
+        Map<String, Object> result =
+                new ConsentHandler().preAuthentication(store).apply(event);
+
+        assertThat(result).isSameAs(event);
+    }
+
+    @Test
+    void preAuthenticationDeniesWithdrawnConsentByThrowing() {
+        when(store.gateLogin("user-999", "login")).thenReturn(LoginGate.WITHDRAWN);
+        Map<String, Object> event =
+                Map.of("userName", "a@b.com", "request", Map.of("userAttributes", Map.of("sub", "user-999")));
+
+        assertThatThrownBy(() -> new ConsentHandler().preAuthentication(store).apply(event))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("withdrawn");
+    }
+
+    @Test
+    void preAuthenticationDeniesStaleConsentWithReconsentMessage() {
+        when(store.gateLogin("user-999", "login")).thenReturn(LoginGate.RECONSENT_REQUIRED);
+        Map<String, Object> event =
+                Map.of("userName", "a@b.com", "request", Map.of("userAttributes", Map.of("sub", "user-999")));
+
+        assertThatThrownBy(() -> new ConsentHandler().preAuthentication(store).apply(event))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("re-consent");
+    }
+
+    @Test
+    void preAuthenticationWithoutSubSkipsGateAndStillEchoesEvent() {
+        Map<String, Object> event = Map.of("userName", "a@b.com", "response", Map.of());
+
+        Map<String, Object> result =
+                new ConsentHandler().preAuthentication(store).apply(event);
+
+        verifyNoInteractions(store);
+        assertThat(result).isSameAs(event);
+    }
+
+    @Test
+    void preAuthenticationRoundTripsRawCognitoJsonUnchanged() {
+        // Same hazard as postConfirmation: the trigger must echo the incoming event back unchanged
+        // on allow, and a typed round-trip through aws-lambda-java-events mutates the JSON.
+        when(store.gateLogin("user-999", "login")).thenReturn(LoginGate.ALLOWED);
+        String rawEvent = """
+                {
+                  "version": "1",
+                  "region": "ap-south-1",
+                  "userPoolId": "ap-south-1_EXAMPLE",
+                  "userName": "a@b.com",
+                  "callerContext": {
+                    "awsSdkVersion": "aws-sdk-unknown-unknown",
+                    "clientId": "client-123"
+                  },
+                  "triggerSource": "PreAuthentication_Authentication",
+                  "request": {
+                    "userAttributes": {
+                      "sub": "user-999",
+                      "email_verified": "true",
+                      "cognito:user_status": "CONFIRMED",
+                      "email": "a@b.com"
+                    }
+                  },
+                  "response": {}
+                }
+                """;
+        ObjectMapper mapper = JsonMapper.builder().build();
+
+        Map<String, Object> event = mapper.readValue(rawEvent, new TypeReference<Map<String, Object>>() {});
+        Map<String, Object> result =
+                new ConsentHandler().preAuthentication(store).apply(event);
+
+        assertThat(mapper.readTree(mapper.writeValueAsString(result))).isEqualTo(mapper.readTree(rawEvent));
     }
 }

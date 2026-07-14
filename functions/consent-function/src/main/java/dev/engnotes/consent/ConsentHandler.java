@@ -3,6 +3,7 @@ package dev.engnotes.consent;
 import dev.engnotes.consent.model.ConsentRecord;
 import dev.engnotes.consent.model.ConsentRequest;
 import dev.engnotes.consent.model.ConsentResponse;
+import dev.engnotes.consent.model.LoginGate;
 import dev.engnotes.consent.service.ConsentStoreService;
 import dev.engnotes.consent.service.UserWatchlistPurgeService;
 import java.util.Map;
@@ -17,7 +18,7 @@ import org.springframework.context.annotation.Bean;
 /**
  * Consent Lambda - Spring Cloud Function entry point (DPDP, spec sub-project B).
  *
- * <p>Two beans, each selected per-Lambda via SPRING_CLOUD_FUNCTION_DEFINITION:
+ * <p>Three beans, each selected per-Lambda via SPRING_CLOUD_FUNCTION_DEFINITION:
  *
  * <ul>
  *   <li>{@code consent} - serves GET/POST/DELETE /user/consent. The API Gateway integration template
@@ -27,6 +28,11 @@ import org.springframework.context.annotation.Bean;
  *   <li>{@code postConfirmation} - the Cognito PostConfirmation trigger. Seeds a default-deny consent
  *       record + ACCOUNT_CREATED audit event at signup, then returns the event unchanged so Cognito's
  *       response contract is satisfied.
+ *   <li>{@code preAuthentication} - the Cognito PreAuthentication trigger (spec s11, adapted). Denies
+ *       login only for WITHDRAWN consent or consent GIVEN under a stale policy version; PENDING (never
+ *       consented) is allowed so onboarding does not deadlock, since consent is granted in-app post-
+ *       login and there is no Hosted-UI consent screen. Denies by throwing, which Cognito surfaces as
+ *       the login error message; allows by returning the event unchanged.
  * </ul>
  */
 @SpringBootApplication
@@ -83,6 +89,30 @@ public class ConsentHandler {
             log.info("PostConfirmation seeding consent. sub={} userName={}", sub, event.get("userName"));
             if (sub != null && !sub.isBlank()) {
                 store.seedDefaultDeny(sub);
+            }
+            return event;
+        };
+    }
+
+    // Untyped for the same reason as postConfirmation: Cognito requires the trigger to echo the event
+    // back unchanged on allow, and a typed round-trip mutates the JSON.
+    @Bean
+    public Function<Map<String, Object>, Map<String, Object>> preAuthentication(ConsentStoreService store) {
+        return event -> {
+            String sub = userAttribute(event, "sub");
+            log.info("PreAuthentication consent gate. sub={} userName={}", sub, event.get("userName"));
+            if (sub == null || sub.isBlank()) {
+                return event;
+            }
+            LoginGate gate = store.gateLogin(sub, "login");
+            switch (gate) {
+                case WITHDRAWN ->
+                    throw new IllegalStateException(
+                            "Login denied: consent has been withdrawn. Contact support to restore access.");
+                case RECONSENT_REQUIRED ->
+                    throw new IllegalStateException(
+                            "Login denied: our privacy policy has changed. Please re-consent to continue.");
+                case ALLOWED -> {}
             }
             return event;
         };

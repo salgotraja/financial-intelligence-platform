@@ -4,5 +4,6 @@ package dev.engnotes.consent.model;
 public enum AuditEventType {
     ACCOUNT_CREATED,
     CONSENT_GRANTED,
-    CONSENT_WITHDRAWN
+    CONSENT_WITHDRAWN,
+    CONSENT_RECONSENT_REQUIRED
 }

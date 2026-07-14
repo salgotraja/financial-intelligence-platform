@@ -2,11 +2,13 @@ package dev.engnotes.consent.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.engnotes.consent.model.ConsentRecord;
+import dev.engnotes.consent.model.LoginGate;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -153,5 +155,80 @@ class ConsentStoreServiceTest {
         assertThat(auditPut.tableName()).isEqualTo(AUDIT);
         assertThat(auditPut.item().get("eventType").s()).isEqualTo("ACCOUNT_CREATED");
         assertThat(auditPut.item().get("SK").s()).isEqualTo("EVENT#" + INSTANT + "#signup");
+    }
+
+    @Test
+    void gateLoginAllowsPendingNeverConsented() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "consentGiven",
+                                        AttributeValue.builder().bool(false).build(),
+                                "updatedAt", AttributeValue.builder().s(INSTANT).build()))
+                        .build());
+
+        assertThat(store.gateLogin("user-123", "login")).isEqualTo(LoginGate.ALLOWED);
+        verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
+    void gateLoginDeniesWithdrawn() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "consentGiven",
+                                        AttributeValue.builder().bool(false).build(),
+                                "version", AttributeValue.builder().s("v1").build(),
+                                "updatedAt", AttributeValue.builder().s(INSTANT).build()))
+                        .build());
+
+        assertThat(store.gateLogin("user-123", "login")).isEqualTo(LoginGate.WITHDRAWN);
+        verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
+    void gateLoginAllowsGivenUnderCurrentVersion() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "consentGiven",
+                                        AttributeValue.builder().bool(true).build(),
+                                "version", AttributeValue.builder().s("v1").build(),
+                                "updatedAt", AttributeValue.builder().s(INSTANT).build()))
+                        .build());
+
+        assertThat(store.gateLogin("user-123", "login")).isEqualTo(LoginGate.ALLOWED);
+        verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
+    void gateLoginDeniesStaleVersionAndAuditsReconsentRequired() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "consentGiven",
+                                        AttributeValue.builder().bool(true).build(),
+                                "version", AttributeValue.builder().s("v0").build(),
+                                "purpose", AttributeValue.builder().s("market").build(),
+                                "updatedAt", AttributeValue.builder().s(INSTANT).build()))
+                        .build());
+
+        assertThat(store.gateLogin("user-123", "login")).isEqualTo(LoginGate.RECONSENT_REQUIRED);
+
+        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamoDb, times(1)).putItem(captor.capture());
+        PutItemRequest auditPut = captor.getValue();
+        assertThat(auditPut.tableName()).isEqualTo(AUDIT);
+        assertThat(auditPut.item().get("eventType").s()).isEqualTo("CONSENT_RECONSENT_REQUIRED");
+        assertThat(auditPut.item().get("version").s()).isEqualTo("v0");
+        assertThat(auditPut.item().get("SK").s()).isEqualTo("EVENT#" + INSTANT + "#login");
+    }
+
+    @Test
+    void gateLoginAllowsOnDynamoDbReadFailure() {
+        when(dynamoDb.getItem(any(GetItemRequest.class))).thenThrow(new RuntimeException("boom"));
+
+        assertThat(store.gateLogin("user-123", "login")).isEqualTo(LoginGate.ALLOWED);
+        verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
     }
 }

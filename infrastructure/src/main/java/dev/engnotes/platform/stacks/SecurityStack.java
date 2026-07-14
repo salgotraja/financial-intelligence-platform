@@ -122,8 +122,8 @@ public class SecurityStack extends Stack {
                         data.getAuditTable().getTableName(),
                         "ENVIRONMENT",
                         env,
-                        "CONSENT_VERSION",
-                        "v1",
+                        "CONSENT_POLICY_VERSION",
+                        "v1.0",
                         "SPRING_CLOUD_FUNCTION_DEFINITION",
                         "postConfirmation",
                         "MAIN_CLASS",
@@ -139,6 +139,58 @@ public class SecurityStack extends Stack {
                 .build();
 
         userPool.addTrigger(UserPoolOperation.POST_CONFIRMATION, postConfirmationFn);
+
+        // PreAuthentication trigger: login gate (spec s11, adapted). Denies WITHDRAWN consent and
+        // GIVEN-under-a-stale-version consent by throwing; PENDING (never consented) and current-
+        // version GIVEN both allow. Same jar as postConfirmation, its own function definition, same
+        // non-VPC placement (reads/writes the platform table over the regional endpoint).
+        var preAuthenticationRole = Role.Builder.create(this, "PreAuthenticationLambdaRole")
+                .roleName("financial-preauthentication-lambda-role-" + env)
+                .description("IAM role for the Cognito PreAuthentication consent-gate Lambda")
+                .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
+                .managedPolicies(List.of(
+                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaBasicExecutionRole"),
+                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .build();
+        data.getPlatformTable().grant(preAuthenticationRole, "dynamodb:GetItem");
+        data.getAuditTable().grant(preAuthenticationRole, "dynamodb:PutItem");
+        data.getEncryptionKey().grantEncryptDecrypt(preAuthenticationRole);
+
+        var preAuthenticationFn = Function.Builder.create(this, "PreAuthenticationFn")
+                .functionName("financial-preauthentication-" + env)
+                .description("Cognito PreAuthentication: consent login gate")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/consent-function/target/consent-function.jar"))
+                .role(preAuthenticationRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(Map.of(
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
+                        "AUDIT_TABLE",
+                        data.getAuditTable().getTableName(),
+                        "ENVIRONMENT",
+                        env,
+                        "CONSENT_POLICY_VERSION",
+                        "v1.0",
+                        "SPRING_CLOUD_FUNCTION_DEFINITION",
+                        "preAuthentication",
+                        "MAIN_CLASS",
+                        "dev.engnotes.consent.ConsentHandler",
+                        "LOG_LEVEL",
+                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .build();
+
+        LogGroup.Builder.create(this, "PreAuthenticationFnLogs")
+                .logGroupName("/aws/lambda/" + preAuthenticationFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        userPool.addTrigger(UserPoolOperation.PRE_AUTHENTICATION, preAuthenticationFn);
 
         this.userPoolClient = userPool.addClient(
                 "AppClient",

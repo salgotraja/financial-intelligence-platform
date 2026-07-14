@@ -246,8 +246,8 @@ public class QueryStack extends Stack {
                         data.getAuditTable().getTableName(),
                         "ENVIRONMENT",
                         env,
-                        "CONSENT_VERSION",
-                        "v1",
+                        "CONSENT_POLICY_VERSION",
+                        "v1.0",
                         "DEFAULT_OWNER_SUB",
                         "dev-user",
                         "SPRING_CLOUD_FUNCTION_DEFINITION",
@@ -620,7 +620,8 @@ public class QueryStack extends Stack {
         // Consent routes (non-proxy, spec sub-project B): POST -> GRANT, GET -> VIEW, DELETE ->
         // WITHDRAW. The caller sub is taken from the authorizer context, never the body. POST reads
         // {version?, purpose} from the body; both fields are escaped via $util.escapeJavaScript to
-        // prevent injection. An absent/blank version is defaulted to CONSENT_VERSION in the handler.
+        // prevent injection. An absent/blank version is defaulted to CONSENT_POLICY_VERSION in the
+        // handler; the PreAuthentication trigger (SecurityStack) gates login on the same version.
         var userResource = api.getRoot().addResource("user");
         var consentResource = userResource.addResource("consent");
 
