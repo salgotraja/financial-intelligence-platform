@@ -28,6 +28,21 @@ describe('isMarketOpen', () => {
   it('is closed on the weekend', () => {
     expect(isMarketOpen(at('2026-07-11T06:30:00Z'))).toBe(false) // Sat 12:00 IST
   })
+
+  it('is open mid-session on a regular Monday', () => {
+    // 2026-01-19 is a regular Monday (not an NSE holiday).
+    expect(isMarketOpen(at('2026-01-19T04:30:00Z'))).toBe(true) // Mon 10:00 IST
+  })
+
+  it('is closed on an NSE trading holiday even mid-session', () => {
+    // 2026-01-26 (Republic Day) is a Monday; 10:00 IST would be mid-session otherwise.
+    expect(isMarketOpen(at('2026-01-26T04:30:00Z'))).toBe(false)
+  })
+
+  it('is closed on the ad-hoc Maharashtra election holiday', () => {
+    // 2026-01-15 is a Thursday.
+    expect(isMarketOpen(at('2026-01-15T04:30:00Z'))).toBe(false) // Thu 10:00 IST
+  })
 })
 
 describe('latestSession', () => {
@@ -45,6 +60,13 @@ describe('latestSession', () => {
   it('skips the weekend back to Friday', () => {
     const { startMs } = latestSession(at('2026-07-12T06:30:00Z')) // Sun
     expect(new Date(startMs).toISOString()).toBe('2026-07-10T03:30:00.000Z') // Fri
+  })
+
+  it('skips an NSE holiday Monday back to the previous Friday', () => {
+    // 2026-01-26 (Republic Day) is a holiday Monday; before the open on Tue 2026-01-27
+    // should roll back through Mon (holiday), Sun, Sat to Fri 2026-01-23.
+    const { startMs } = latestSession(at('2026-01-27T02:30:00Z')) // Tue 08:00 IST
+    expect(new Date(startMs).toISOString()).toBe('2026-01-23T03:30:00.000Z') // Fri 09:00 IST
   })
 })
 

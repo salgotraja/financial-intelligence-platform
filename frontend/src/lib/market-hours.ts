@@ -1,12 +1,41 @@
-// NSE regular equity session, treated as 09:00-15:35 IST, Mon-Fri. Holidays are not
-// modelled (weekday + time only), so the market may read "open" on an NSE holiday.
-// IST is a fixed UTC+5:30 with no DST, so wall-clock <-> instant conversion is exact
-// arithmetic and needs no timezone library.
+// NSE regular equity session, treated as 09:00-15:35 IST, Mon-Fri, excluding NSE trading
+// holidays. IST is a fixed UTC+5:30 with no DST, so wall-clock <-> instant conversion is
+// exact arithmetic and needs no timezone library.
 
 const IST_OFFSET_MIN = 330
 const OPEN_MIN = 9 * 60 // 09:00 IST
 const CLOSE_MIN = 15 * 60 + 35 // 15:35 IST
 const DAY_MS = 86_400_000
+
+/**
+ * NSE Capital Market segment trading holidays for calendar year 2026, per NSE circular
+ * NSE/CMTR/71775 ("Trading holidays for the calendar year 2026", December 12, 2025):
+ * https://nsearchives.nseindia.com/content/circulars/CMTR71775.pdf
+ * Plus the ad-hoc January 15, 2026 holiday for the Maharashtra Municipal Corporation
+ * elections, notified as a partial modification to NSE/CMTR/71775 (~January 12, 2026;
+ * corroborated by NSE/CD/72233, January 9, 2026, the equivalent Currency Derivatives
+ * notice: https://nsearchives.nseindia.com/content/circulars/CD72233.pdf).
+ * Keep in the same chronological order as MarketHours.java's TRADING_HOLIDAYS_2026 so
+ * drift between the two lists is a straight visual diff.
+ */
+const TRADING_HOLIDAYS_2026 = new Set([
+  '2026-01-15', // Maharashtra Municipal Corporation Elections
+  '2026-01-26', // Republic Day
+  '2026-03-03', // Holi
+  '2026-03-26', // Shri Ram Navami
+  '2026-03-31', // Shri Mahavir Jayanti
+  '2026-04-03', // Good Friday
+  '2026-04-14', // Dr. Baba Saheb Ambedkar Jayanti
+  '2026-05-01', // Maharashtra Day
+  '2026-05-28', // Bakri Id
+  '2026-06-26', // Muharram
+  '2026-09-14', // Ganesh Chaturthi
+  '2026-10-02', // Mahatma Gandhi Jayanti
+  '2026-10-20', // Dussehra
+  '2026-11-10', // Diwali-Balipratipada
+  '2026-11-24', // Prakash Gurpurb Sri Guru Nanak Dev
+  '2026-12-25', // Christmas
+])
 
 interface IstParts {
   year: number
@@ -29,10 +58,22 @@ const istParts = (now: Date): IstParts => {
 
 const isWeekday = (weekday: number): boolean => weekday >= 1 && weekday <= 5
 
-/** True when `now` falls inside the current NSE session window (weekday + time only). */
+const pad2 = (n: number): string => String(n).padStart(2, '0')
+
+const dateKey = (year: number, month: number, day: number): string =>
+  `${year}-${pad2(month)}-${pad2(day)}`
+
+/** True when a weekday + date key combination is an NSE trading day (not a listed holiday). */
+const isTradingDay = (weekday: number, key: string): boolean =>
+  isWeekday(weekday) && !TRADING_HOLIDAYS_2026.has(key)
+
+/** True when `now` falls inside the current NSE session window (trading day + time). */
 export const isMarketOpen = (now: Date): boolean => {
-  const { weekday, minutesOfDay } = istParts(now)
-  return isWeekday(weekday) && minutesOfDay >= OPEN_MIN && minutesOfDay <= CLOSE_MIN
+  const parts = istParts(now)
+  if (!isTradingDay(parts.weekday, dateKey(parts.year, parts.month, parts.day))) {
+    return false
+  }
+  return parts.minutesOfDay >= OPEN_MIN && parts.minutesOfDay <= CLOSE_MIN
 }
 
 export interface SessionWindow {
@@ -47,15 +88,22 @@ export interface SessionWindow {
  */
 export const latestSession = (now: Date): SessionWindow => {
   const parts = istParts(now)
-  const startedToday = isWeekday(parts.weekday) && parts.minutesOfDay >= OPEN_MIN
+  const todayKey = dateKey(parts.year, parts.month, parts.day)
+  const startedToday = isTradingDay(parts.weekday, todayKey) && parts.minutesOfDay >= OPEN_MIN
 
   // UTC midnight of the IST calendar date; date-only, so the timezone is irrelevant
-  // for weekday arithmetic.
+  // for weekday/holiday arithmetic.
   let cursorMs = Date.UTC(parts.year, parts.month - 1, parts.day)
   if (!startedToday) {
-    do {
+    let cursorIsTradingDay = false
+    while (!cursorIsTradingDay) {
       cursorMs -= DAY_MS
-    } while (!isWeekday(new Date(cursorMs).getUTCDay()))
+      const cursor = new Date(cursorMs)
+      cursorIsTradingDay = isTradingDay(
+        cursor.getUTCDay(),
+        dateKey(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, cursor.getUTCDate()),
+      )
+    }
   }
 
   const istMidnightUtc = cursorMs - IST_OFFSET_MIN * 60_000
