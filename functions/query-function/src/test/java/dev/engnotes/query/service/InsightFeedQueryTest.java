@@ -238,6 +238,55 @@ class InsightFeedQueryTest {
     }
 
     @Test
+    void skipsGroupItemWithMalformedGeneratedAtWhileHealthyItemsServe() {
+        groupInsightsFor("A", groupItem("G1", "not-a-timestamp", "A"), groupItem("G2", "2026-07-14T10:00:00Z", "A"));
+        when(insightQuery.findLatestInsight("A")).thenReturn(QueryResponse.notFound("A"));
+
+        InsightFeedResponse response = feedQuery.feed(OWNER);
+
+        assertThat(response.insights()).hasSize(1);
+        assertThat(response.insights().getFirst().groupId()).isEqualTo("G2");
+    }
+
+    @Test
+    void skipsGroupItemMissingGeneratedAtWhileHealthyItemsServe() {
+        Map<String, AttributeValue> missing = new java.util.HashMap<>(groupItem("G1", "unused", "A"));
+        missing.remove("generatedAt");
+        groupInsightsFor("A", missing, groupItem("G2", "2026-07-14T10:00:00Z", "A"));
+        when(insightQuery.findLatestInsight("A")).thenReturn(QueryResponse.notFound("A"));
+
+        InsightFeedResponse response = feedQuery.feed(OWNER);
+
+        assertThat(response.insights()).hasSize(1);
+        assertThat(response.insights().getFirst().groupId()).isEqualTo("G2");
+    }
+
+    @Test
+    void skipsGroupItemWithNonStringListElementWhileHealthyItemsServe() {
+        Map<String, AttributeValue> malformed = new java.util.HashMap<>(groupItem("G1", "2026-07-14T11:00:00Z", "A"));
+        malformed.put("tickers", AttributeValue.builder().l(str("A"), num("42")).build());
+        groupInsightsFor("A", malformed, groupItem("G2", "2026-07-14T10:00:00Z", "A"));
+        when(insightQuery.findLatestInsight("A")).thenReturn(QueryResponse.notFound("A"));
+
+        InsightFeedResponse response = feedQuery.feed(OWNER);
+
+        assertThat(response.insights()).hasSize(1);
+        assertThat(response.insights().getFirst().groupId()).isEqualTo("G2");
+    }
+
+    @Test
+    void skipsPerTickerInsightWithMissingGeneratedAt() {
+        groupInsightsFor("A");
+        when(insightQuery.findLatestInsight("A"))
+                .thenReturn(new QueryResponse("A", null, "BULLISH", 0.7, "r", List.of(), "RULE_BASED", "r", "m", true));
+
+        InsightFeedResponse response = feedQuery.feed(OWNER);
+
+        assertThat(response.found()).isFalse();
+        assertThat(response.insights()).isEmpty();
+    }
+
+    @Test
     void queriesGsi1DescendingWithSmallLimitPerTicker() {
         groupInsightsFor("A");
         when(insightQuery.findLatestInsight("A")).thenReturn(QueryResponse.notFound("A"));

@@ -4,11 +4,13 @@ import dev.engnotes.query.model.FeedInsight;
 import dev.engnotes.query.model.InsightFeedResponse;
 import dev.engnotes.query.model.QueryResponse;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +31,12 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
  * dedupe by {@code groupId} keeping the newest; a per-ticker insight is dropped when a deduped
  * group insight covers the same ticker with a {@code generatedAt} at or after the per-ticker one,
  * so the same event never appears twice. The combined list sorts newest first and caps at 25.
+ *
+ * <p>Feed assembly is item-tolerant: an item with a missing or unparseable {@code generatedAt}, or
+ * a malformed list attribute, is skipped with a warning at the mapping boundary rather than thrown,
+ * so one bad stored item can never fail the whole feed (matching
+ * {@code GroupInsightStoreService.latestGeneratedAt}'s degrade-gracefully precedent). Everything
+ * past the mapping boundary can therefore parse {@code generatedAt} unguarded.
  */
 @Service
 public class InsightFeedQuery {
@@ -66,7 +74,7 @@ public class InsightFeedQuery {
         List<FeedInsight> perTickerInsights = tickers.stream()
                 .map(insightQuery::findLatestInsight)
                 .filter(QueryResponse::found)
-                .map(InsightFeedQuery::toFeedInsight)
+                .flatMap(response -> fromPerTickerResponse(response).stream())
                 .filter(insight -> !supersededByGroup(insight, groupInsights))
                 .toList();
 
@@ -105,7 +113,7 @@ public class InsightFeedQuery {
                 .limit(GROUP_QUERY_LIMIT)
                 .build();
         return dynamoDb.query(request).items().stream()
-                .map(InsightFeedQuery::toGroupFeedInsight)
+                .flatMap(item -> fromGroupItem(item).stream())
                 .toList();
     }
 
@@ -135,8 +143,16 @@ public class InsightFeedQuery {
                 .reversed();
     }
 
-    private static FeedInsight toFeedInsight(QueryResponse response) {
-        return new FeedInsight(
+    /** Empty (skipped, one warn) when generatedAt is missing/unparseable: never fails the feed. */
+    private static Optional<FeedInsight> fromPerTickerResponse(QueryResponse response) {
+        if (parseInstant(response.generatedAt()).isEmpty()) {
+            log.warn(
+                    "Skipping per-ticker insight with missing/unparseable generatedAt. ticker={} generatedAt={}",
+                    response.ticker(),
+                    response.generatedAt());
+            return Optional.empty();
+        }
+        return Optional.of(new FeedInsight(
                 null,
                 List.of(response.ticker()),
                 response.generatedAt(),
@@ -144,19 +160,43 @@ public class InsightFeedQuery {
                 response.confidence(),
                 response.rationale(),
                 response.drivers(),
-                response.source());
+                response.source()));
     }
 
-    private static FeedInsight toGroupFeedInsight(Map<String, AttributeValue> item) {
-        return new FeedInsight(
-                attr(item, "groupId"),
-                stringList(item, "tickers"),
-                attr(item, "generatedAt"),
+    /**
+     * Empty (skipped, one warn) when the GSI1 mirror item is malformed: missing groupId, missing or
+     * unparseable generatedAt, or a tickers/drivers list holding non-string elements. One bad stored
+     * item must never fail the whole feed.
+     */
+    private static Optional<FeedInsight> fromGroupItem(Map<String, AttributeValue> item) {
+        String groupId = attr(item, "groupId");
+        String generatedAt = attr(item, "generatedAt");
+        Optional<List<String>> tickers = stringList(item, "tickers");
+        Optional<List<String>> drivers = stringList(item, "drivers");
+        if (groupId == null || parseInstant(generatedAt).isEmpty() || tickers.isEmpty() || drivers.isEmpty()) {
+            log.warn("Skipping malformed group insight item. groupId={} generatedAt={}", groupId, generatedAt);
+            return Optional.empty();
+        }
+        return Optional.of(new FeedInsight(
+                groupId,
+                tickers.get(),
+                generatedAt,
                 attr(item, "signal"),
                 number(item, "confidence"),
                 attr(item, "rationale"),
-                stringList(item, "drivers"),
-                attr(item, "source"));
+                drivers.get(),
+                attr(item, "source")));
+    }
+
+    private static Optional<Instant> parseInstant(String value) {
+        if (value == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Instant.parse(value));
+        } catch (DateTimeParseException _) {
+            return Optional.empty();
+        }
     }
 
     private static String attr(Map<String, AttributeValue> item, String key) {
@@ -169,11 +209,19 @@ public class InsightFeedQuery {
         return value == null || value.n() == null ? 0.0 : Double.parseDouble(value.n());
     }
 
-    private static List<String> stringList(Map<String, AttributeValue> item, String key) {
+    /** Empty on a malformed list (any non-string element); an absent attribute is an empty list. */
+    private static Optional<List<String>> stringList(Map<String, AttributeValue> item, String key) {
         AttributeValue value = item.get(key);
         if (value == null || !value.hasL()) {
-            return List.of();
+            return Optional.of(List.of());
         }
-        return value.l().stream().map(AttributeValue::s).toList();
+        List<String> strings = value.l().stream()
+                .map(AttributeValue::s)
+                .filter(Objects::nonNull)
+                .toList();
+        if (strings.size() != value.l().size()) {
+            return Optional.empty();
+        }
+        return Optional.of(strings);
     }
 }
