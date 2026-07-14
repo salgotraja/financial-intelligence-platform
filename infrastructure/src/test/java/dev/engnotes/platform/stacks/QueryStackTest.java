@@ -179,6 +179,31 @@ class QueryStackTest {
         }
     }
 
+    // /user/export additionally varies by the optional subjectSub query param (admin-on-behalf):
+    // without it in the cache key, the same admin token exporting subject A then subject B within
+    // the 60s TTL gets A's cached response for B.
+    @Test
+    @SuppressWarnings("unchecked")
+    void exportCacheKeyIncludesAuthorizationAndSubjectSub() {
+        var exports = userScopedGetMethods().stream()
+                .filter(p -> requestTemplateBody(p).contains("\"operation\": \"EXPORT\""))
+                .toList();
+        assertEquals(1, exports.size(), "expected exactly one /user/export GET method");
+        var integration = (Map<String, Object>) exports.get(0).get("Integration");
+        var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");
+        assertTrue(
+                cacheKeyParameters != null
+                        && cacheKeyParameters.contains("method.request.header.Authorization")
+                        && cacheKeyParameters.contains("method.request.querystring.subjectSub"),
+                "expected Authorization + subjectSub cache keys on /user/export: " + cacheKeyParameters);
+
+        var requestParameters = (Map<String, Object>) exports.get(0).get("RequestParameters");
+        assertEquals(
+                Boolean.FALSE,
+                requestParameters.get("method.request.querystring.subjectSub"),
+                "subjectSub must stay optional (self-service calls omit it)");
+    }
+
     // Ticker-scoped routes serve the same data to every caller, so their existing {ticker}-only
     // cache key must not change.
     @Test

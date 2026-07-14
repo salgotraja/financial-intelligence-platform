@@ -631,8 +631,11 @@ public class QueryStack extends Stack {
                                         + "  \"callerSub\": \"$context.authorizer.sub\","
                                         + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
                         // Authorization must be a cache key, else the 60s stage cache serves one
-                        // caller's export to every other caller for up to 60s.
-                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
+                        // caller's export to every other caller for up to 60s. subjectSub too:
+                        // the same admin token exporting subject A then subject B within the TTL
+                        // would otherwise get A's cached response for B.
+                        .cacheKeyParameters(
+                                List.of("method.request.header.Authorization", "method.request.querystring.subjectSub"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
