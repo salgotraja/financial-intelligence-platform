@@ -2,7 +2,6 @@ package dev.engnotes.query.service;
 
 import dev.engnotes.query.model.DailyMarketDataResponse;
 import dev.engnotes.query.model.DailyPoint;
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -91,36 +90,12 @@ public class DailyMarketDataQuery {
 
     private static DailyPoint toDailyPoint(Map<String, AttributeValue> item) {
         return new DailyPoint(
-                dayOf(item),
-                decimal(item, "open"),
-                decimal(item, "high"),
-                decimal(item, "low"),
-                decimal(item, "close"),
-                decimal(item, "previousClose"),
-                longValue(item, "volume"));
-    }
-
-    private static String dayOf(Map<String, AttributeValue> item) {
-        String day = attr(item, "day");
-        if (day != null) {
-            return day;
-        }
-        String sk = attr(item, "SK");
-        return sk != null && sk.startsWith("DAY#") ? sk.substring("DAY#".length()) : sk;
-    }
-
-    private static String attr(Map<String, AttributeValue> item, String key) {
-        AttributeValue value = item.get(key);
-        return value == null ? null : value.s();
-    }
-
-    private static BigDecimal decimal(Map<String, AttributeValue> item, String key) {
-        AttributeValue value = item.get(key);
-        return value == null || value.n() == null ? null : new BigDecimal(value.n());
-    }
-
-    private static Long longValue(Map<String, AttributeValue> item, String key) {
-        AttributeValue value = item.get(key);
-        return value == null || value.n() == null ? null : Long.parseLong(value.n());
+                DynamoAttributes.dayOf(item),
+                DynamoAttributes.decimal(item, "open"),
+                DynamoAttributes.decimal(item, "high"),
+                DynamoAttributes.decimal(item, "low"),
+                DynamoAttributes.decimal(item, "close"),
+                DynamoAttributes.decimal(item, "previousClose"),
+                DynamoAttributes.longValue(item, "volume"));
     }
 }
