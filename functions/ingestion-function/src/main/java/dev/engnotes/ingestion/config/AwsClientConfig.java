@@ -2,6 +2,7 @@ package dev.engnotes.ingestion.config;
 
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.time.Clock;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -45,6 +46,12 @@ public class AwsClientConfig {
     @Bean
     public HttpClient marketDataHttpClient() {
         return HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+    }
+
+    /** Injected so the market-hours guard is deterministic in tests. */
+    @Bean
+    public Clock clock() {
+        return Clock.systemUTC();
     }
 
     @Bean
