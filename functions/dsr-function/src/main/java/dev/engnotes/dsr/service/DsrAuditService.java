@@ -47,12 +47,12 @@ public class DsrAuditService {
     public void record(String subjectSub, AuditEventType type, String actorSub, String sourceIp, String seq) {
         String now = Instant.now(clock).toString();
         Map<String, AttributeValue> item = new HashMap<>();
-        item.put("PK", s("USER#" + subjectSub));
-        item.put("SK", s("EVENT#" + now + "#" + seq));
-        item.put("eventType", s(type.name()));
-        item.put("actorSub", s(actorSub));
+        item.put("PK", AttributeValues.s("USER#" + subjectSub));
+        item.put("SK", AttributeValues.s("EVENT#" + now + "#" + seq));
+        item.put("eventType", AttributeValues.s(type.name()));
+        item.put("actorSub", AttributeValues.s(actorSub));
         if (sourceIp != null) {
-            item.put("sourceIp", s(sourceIp));
+            item.put("sourceIp", AttributeValues.s(sourceIp));
         }
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(auditTable).item(item).build());
@@ -78,15 +78,15 @@ public class DsrAuditService {
             String completedAt,
             boolean emailSent) {
         Map<String, AttributeValue> item = new HashMap<>();
-        item.put("PK", s("USER#" + subjectSub));
-        item.put("SK", s("EVENT#" + requestedAt + "#" + correlationId));
-        item.put("eventType", s(AuditEventType.ACCOUNT_ERASED.name()));
-        item.put("actorSub", s(actorSub));
+        item.put("PK", AttributeValues.s("USER#" + subjectSub));
+        item.put("SK", AttributeValues.s("EVENT#" + requestedAt + "#" + correlationId));
+        item.put("eventType", AttributeValues.s(AuditEventType.ACCOUNT_ERASED.name()));
+        item.put("actorSub", AttributeValues.s(actorSub));
         if (sourceIp != null) {
-            item.put("sourceIp", s(sourceIp));
+            item.put("sourceIp", AttributeValues.s(sourceIp));
         }
-        item.put("requestedAt", s(requestedAt));
-        item.put("completedAt", s(completedAt));
+        item.put("requestedAt", AttributeValues.s(requestedAt));
+        item.put("completedAt", AttributeValues.s(completedAt));
         item.put("emailSent", AttributeValue.builder().bool(emailSent).build());
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(auditTable).item(item).build());
@@ -116,21 +116,17 @@ public class DsrAuditService {
             Boolean emailSent) {
         String date = occurredAt.substring(0, 10);
         Map<String, AttributeValue> item = new HashMap<>();
-        item.put("PK", s("AUDIT#" + type.name() + "#" + date));
-        item.put("SK", s(occurredAt + "#" + correlationId));
-        item.put("subjectHash", s(Hashing.sha256Hex(subjectSub)));
-        item.put("eventType", s(type.name()));
-        item.put("occurredAt", s(occurredAt));
-        item.put("actorHash", s(Hashing.sha256Hex(actorSub)));
+        item.put("PK", AttributeValues.s("AUDIT#" + type.name() + "#" + date));
+        item.put("SK", AttributeValues.s(occurredAt + "#" + correlationId));
+        item.put("subjectHash", AttributeValues.s(Hashing.sha256Hex(subjectSub)));
+        item.put("eventType", AttributeValues.s(type.name()));
+        item.put("occurredAt", AttributeValues.s(occurredAt));
+        item.put("actorHash", AttributeValues.s(Hashing.sha256Hex(actorSub)));
         if (emailSent != null) {
             item.put("emailSent", AttributeValue.builder().bool(emailSent).build());
         }
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(auditTable).item(item).build());
         log.info("Wrote hashed compliance audit record. type={} date={}", type, date);
-    }
-
-    private static AttributeValue s(String value) {
-        return AttributeValue.builder().s(value).build();
     }
 }

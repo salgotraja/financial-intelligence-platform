@@ -2,14 +2,12 @@ package dev.engnotes.dsr.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import dev.engnotes.dsr.model.ErasureResult;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -19,7 +17,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -32,7 +29,6 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
-import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
 import software.amazon.awssdk.services.dynamodb.paginators.QueryIterable;
 
 @ExtendWith(MockitoExtension.class)
@@ -53,89 +49,6 @@ class UserErasureServiceTest {
     void setUp() {
         Clock clock = Clock.fixed(Instant.parse(INSTANT), ZoneOffset.UTC);
         erasure = new UserErasureService(dynamoDb, cognito, TABLE, clock);
-    }
-
-    @Test
-    void eraseDeletesConsentWatchlistMirrorsThenCognito() {
-        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
-                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
-        when(dynamoDb.query(any(QueryRequest.class)))
-                .thenReturn(QueryResponse.builder()
-                        .items(List.of(Map.of("ticker", s("RELIANCE.NS")), Map.of("ticker", s("INFY.NS"))))
-                        .build());
-        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
-                .thenReturn(BatchWriteItemResponse.builder().build());
-        when(cognito.deleteBySub("user-1")).thenReturn(true);
-
-        ErasureResult result = erasure.erase("user-1");
-
-        ArgumentCaptor<BatchWriteItemRequest> captor = ArgumentCaptor.forClass(BatchWriteItemRequest.class);
-        InOrder order = inOrder(dynamoDb, cognito);
-        order.verify(dynamoDb).putItem(any(PutItemRequest.class));
-        order.verify(dynamoDb).query(any(QueryRequest.class));
-        order.verify(dynamoDb).batchWriteItem(captor.capture());
-        order.verify(cognito).deleteBySub("user-1");
-        order.verify(dynamoDb).deleteItem(any(DeleteItemRequest.class));
-
-        List<WriteRequest> writes = captor.getValue().requestItems().get(TABLE);
-        assertThat(writes)
-                .extracting(w -> w.deleteRequest().key().get("PK").s() + "/"
-                        + w.deleteRequest().key().get("SK").s())
-                .containsExactly(
-                        "USER#user-1/CONSENT",
-                        "USER#user-1/WATCH#RELIANCE.NS",
-                        "WATCHSET/TICKER#RELIANCE.NS",
-                        "USER#user-1/WATCH#INFY.NS",
-                        "WATCHSET/TICKER#INFY.NS");
-
-        assertThat(result.status()).isEqualTo("erased");
-        assertThat(result.subjectSub()).isEqualTo("user-1");
-        assertThat(result.itemsDeleted()).isEqualTo(5);
-        assertThat(result.cognitoUserDeleted()).isTrue();
-    }
-
-    @Test
-    void eraseDeletesConsentAndCognitoEvenWhenWatchlistEmpty() {
-        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
-                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
-        when(dynamoDb.query(any(QueryRequest.class)))
-                .thenReturn(QueryResponse.builder().items(List.of()).build());
-        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
-                .thenReturn(BatchWriteItemResponse.builder().build());
-        when(cognito.deleteBySub("ghost")).thenReturn(false);
-
-        ErasureResult result = erasure.erase("ghost");
-
-        ArgumentCaptor<BatchWriteItemRequest> captor = ArgumentCaptor.forClass(BatchWriteItemRequest.class);
-        org.mockito.Mockito.verify(dynamoDb).batchWriteItem(captor.capture());
-        List<WriteRequest> writes = captor.getValue().requestItems().get(TABLE);
-        assertThat(writes)
-                .extracting(w -> w.deleteRequest().key().get("SK").s())
-                .containsExactly("CONSENT");
-        assertThat(result.itemsDeleted()).isEqualTo(1);
-        assertThat(result.cognitoUserDeleted()).isFalse();
-    }
-
-    @Test
-    void erasePaginatesWatchlistAcrossPages() {
-        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
-                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
-        when(dynamoDb.query(any(QueryRequest.class)))
-                .thenReturn(QueryResponse.builder()
-                        .items(List.of(Map.of("ticker", s("RELIANCE.NS"))))
-                        .lastEvaluatedKey(Map.of("PK", s("USER#user-1"), "SK", s("WATCH#RELIANCE.NS")))
-                        .build())
-                .thenReturn(QueryResponse.builder()
-                        .items(List.of(Map.of("ticker", s("INFY.NS"))))
-                        .build());
-        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
-                .thenReturn(BatchWriteItemResponse.builder().build());
-        when(cognito.deleteBySub("user-1")).thenReturn(true);
-
-        ErasureResult result = erasure.erase("user-1");
-
-        // CONSENT + 2 tickers * (WATCH# + WATCHSET) = 5 deletes
-        assertThat(result.itemsDeleted()).isEqualTo(5);
     }
 
     @Test
@@ -198,6 +111,27 @@ class UserErasureServiceTest {
         verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
         verify(dynamoDb, never()).deleteItem(any(DeleteItemRequest.class));
         verifyNoInteractions(cognito);
+    }
+
+    @Test
+    void deleteUserItemsPaginatesWatchlistAcrossPages() {
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder()
+                        .items(List.of(Map.of("ticker", s("RELIANCE.NS"))))
+                        .lastEvaluatedKey(Map.of("PK", s("USER#user-1"), "SK", s("WATCH#RELIANCE.NS")))
+                        .build())
+                .thenReturn(QueryResponse.builder()
+                        .items(List.of(Map.of("ticker", s("INFY.NS"))))
+                        .build());
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
+                .thenReturn(BatchWriteItemResponse.builder().build());
+
+        int itemsDeleted = erasure.deleteUserItems("user-1");
+
+        // CONSENT + 2 tickers * (WATCH# + WATCHSET) = 5 deletes
+        assertThat(itemsDeleted).isEqualTo(5);
     }
 
     @Test

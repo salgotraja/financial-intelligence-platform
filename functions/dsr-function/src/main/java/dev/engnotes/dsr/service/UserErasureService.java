@@ -1,6 +1,5 @@
 package dev.engnotes.dsr.service;
 
-import dev.engnotes.dsr.model.ErasureResult;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -36,9 +35,8 @@ import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
  * invokable (each a Step Functions state in Task 11) and idempotent: the put overwrites, the delete
  * of an absent key is a no-op.
  *
- * <p>Task 11 decomposes the DynamoDB-item cascade itself into {@link #deleteUserItems}, reused by both
- * {@link #erase} (the synchronous path, kept for LocalStack ITs and as this decomposition's shared
- * core) and the {@code DELETE_USER_ITEMS} Step Functions state. {@link #isDeletionPending} backs the
+ * <p>Task 11 decomposes the DynamoDB-item cascade itself into {@link #deleteUserItems}, the {@code
+ * DELETE_USER_ITEMS} Step Functions state's shared core. {@link #isDeletionPending} backs the
  * workflow-start idempotency check (an already-pending subject is a no-op success, no second
  * execution). {@link #s3Safeguard} is a documented no-op: the data lake holds ticker/price time-series
  * only, no subject-linked keys, and this module has no S3 client or grant to act on regardless.
@@ -67,10 +65,10 @@ public class UserErasureService {
     /** Marks the subject deletion-pending. Idempotent: a Put overwrites any existing flag. */
     public void setDeletionPending(String subjectSub) {
         Map<String, AttributeValue> item = new HashMap<>();
-        item.put("PK", s("USER#" + subjectSub));
-        item.put("SK", s("PROFILE"));
+        item.put("PK", AttributeValues.s("USER#" + subjectSub));
+        item.put("SK", AttributeValues.s("PROFILE"));
         item.put("deletionPending", AttributeValue.builder().bool(true).build());
-        item.put("requestedAt", s(Instant.now(clock).toString()));
+        item.put("requestedAt", AttributeValues.s(Instant.now(clock).toString()));
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(platformTable).item(item).build());
         log.info("Set deletion-pending flag. subjectSub={}", subjectSub);
@@ -80,22 +78,9 @@ public class UserErasureService {
     public void clearDeletionPending(String subjectSub) {
         dynamoDb.deleteItem(DeleteItemRequest.builder()
                 .tableName(platformTable)
-                .key(Map.of("PK", s("USER#" + subjectSub), "SK", s("PROFILE")))
+                .key(Map.of("PK", AttributeValues.s("USER#" + subjectSub), "SK", AttributeValues.s("PROFILE")))
                 .build());
         log.info("Cleared deletion-pending flag. subjectSub={}", subjectSub);
-    }
-
-    public ErasureResult erase(String subjectSub) {
-        setDeletionPending(subjectSub);
-
-        int itemsDeleted = deleteUserItems(subjectSub);
-
-        boolean cognitoDeleted = cognito.deleteBySub(subjectSub);
-
-        clearDeletionPending(subjectSub);
-
-        log.info("Erased subject. subjectSub={} items={} cognitoDeleted={}", subjectSub, itemsDeleted, cognitoDeleted);
-        return new ErasureResult("erased", subjectSub, itemsDeleted, cognitoDeleted);
     }
 
     /**
@@ -109,7 +94,8 @@ public class UserErasureService {
                 .queryPaginator(QueryRequest.builder()
                         .tableName(platformTable)
                         .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
-                        .expressionAttributeValues(Map.of(":pk", s("USER#" + subjectSub), ":sk", s("WATCH#")))
+                        .expressionAttributeValues(Map.of(
+                                ":pk", AttributeValues.s("USER#" + subjectSub), ":sk", AttributeValues.s("WATCH#")))
                         .build())
                 .items()
                 .stream()
@@ -119,10 +105,12 @@ public class UserErasureService {
                 .toList();
 
         List<WriteRequest> writes = new ArrayList<>();
-        writes.add(deleteOf(Map.of("PK", s("USER#" + subjectSub), "SK", s("CONSENT"))));
+        writes.add(deleteOf(Map.of("PK", AttributeValues.s("USER#" + subjectSub), "SK", AttributeValues.s("CONSENT"))));
         for (String ticker : tickers) {
-            writes.add(deleteOf(Map.of("PK", s("USER#" + subjectSub), "SK", s("WATCH#" + ticker))));
-            writes.add(deleteOf(Map.of("PK", s("WATCHSET"), "SK", s("TICKER#" + ticker))));
+            writes.add(deleteOf(
+                    Map.of("PK", AttributeValues.s("USER#" + subjectSub), "SK", AttributeValues.s("WATCH#" + ticker))));
+            writes.add(
+                    deleteOf(Map.of("PK", AttributeValues.s("WATCHSET"), "SK", AttributeValues.s("TICKER#" + ticker))));
         }
 
         DynamoBatch.batchWriteAllWithRetry(dynamoDb, platformTable, writes);
@@ -133,7 +121,7 @@ public class UserErasureService {
     public boolean isDeletionPending(String subjectSub) {
         Map<String, AttributeValue> item = dynamoDb.getItem(GetItemRequest.builder()
                         .tableName(platformTable)
-                        .key(Map.of("PK", s("USER#" + subjectSub), "SK", s("PROFILE")))
+                        .key(Map.of("PK", AttributeValues.s("USER#" + subjectSub), "SK", AttributeValues.s("PROFILE")))
                         .build())
                 .item();
         AttributeValue flag = item == null ? null : item.get("deletionPending");
@@ -153,9 +141,5 @@ public class UserErasureService {
         return WriteRequest.builder()
                 .deleteRequest(DeleteRequest.builder().key(key).build())
                 .build();
-    }
-
-    private static AttributeValue s(String value) {
-        return AttributeValue.builder().s(value).build();
     }
 }
