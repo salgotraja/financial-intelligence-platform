@@ -497,7 +497,7 @@ public class QueryStack extends Stack {
                         .requestTemplates(Map.of(
                                 "application/json",
                                 "{ \"operation\": \"ADD\","
-                                        + "  \"ticker\": \"$input.params('ticker')\","
+                                        + "  \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
@@ -516,7 +516,7 @@ public class QueryStack extends Stack {
                         .requestTemplates(Map.of(
                                 "application/json",
                                 "{ \"operation\": \"REMOVE\","
-                                        + "  \"ticker\": \"$input.params('ticker')\","
+                                        + "  \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))

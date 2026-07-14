@@ -103,6 +103,32 @@ class QueryStackTest {
         }
     }
 
+    // Every request template that interpolates the caller-controlled {ticker} path param must wrap
+    // it in $util.escapeJavaScript: a quote-breaking ticker in an unescaped template can inject a
+    // duplicate JSON key after the legitimate one (e.g. flipping the watchlist "operation" from ADD
+    // to REMOVE), since Jackson keeps the last duplicate. Pins the class for every current template
+    // (insight GET, market-data GET, watchlist POST/DELETE, ingest POST) and any future one.
+    @Test
+    @SuppressWarnings("unchecked")
+    void everyTickerInterpolatingRequestTemplateEscapesTheTicker() {
+        var tickerTemplates = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .map(QueryStackTest::requestTemplateBody)
+                .filter(body -> body.contains("$input.params('ticker')"))
+                .toList();
+        assertEquals(
+                5,
+                tickerTemplates.size(),
+                "expected 5 ticker-interpolating request templates (insight GET, market-data GET,"
+                        + " watchlist POST/DELETE, ingest POST)");
+        for (var body : tickerTemplates) {
+            var unescapedRemainder = body.replace("$util.escapeJavaScript($input.params('ticker'))", "");
+            assertFalse(
+                    unescapedRemainder.contains("$input.params('ticker')"),
+                    "raw unescaped $input.params('ticker') in request template: " + body);
+        }
+    }
+
     // Item 5: the TokenAuthorizer used to target $LATEST directly, so the authorizer paid the full
     // Spring Boot cold start on every request even though SnapStart was enabled on the function.
     @Test
