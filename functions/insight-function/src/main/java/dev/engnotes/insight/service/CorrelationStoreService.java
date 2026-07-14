@@ -33,6 +33,16 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
  * cleanup reads the previous pass's group META items (found via that same Query) for their member
  * lists, unions them, and diffs against this pass's members — again no Scan.
  *
+ * <p>Deleting a stale group also purges its {@code GROUP#{id}/INSIGHT#*} items (LATEST, history, and
+ * the per-member GSI1 mirrors {@code GroupInsightStoreService} wrote - all 7-day-TTL operational
+ * data, not compliance data). Without this, a departed ticker's group mirror would keep serving in
+ * the insight feed for up to the TTL after the group dissolved or changed membership.
+ *
+ * <p>Write order inside {@link #putGroup} is GROUPSET mirror first, then META: a crash between the
+ * two leaves a mirror pointing at a missing META, which the next pass's {@link #queryGroupIds} sees
+ * and {@link #deleteGroup} purges (self-cleaning; {@link #groupMembers} treats a missing META as an
+ * empty member list). The reverse order would leave an invisible orphaned META no Query can find.
+ *
  * <p>Migration note: groups written before this index existed have a META item but no GROUPSET mirror.
  * {@link GroupIdGenerator} ids are a hash of the sorted member list, so a group whose membership is
  * unchanged recomputes the same id and self-heals (its GROUPSET mirror is created the next time it is
@@ -50,6 +60,7 @@ public class CorrelationStoreService {
     private static final String TICKER_PREFIX = "TICKER#";
     private static final String REVERSE_LOOKUP_SK = "GROUP";
     private static final String GROUPSET_PK = "GROUPSET";
+    private static final String INSIGHT_SK_PREFIX = "INSIGHT#";
 
     private final DynamoDbClient dynamoDb;
     private final String platformTable;
@@ -132,6 +143,15 @@ public class CorrelationStoreService {
     }
 
     private void putGroup(CorrelationGroup group) {
+        // GROUPSET mirror first (see class javadoc): a crash after this put but before the META put
+        // leaves a mirror pointing at a missing META, which the next pass finds and purges.
+        dynamoDb.putItem(PutItemRequest.builder()
+                .tableName(platformTable)
+                .item(Map.of(
+                        "PK", s(GROUPSET_PK),
+                        "SK", s(GROUP_PREFIX + group.groupId()),
+                        "groupId", s(group.groupId())))
+                .build());
         Map<String, AttributeValue> item = new HashMap<>();
         item.put("PK", s(GROUP_PREFIX + group.groupId()));
         item.put("SK", s(META_SK));
@@ -142,18 +162,29 @@ public class CorrelationStoreService {
         item.put("computedAt", s(group.computedAt()));
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(platformTable).item(item).build());
-        dynamoDb.putItem(PutItemRequest.builder()
-                .tableName(platformTable)
-                .item(Map.of(
-                        "PK", s(GROUPSET_PK),
-                        "SK", s(GROUP_PREFIX + group.groupId()),
-                        "groupId", s(group.groupId())))
-                .build());
     }
 
     private void deleteGroup(String groupId) {
+        deleteInsightItems(groupId);
         deleteItem(GROUP_PREFIX + groupId, META_SK);
         deleteItem(GROUPSET_PK, GROUP_PREFIX + groupId);
+    }
+
+    /**
+     * Purges a departed group's insight items (LATEST, history, per-member GSI1 mirrors - all
+     * short-TTL operational data) so its stale insights stop serving in the feed the moment the
+     * group dissolves or its membership changes, instead of lingering until TTL expiry.
+     */
+    private void deleteInsightItems(String groupId) {
+        QueryRequest request = QueryRequest.builder()
+                .tableName(platformTable)
+                .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
+                .expressionAttributeValues(Map.of(":pk", s(GROUP_PREFIX + groupId), ":sk", s(INSIGHT_SK_PREFIX)))
+                .projectionExpression("PK, SK")
+                .build();
+        dynamoDb.queryPaginator(request).items().stream()
+                .filter(item -> item.get("PK") != null && item.get("SK") != null)
+                .forEach(item -> deleteItem(item.get("PK").s(), item.get("SK").s()));
     }
 
     private void putReverseLookup(String ticker, String groupId) {
