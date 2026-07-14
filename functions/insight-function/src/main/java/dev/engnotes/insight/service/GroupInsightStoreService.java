@@ -58,7 +58,7 @@ public class GroupInsightStoreService {
         try {
             var response = dynamoDb.getItem(GetItemRequest.builder()
                     .tableName(platformTable)
-                    .key(Map.of("PK", s(GROUP_PREFIX + groupId), "SK", s(LATEST_SK)))
+                    .key(Map.of("PK", AttributeValues.s(GROUP_PREFIX + groupId), "SK", AttributeValues.s(LATEST_SK)))
                     .build());
             if (!response.hasItem()) {
                 return Optional.empty();
@@ -104,8 +104,8 @@ public class GroupInsightStoreService {
 
     private void putLatest(String groupId, Map<String, AttributeValue> item) {
         Map<String, AttributeValue> latest = new HashMap<>(item);
-        latest.put("PK", s(GROUP_PREFIX + groupId));
-        latest.put("SK", s(LATEST_SK));
+        latest.put("PK", AttributeValues.s(GROUP_PREFIX + groupId));
+        latest.put("SK", AttributeValues.s(LATEST_SK));
         latest.put("ttl", ttl());
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(platformTable).item(latest).build());
@@ -113,8 +113,8 @@ public class GroupInsightStoreService {
 
     private void putHistory(String groupId, String generatedAt, Map<String, AttributeValue> item) {
         Map<String, AttributeValue> history = new HashMap<>(item);
-        history.put("PK", s(GROUP_PREFIX + groupId));
-        history.put("SK", s(INSIGHT_SK_PREFIX + generatedAt));
+        history.put("PK", AttributeValues.s(GROUP_PREFIX + groupId));
+        history.put("SK", AttributeValues.s(INSIGHT_SK_PREFIX + generatedAt));
         history.put("ttl", ttl());
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(platformTable).item(history).build());
@@ -122,11 +122,11 @@ public class GroupInsightStoreService {
 
     private void putMirror(GroupInsightResponse insight, String member, Map<String, AttributeValue> item) {
         Map<String, AttributeValue> mirror = new HashMap<>(item);
-        mirror.put("PK", s(GROUP_PREFIX + insight.groupId()));
-        mirror.put("SK", s(INSIGHT_SK_PREFIX + insight.generatedAt() + "#" + member));
-        mirror.put("GSI1PK", s(TICKER_PREFIX + member));
-        mirror.put("GSI1SK", s(INSIGHT_SK_PREFIX + insight.generatedAt()));
-        mirror.put("member", s(member));
+        mirror.put("PK", AttributeValues.s(GROUP_PREFIX + insight.groupId()));
+        mirror.put("SK", AttributeValues.s(INSIGHT_SK_PREFIX + insight.generatedAt() + "#" + member));
+        mirror.put("GSI1PK", AttributeValues.s(TICKER_PREFIX + member));
+        mirror.put("GSI1SK", AttributeValues.s(INSIGHT_SK_PREFIX + insight.generatedAt()));
+        mirror.put("member", AttributeValues.s(member));
         mirror.put("ttl", ttl());
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(platformTable).item(mirror).build());
@@ -134,20 +134,20 @@ public class GroupInsightStoreService {
 
     private Map<String, AttributeValue> buildItem(GroupInsightResponse insight) {
         Map<String, AttributeValue> item = new HashMap<>();
-        item.put("groupId", s(insight.groupId()));
+        item.put("groupId", AttributeValues.s(insight.groupId()));
         item.put("tickers", strList(insight.tickers()));
-        item.put("generatedAt", s(insight.generatedAt()));
-        item.put("signal", s(insight.signal()));
+        item.put("generatedAt", AttributeValues.s(insight.generatedAt()));
+        item.put("signal", AttributeValues.s(insight.signal()));
         item.put("confidence", n(String.valueOf(insight.confidence())));
-        item.put("rationale", s(insight.rationale()));
-        item.put("source", s(insight.source()));
-        item.put("modelId", s(insight.modelId()));
-        item.put("promptVersion", s(insight.promptVersion()));
+        item.put("rationale", AttributeValues.s(insight.rationale()));
+        item.put("source", AttributeValues.s(insight.source()));
+        item.put("modelId", AttributeValues.s(insight.modelId()));
+        item.put("promptVersion", AttributeValues.s(insight.promptVersion()));
         if (insight.drivers() != null && !insight.drivers().isEmpty()) {
             item.put("drivers", strList(insight.drivers()));
         }
         if (insight.correlationId() != null) {
-            item.put("correlationId", s(insight.correlationId()));
+            item.put("correlationId", AttributeValues.s(insight.correlationId()));
         }
         return item;
     }
@@ -156,15 +156,13 @@ public class GroupInsightStoreService {
         return n(String.valueOf(Instant.now().getEpochSecond() + TTL_SECONDS));
     }
 
-    private AttributeValue s(String value) {
-        return AttributeValue.builder().s(value).build();
-    }
-
     private AttributeValue n(String value) {
         return AttributeValue.builder().n(value).build();
     }
 
     private AttributeValue strList(List<String> values) {
-        return AttributeValue.builder().l(values.stream().map(this::s).toList()).build();
+        return AttributeValue.builder()
+                .l(values.stream().map(AttributeValues::s).toList())
+                .build();
     }
 }

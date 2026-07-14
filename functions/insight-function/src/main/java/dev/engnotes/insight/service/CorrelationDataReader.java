@@ -43,7 +43,8 @@ public class CorrelationDataReader {
         QueryRequest request = QueryRequest.builder()
                 .tableName(platformTable)
                 .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
-                .expressionAttributeValues(Map.of(":pk", s("WATCHSET"), ":sk", s(TICKER_PREFIX)))
+                .expressionAttributeValues(
+                        Map.of(":pk", AttributeValues.s("WATCHSET"), ":sk", AttributeValues.s(TICKER_PREFIX)))
                 .build();
         return dynamoDb.queryPaginator(request).items().stream()
                 .map(item -> item.get("ticker"))
@@ -63,7 +64,8 @@ public class CorrelationDataReader {
         QueryRequest request = QueryRequest.builder()
                 .tableName(platformTable)
                 .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
-                .expressionAttributeValues(Map.of(":pk", s(TICKER_PREFIX + ticker), ":sk", s(TS_PREFIX)))
+                .expressionAttributeValues(
+                        Map.of(":pk", AttributeValues.s(TICKER_PREFIX + ticker), ":sk", AttributeValues.s(TS_PREFIX)))
                 .scanIndexForward(false)
                 .limit(limit)
                 .build();
@@ -94,9 +96,5 @@ public class CorrelationDataReader {
     private static String attr(Map<String, AttributeValue> item, String key) {
         AttributeValue value = item.get(key);
         return value == null ? null : value.s();
-    }
-
-    private static AttributeValue s(String value) {
-        return AttributeValue.builder().s(value).build();
     }
 }

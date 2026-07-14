@@ -73,7 +73,8 @@ public class GroupContextReader {
         QueryRequest request = QueryRequest.builder()
                 .tableName(platformTable)
                 .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
-                .expressionAttributeValues(Map.of(":pk", s(TICKER_PREFIX + ticker), ":sk", s(TS_PREFIX)))
+                .expressionAttributeValues(
+                        Map.of(":pk", AttributeValues.s(TICKER_PREFIX + ticker), ":sk", AttributeValues.s(TS_PREFIX)))
                 .scanIndexForward(false)
                 .limit(1)
                 .build();
@@ -84,7 +85,7 @@ public class GroupContextReader {
     private Map<String, AttributeValue> readBaseline(String ticker) {
         var response = dynamoDb.getItem(GetItemRequest.builder()
                 .tableName(platformTable)
-                .key(Map.of("PK", s(TICKER_PREFIX + ticker), "SK", s(BASELINE_SK)))
+                .key(Map.of("PK", AttributeValues.s(TICKER_PREFIX + ticker), "SK", AttributeValues.s(BASELINE_SK)))
                 .build());
         return response.hasItem() ? response.item() : Map.of();
     }
@@ -102,9 +103,5 @@ public class GroupContextReader {
     private static Double number(Map<String, AttributeValue> item, String key) {
         AttributeValue value = item.get(key);
         return value == null || value.n() == null ? null : Double.parseDouble(value.n());
-    }
-
-    private static AttributeValue s(String value) {
-        return AttributeValue.builder().s(value).build();
     }
 }
