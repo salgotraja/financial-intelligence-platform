@@ -93,6 +93,17 @@ class DsrBeanIT extends AbstractLocalStackIT {
                 .hasItem();
     }
 
+    private Map<String, AttributeValue> getItem(String table, String pk, String sk) {
+        return dynamoDbClient
+                .getItem(GetItemRequest.builder()
+                        .tableName(table)
+                        .key(Map.of(
+                                "PK", AttributeValue.builder().s(pk).build(),
+                                "SK", AttributeValue.builder().s(sk).build()))
+                        .build())
+                .item();
+    }
+
     @Test
     void exportAggregatesConsentAndWatchlist() {
         seedConsent("subject-1");
@@ -107,6 +118,26 @@ class DsrBeanIT extends AbstractLocalStackIT {
         assertThat(export.watchlist()).contains("AAA.NS");
         // ConsentView accessor is consentGiven(), not given().
         assertThat(export.consent().consentGiven()).isTrue();
+
+        // Task 12: the hashed-subject ACCESS compliance record lands alongside the per-user
+        // DATA_EXPORTED record, date-partitioned and carrying no raw sub.
+        var complianceItems = dynamoDbClient
+                .query(QueryRequest.builder()
+                        .tableName(PlatformSchema.AUDIT_TABLE)
+                        .keyConditionExpression("PK = :pk")
+                        .expressionAttributeValues(Map.of(
+                                ":pk",
+                                AttributeValue.builder()
+                                        .s("AUDIT#ACCESS#" + java.time.LocalDate.now(java.time.ZoneOffset.UTC))
+                                        .build()))
+                        .build())
+                .items();
+        assertThat(complianceItems).hasSize(1);
+        var compliance = complianceItems.get(0);
+        assertThat(compliance.get("subjectHash").s()).isNotEqualTo("subject-1");
+        assertThat(compliance.get("eventType").s()).isEqualTo("ACCESS");
+        assertThat(compliance).doesNotContainKey("email").doesNotContainKey("sourceIp");
+        assertThat(compliance.toString()).doesNotContain("subject-1");
     }
 
     @Test
@@ -204,6 +235,16 @@ class DsrBeanIT extends AbstractLocalStackIT {
         assertThat(event.get("requestedAt").s()).isEqualTo(requestedAt);
         assertThat(event.get("completedAt").s()).isEqualTo(audited.completedAt());
         assertThat(event.get("emailSent").bool()).isTrue();
+
+        // Task 12: the hashed-subject ERASURE compliance record, date-partitioned off requestedAt
+        // (2026-07-14), keyed by exact PK/SK (not a partition Query) so it is unaffected by other
+        // tests' records sharing the same date partition. Carries no raw sub, no email, and the admin
+        // caller's sub hashed too.
+        var compliance = getItem(PlatformSchema.AUDIT_TABLE, "AUDIT#ERASURE#2026-07-14", requestedAt + "#corr-wa");
+        assertThat(compliance.get("eventType").s()).isEqualTo("ERASURE");
+        assertThat(compliance.get("emailSent").bool()).isTrue();
+        assertThat(compliance).doesNotContainKey("email").doesNotContainKey("sourceIp");
+        assertThat(compliance.toString()).doesNotContain("subject-2").doesNotContain("admin-caller");
     }
 
     // Simulates the state machine's Catch -> EmailFailed -> WriteErasureAudit path: SEND_CONFIRMATION_EMAIL
@@ -228,13 +269,17 @@ class DsrBeanIT extends AbstractLocalStackIT {
                         null)))
                 .isInstanceOf(RuntimeException.class);
 
+        // Distinct correlationId from the other erasure test ("corr-wa"): both tests share requestedAt
+        // "2026-07-14T09:00:00Z", and the hashed compliance record's SK is deterministic off
+        // requestedAt+correlationId, so a shared correlationId here would collide with (overwrite) the
+        // other test's record in the same AUDIT#ERASURE#2026-07-14 date partition.
         var audited = (ErasureStepResult) dsr.apply(new DsrRequest(
                 DsrOperation.WRITE_ERASURE_AUDIT,
                 "subject-3",
                 null,
                 "subject-3",
                 null,
-                "corr-wa",
+                "corr-wa-3",
                 requestedAt,
                 null,
                 false));
@@ -251,5 +296,9 @@ class DsrBeanIT extends AbstractLocalStackIT {
                 .items();
         assertThat(auditItems).hasSize(1);
         assertThat(auditItems.get(0).get("emailSent").bool()).isFalse();
+
+        var compliance = getItem(PlatformSchema.AUDIT_TABLE, "AUDIT#ERASURE#2026-07-14", requestedAt + "#corr-wa-3");
+        assertThat(compliance.get("emailSent").bool()).isFalse();
+        assertThat(compliance.toString()).doesNotContain("subject-3");
     }
 }

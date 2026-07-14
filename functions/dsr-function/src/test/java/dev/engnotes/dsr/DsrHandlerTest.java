@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.engnotes.dsr.model.AuditEventType;
+import dev.engnotes.dsr.model.ComplianceEventType;
 import dev.engnotes.dsr.model.DsrOperation;
 import dev.engnotes.dsr.model.DsrRequest;
 import dev.engnotes.dsr.model.DsrResponse;
@@ -73,6 +74,8 @@ class DsrHandlerTest {
         InOrder order = inOrder(export, audit);
         order.verify(export).export("user-1");
         order.verify(audit).record("user-1", AuditEventType.DATA_EXPORTED, "user-1", "1.2.3.4", "corr-1");
+        order.verify(audit)
+                .recordCompliance(ComplianceEventType.ACCESS, "user-1", "user-1", NOW.toString(), "corr-1", null);
         assertThat(((UserDataExport) response).status()).isEqualTo("ok");
     }
 
@@ -135,6 +138,20 @@ class DsrHandlerTest {
         assertThat(result.subjectSub()).isEqualTo("user-4");
         assertThat(result.email()).isEqualTo("user4@example.com");
         assertThat(result.requestedAt()).isEqualTo("2026-07-14T09:00:00Z");
+    }
+
+    // Pins the "" contract (Task 11 review item A): a subject with no Cognito user/email must emit an
+    // empty string, never null, since the ASL payload template's "email.$": "$.email" on every
+    // downstream state requires the path to resolve.
+    @Test
+    void markPendingEmitsEmptyStringWhenNoCognitoEmail() {
+        when(cognito.findEmailBySub("user-12")).thenReturn(null);
+
+        DsrResponse response = handle(new DsrRequest(
+                DsrOperation.MARK_PENDING, null, null, "user-12", null, "corr-13", "2026-07-14T09:00:00Z", null, null));
+
+        ErasureStepResult result = (ErasureStepResult) response;
+        assertThat(result.email()).isEqualTo("");
     }
 
     @Test
@@ -244,6 +261,9 @@ class DsrHandlerTest {
         verify(audit)
                 .recordErasureCompletion(
                         "user-10", "admin-1", "1.2.3.4", "corr-11", "2026-07-14T09:00:00Z", NOW.toString(), false);
+        verify(audit)
+                .recordCompliance(
+                        ComplianceEventType.ERASURE, "user-10", "admin-1", "2026-07-14T09:00:00Z", "corr-11", false);
         ErasureStepResult result = (ErasureStepResult) response;
         assertThat(result.emailSent()).isFalse();
         assertThat(result.completedAt()).isEqualTo(NOW.toString());
@@ -265,5 +285,8 @@ class DsrHandlerTest {
         verify(audit)
                 .recordErasureCompletion(
                         "user-11", "user-11", null, "corr-12", "2026-07-14T09:00:00Z", NOW.toString(), true);
+        verify(audit)
+                .recordCompliance(
+                        ComplianceEventType.ERASURE, "user-11", "user-11", "2026-07-14T09:00:00Z", "corr-12", true);
     }
 }

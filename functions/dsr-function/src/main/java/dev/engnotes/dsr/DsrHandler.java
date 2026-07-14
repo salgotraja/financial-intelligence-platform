@@ -3,6 +3,7 @@ package dev.engnotes.dsr;
 import dev.engnotes.dsr.auth.SubjectResolver;
 import dev.engnotes.dsr.auth.SubjectResolver.Resolution;
 import dev.engnotes.dsr.model.AuditEventType;
+import dev.engnotes.dsr.model.ComplianceEventType;
 import dev.engnotes.dsr.model.DsrRequest;
 import dev.engnotes.dsr.model.DsrResponse;
 import dev.engnotes.dsr.model.ErasureAcceptance;
@@ -79,6 +80,13 @@ public class DsrHandler {
                             request.callerSub(),
                             request.sourceIp(),
                             request.correlationId());
+                    audit.recordCompliance(
+                            ComplianceEventType.ACCESS,
+                            resolution.subject(),
+                            request.callerSub(),
+                            Instant.now(clock).toString(),
+                            request.correlationId(),
+                            null);
                     yield data;
                 }
 
@@ -94,7 +102,11 @@ public class DsrHandler {
                 }
 
                 // Captures the subject's email from Cognito before any delete, so
-                // SendConfirmationEmail can send after DeleteCognitoUser removes the identity.
+                // SendConfirmationEmail can send after DeleteCognitoUser removes the identity. Emits ""
+                // rather than null when no Cognito user/email exists: the ASL payload template's
+                // "email.$": "$.email" on every downstream state requires the path to resolve, and an
+                // absent path (rather than a null value) fails the execution terminally if serialization
+                // ever drops null fields. sendConfirmation already no-ops on a blank address.
                 case MARK_PENDING -> {
                     erasure.setDeletionPending(request.subjectSub());
                     String email = cognito.findEmailBySub(request.subjectSub());
@@ -104,7 +116,7 @@ public class DsrHandler {
                             request.sourceIp(),
                             request.correlationId(),
                             request.requestedAt(),
-                            email,
+                            email == null ? "" : email,
                             null,
                             null,
                             null,
@@ -187,6 +199,13 @@ public class DsrHandler {
                             request.correlationId(),
                             request.requestedAt(),
                             completedAt,
+                            emailSent);
+                    audit.recordCompliance(
+                            ComplianceEventType.ERASURE,
+                            request.subjectSub(),
+                            request.callerSub(),
+                            request.requestedAt(),
+                            request.correlationId(),
                             emailSent);
                     yield new ErasureStepResult(
                             request.subjectSub(),

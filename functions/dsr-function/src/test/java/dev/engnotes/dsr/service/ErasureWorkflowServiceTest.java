@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.sfn.SfnClient;
+import software.amazon.awssdk.services.sfn.model.ExecutionAlreadyExistsException;
 import software.amazon.awssdk.services.sfn.model.StartExecutionRequest;
 import software.amazon.awssdk.services.sfn.model.StartExecutionResponse;
 import tools.jackson.databind.ObjectMapper;
@@ -76,5 +77,40 @@ class ErasureWorkflowServiceTest {
                 .contains("\"sourceIp\":\"9.9.9.9\"")
                 .contains("\"correlationId\":\"corr-2\"")
                 .contains("\"requestedAt\":\"" + NOW + "\"");
+        // Deterministic: subject + requestedAt, sanitized to the ASL name charset (colons stripped).
+        assertThat(request.name()).isEqualTo("erasure-user-2-2026-07-14T093000Z");
+    }
+
+    @Test
+    void startErasureIsIdempotentWhenExecutionAlreadyExists() {
+        when(erasure.isDeletionPending("user-3")).thenReturn(false);
+        when(sfn.startExecution(any(StartExecutionRequest.class)))
+                .thenThrow(ExecutionAlreadyExistsException.builder()
+                        .message("Execution already exists")
+                        .build());
+
+        ErasureAcceptance result = workflow.startErasure("user-3", "user-3", "1.2.3.4", "corr-3");
+
+        assertThat(result.status()).isEqualTo("accepted");
+        assertThat(result.subjectSub()).isEqualTo("user-3");
+        assertThat(result.executionArn()).isNull();
+    }
+
+    @Test
+    void startErasureExecutionNameIsSanitizedAndCappedAt80Characters() {
+        String longSubject = "a".repeat(100);
+        when(erasure.isDeletionPending(longSubject)).thenReturn(false);
+        when(sfn.startExecution(any(StartExecutionRequest.class)))
+                .thenReturn(StartExecutionResponse.builder()
+                        .executionArn("arn:aws:states:...:execution:financial-erasure-dev:xyz")
+                        .build());
+
+        workflow.startErasure(longSubject, longSubject, "1.2.3.4", "corr-4");
+
+        ArgumentCaptor<StartExecutionRequest> captor = ArgumentCaptor.forClass(StartExecutionRequest.class);
+        verify(sfn).startExecution(captor.capture());
+        String name = captor.getValue().name();
+        assertThat(name).hasSizeLessThanOrEqualTo(80);
+        assertThat(name).matches("[A-Za-z0-9_-]+");
     }
 }
