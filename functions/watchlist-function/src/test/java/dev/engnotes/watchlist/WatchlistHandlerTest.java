@@ -36,6 +36,9 @@ class WatchlistHandlerTest {
         lenient()
                 .when(consentGate.isActive(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(true);
+        lenient()
+                .when(consentGate.isDeletionPending(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(false);
     }
 
     @Test
@@ -98,6 +101,41 @@ class WatchlistHandlerTest {
                         .apply(new WatchlistRequest(Operation.LIST, null, "user-123", "corr-5")))
                 .isInstanceOf(WatchlistException.class);
         verifyNoInteractions(store);
+    }
+
+    @Test
+    void addRefusesWhenDeletionPending() {
+        when(consentGate.isDeletionPending("user-123")).thenReturn(true);
+
+        assertThatThrownBy(() -> new WatchlistHandler()
+                        .watchlist(store, consentGate, DEFAULT_SUB)
+                        .apply(new WatchlistRequest(Operation.ADD, "RELIANCE.NS", "user-123", "corr-7")))
+                .isInstanceOf(WatchlistException.class)
+                .hasMessageContaining("deletion pending");
+        verifyNoInteractions(store);
+    }
+
+    @Test
+    void removeIgnoresDeletionPending() {
+        WatchlistResponse response = new WatchlistHandler()
+                .watchlist(store, consentGate, DEFAULT_SUB)
+                .apply(new WatchlistRequest(Operation.REMOVE, "RELIANCE.NS", "user-123", "corr-8"));
+
+        assertThat(response.status()).isEqualTo("removed");
+        verify(store).remove("user-123", "RELIANCE.NS");
+        verify(consentGate, org.mockito.Mockito.never()).isDeletionPending(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void listIgnoresDeletionPending() {
+        when(store.list("user-123")).thenReturn(List.of("RELIANCE.NS"));
+
+        WatchlistResponse response = new WatchlistHandler()
+                .watchlist(store, consentGate, DEFAULT_SUB)
+                .apply(new WatchlistRequest(Operation.LIST, null, "user-123", "corr-9"));
+
+        assertThat(response.status()).isEqualTo("ok");
+        verify(consentGate, org.mockito.Mockito.never()).isDeletionPending(org.mockito.ArgumentMatchers.any());
     }
 
     @Test

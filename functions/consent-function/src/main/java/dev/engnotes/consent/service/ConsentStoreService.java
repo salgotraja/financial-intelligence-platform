@@ -63,8 +63,16 @@ public class ConsentStoreService {
         return new ConsentRecord(given, str(item, "version"), str(item, "purpose"), str(item, "updatedAt"));
     }
 
-    /** Grants consent (version defaults to CONSENT_POLICY_VERSION when blank) and audits CONSENT_GRANTED. */
+    /**
+     * Grants consent (version defaults to CONSENT_POLICY_VERSION when blank) and audits
+     * CONSENT_GRANTED. Refuses while the subject is deletion-pending (spec s11 erasure step 1): a
+     * granted consent is new personal data, and reads/withdrawal must stay unaffected by the check
+     * that lives only here.
+     */
     public ConsentRecord grant(String sub, String version, String purpose, String sourceIp, String seq) {
+        if (isDeletionPending(sub)) {
+            throw new IllegalStateException("deletion pending: erasure in progress for this account");
+        }
         String effectiveVersion = (version != null && !version.isBlank()) ? version : consentVersion;
         String now = Instant.now(clock).toString();
         writeConsent(sub, true, effectiveVersion, purpose, now);
@@ -123,6 +131,19 @@ public class ConsentStoreService {
             log.error("CONSENT_RECONSENT_REQUIRED audit write failed; denial stands. sub={}", sub, e);
         }
         return LoginGate.RECONSENT_REQUIRED;
+    }
+
+    /** Reads {@code USER#{sub}/PROFILE}; no try/catch, matching this class's other reads (grant/withdraw
+     * already propagate DynamoDB errors uncaught; only {@link #gateLogin} deliberately fails open). */
+    private boolean isDeletionPending(String sub) {
+        GetItemResponse response = dynamoDb.getItem(GetItemRequest.builder()
+                .tableName(platformTable)
+                .key(Map.of("PK", s("USER#" + sub), "SK", s("PROFILE")))
+                .consistentRead(true)
+                .build());
+        return response.hasItem()
+                && response.item().containsKey("deletionPending")
+                && Boolean.TRUE.equals(response.item().get("deletionPending").bool());
     }
 
     private void writeConsent(String sub, boolean given, String version, String purpose, String updatedAt) {

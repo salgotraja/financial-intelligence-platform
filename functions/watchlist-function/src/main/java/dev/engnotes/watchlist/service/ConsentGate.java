@@ -16,6 +16,11 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
  * known key, no shared module). Strong consistency matters because withdrawal flips the record
  * immediately before purging, and a concurrent ADD must observe the flip. Fails closed: an absent
  * record, a false flag, or any read error denies.
+ *
+ * <p>{@link #isDeletionPending} is a second, separate GetItem against {@code USER#{sub}/PROFILE}
+ * (spec s11 erasure step 1), called only on the watchlist add path. Folding it into {@link
+ * #isActive} would double the read cost of every list/remove call for a check those paths do not
+ * need; a second GetItem scoped to add keeps the cost where the requirement is.
  */
 @Service
 public class ConsentGate {
@@ -44,6 +49,24 @@ public class ConsentGate {
         } catch (RuntimeException e) {
             log.warn("Consent read failed; denying (fail-closed). sub={} error={}", sub, e.getMessage());
             return false;
+        }
+    }
+
+    /** Fails closed: any read error is treated as pending, denying the write. */
+    public boolean isDeletionPending(String sub) {
+        try {
+            GetItemResponse response = dynamoDb.getItem(GetItemRequest.builder()
+                    .tableName(platformTable)
+                    .key(Map.of("PK", s("USER#" + sub), "SK", s("PROFILE")))
+                    .consistentRead(true)
+                    .build());
+            return response.hasItem()
+                    && response.item().containsKey("deletionPending")
+                    && Boolean.TRUE.equals(
+                            response.item().get("deletionPending").bool());
+        } catch (RuntimeException e) {
+            log.warn("Deletion-pending read failed; denying (fail-closed). sub={} error={}", sub, e.getMessage());
+            return true;
         }
     }
 

@@ -135,6 +135,10 @@ public class RealtimeStack extends Stack {
                         ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
                 .build();
         connectionsTable.grantReadWriteData(manageRole);
+        // Spec s11 erasure step 1: $connect/subscribe read USER#{sub}/PROFILE on the platform table
+        // to refuse registration for a deletion-pending caller. Read-only; no write path here.
+        data.getPlatformTable().grantReadData(manageRole);
+        data.getEncryptionKey().grantDecrypt(manageRole);
 
         var manageFn = Function.Builder.create(this, "ManageConnectionFn")
                 .functionName("financial-manage-connection-" + env)
@@ -150,6 +154,8 @@ public class RealtimeStack extends Stack {
                 .environment(Map.of(
                         "CONNECTIONS_TABLE",
                         connectionsTable.getTableName(),
+                        "PLATFORM_TABLE",
+                        data.getPlatformTable().getTableName(),
                         "ENVIRONMENT",
                         env,
                         "SPRING_CLOUD_FUNCTION_DEFINITION",

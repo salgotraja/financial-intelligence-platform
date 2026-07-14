@@ -3,9 +3,15 @@ package dev.engnotes.dsr.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.engnotes.dsr.model.ErasureResult;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +25,8 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
@@ -28,6 +36,7 @@ import software.amazon.awssdk.services.dynamodb.paginators.QueryIterable;
 class UserErasureServiceTest {
 
     private static final String TABLE = "financial-platform-test";
+    private static final String INSTANT = "2026-06-28T00:00:00Z";
 
     @Mock
     private DynamoDbClient dynamoDb;
@@ -39,7 +48,8 @@ class UserErasureServiceTest {
 
     @BeforeEach
     void setUp() {
-        erasure = new UserErasureService(dynamoDb, cognito, TABLE);
+        Clock clock = Clock.fixed(Instant.parse(INSTANT), ZoneOffset.UTC);
+        erasure = new UserErasureService(dynamoDb, cognito, TABLE, clock);
     }
 
     @Test
@@ -58,9 +68,11 @@ class UserErasureServiceTest {
 
         ArgumentCaptor<BatchWriteItemRequest> captor = ArgumentCaptor.forClass(BatchWriteItemRequest.class);
         InOrder order = inOrder(dynamoDb, cognito);
+        order.verify(dynamoDb).putItem(any(PutItemRequest.class));
         order.verify(dynamoDb).query(any(QueryRequest.class));
         order.verify(dynamoDb).batchWriteItem(captor.capture());
         order.verify(cognito).deleteBySub("user-1");
+        order.verify(dynamoDb).deleteItem(any(DeleteItemRequest.class));
 
         List<WriteRequest> writes = captor.getValue().requestItems().get(TABLE);
         assertThat(writes)
@@ -121,6 +133,49 @@ class UserErasureServiceTest {
 
         // CONSENT + 2 tickers * (WATCH# + WATCHSET) = 5 deletes
         assertThat(result.itemsDeleted()).isEqualTo(5);
+    }
+
+    @Test
+    void setDeletionPendingWritesProfileItemWithFlagAndTimestamp() {
+        erasure.setDeletionPending("user-1");
+
+        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamoDb).putItem(captor.capture());
+        PutItemRequest put = captor.getValue();
+        assertThat(put.tableName()).isEqualTo(TABLE);
+        assertThat(put.item().get("PK").s()).isEqualTo("USER#user-1");
+        assertThat(put.item().get("SK").s()).isEqualTo("PROFILE");
+        assertThat(put.item().get("deletionPending").bool()).isTrue();
+        assertThat(put.item().get("requestedAt").s()).isEqualTo(INSTANT);
+    }
+
+    @Test
+    void setDeletionPendingIsIdempotent() {
+        erasure.setDeletionPending("user-1");
+        erasure.setDeletionPending("user-1");
+
+        verify(dynamoDb, times(2)).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
+    void clearDeletionPendingDeletesProfileItem() {
+        erasure.clearDeletionPending("user-1");
+
+        ArgumentCaptor<DeleteItemRequest> captor = ArgumentCaptor.forClass(DeleteItemRequest.class);
+        verify(dynamoDb).deleteItem(captor.capture());
+        DeleteItemRequest delete = captor.getValue();
+        assertThat(delete.tableName()).isEqualTo(TABLE);
+        assertThat(delete.key().get("PK").s()).isEqualTo("USER#user-1");
+        assertThat(delete.key().get("SK").s()).isEqualTo("PROFILE");
+    }
+
+    @Test
+    void clearDeletionPendingIsIdempotent() {
+        erasure.clearDeletionPending("user-1");
+        erasure.clearDeletionPending("user-1");
+
+        verify(dynamoDb, times(2)).deleteItem(any(DeleteItemRequest.class));
+        verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
     }
 
     private static AttributeValue s(String value) {

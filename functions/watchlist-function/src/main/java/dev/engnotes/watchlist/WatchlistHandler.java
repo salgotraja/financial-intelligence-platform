@@ -59,6 +59,12 @@ public class WatchlistHandler {
 
             return switch (request.operation()) {
                 case ADD -> {
+                    // Spec s11 erasure step 1: refuse new watchlist rows while erasure is in flight.
+                    // Scoped to ADD only, not the consent check above: REMOVE and LIST stay allowed.
+                    // The "deletion pending" prefix keeps QueryStack's CLIENT_ERROR_PATTERN in sync.
+                    if (consentGate.isDeletionPending(owner)) {
+                        throw new WatchlistException("deletion pending: erasure in progress for this account");
+                    }
                     String ticker = TickerValidator.validate(request.ticker());
                     store.add(owner, ticker);
                     yield WatchlistResponse.added(ticker);

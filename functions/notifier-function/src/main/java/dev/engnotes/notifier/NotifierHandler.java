@@ -30,7 +30,11 @@ public class NotifierHandler {
         SpringApplication.run(NotifierHandler.class, args);
     }
 
-    /** Handles WebSocket route events: $connect no-op, subscribe registers, $disconnect cleans up. */
+    /**
+     * Handles WebSocket route events: $connect and subscribe both check deletion-pending before
+     * anything else (spec s11 erasure step 1) and otherwise $connect is a no-op, subscribe
+     * registers, $disconnect cleans up.
+     */
     @Bean
     public Function<Map<String, Object>, Map<String, Object>> manageConnection(
             ConnectionRegistry registry, ObjectMapper mapper) {
@@ -47,10 +51,18 @@ public class NotifierHandler {
                 log.info("WebSocket route. routeKey={} connectionId={}", routeKey, connectionId);
                 switch (routeKey == null ? "" : routeKey) {
                     case "$connect" -> {
-                        // Authorizer already validated the token; nothing to record until subscribe.
+                        // Spec s11 erasure step 1: a new connection is new personal data, refused
+                        // while the caller is deletion-pending; otherwise a no-op (authorizer already
+                        // validated the token, nothing to record until subscribe).
+                        if (registry.isDeletionPending(authorizerSub(requestContext))) {
+                            throw new IllegalStateException("deletion pending: connection refused");
+                        }
                     }
                     case "$disconnect" -> registry.disconnect(connectionId);
                     case "subscribe" -> {
+                        if (registry.isDeletionPending(authorizerSub(requestContext))) {
+                            throw new IllegalStateException("deletion pending: subscription refused");
+                        }
                         @SuppressWarnings("unchecked")
                         Map<String, Object> body =
                                 mapper.readValue((String) event.getOrDefault("body", "{}"), Map.class);
@@ -70,6 +82,12 @@ public class NotifierHandler {
                 return Map.of("statusCode", 400);
             }
         };
+    }
+
+    /** Extracts {@code sub} from the WebSocket authorizer context API Gateway attaches per connection. */
+    @SuppressWarnings("unchecked")
+    private static String authorizerSub(Map<String, Object> requestContext) {
+        return requestContext.get("authorizer") instanceof Map<?, ?> authorizer ? (String) authorizer.get("sub") : null;
     }
 
     /** Consumes platform-table stream INSERTs and pushes new insights to subscribed connections. */

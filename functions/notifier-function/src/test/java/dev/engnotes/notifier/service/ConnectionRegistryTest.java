@@ -19,6 +19,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
@@ -27,6 +29,7 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 class ConnectionRegistryTest {
 
     private static final String TABLE = "financial-connections-test";
+    private static final String PLATFORM_TABLE = "financial-platform-test";
 
     @Mock
     private DynamoDbClient dynamoDb;
@@ -35,7 +38,7 @@ class ConnectionRegistryTest {
 
     @BeforeEach
     void setUp() {
-        registry = new ConnectionRegistry(dynamoDb, TABLE);
+        registry = new ConnectionRegistry(dynamoDb, TABLE, PLATFORM_TABLE);
     }
 
     @Test
@@ -110,5 +113,38 @@ class ConnectionRegistryTest {
         verify(dynamoDb, org.mockito.Mockito.times(2)).deleteItem(deleteCaptor.capture());
         assertThat(deleteCaptor.getAllValues().getFirst().key().get("ticker").s())
                 .isEqualTo("RELIANCE.NS");
+    }
+
+    @Test
+    void deletionPendingWhenFlagTrue() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "deletionPending",
+                                AttributeValue.builder().bool(true).build()))
+                        .build());
+
+        assertThat(registry.isDeletionPending("user-123")).isTrue();
+    }
+
+    @Test
+    void notDeletionPendingWhenProfileAbsent() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().build());
+
+        assertThat(registry.isDeletionPending("user-123")).isFalse();
+    }
+
+    @Test
+    void notDeletionPendingWhenSubMissing() {
+        assertThat(registry.isDeletionPending(null)).isFalse();
+        assertThat(registry.isDeletionPending("  ")).isFalse();
+    }
+
+    @Test
+    void deletionPendingFailsClosedOnReadError() {
+        when(dynamoDb.getItem(any(GetItemRequest.class))).thenThrow(new RuntimeException("boom"));
+
+        assertThat(registry.isDeletionPending("user-123")).isTrue();
     }
 }

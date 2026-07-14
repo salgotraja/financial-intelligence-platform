@@ -1026,7 +1026,12 @@ public class QueryStack extends Stack {
     //   "Invalid ticker"        - query-function Tickers.java, notifier-function ConnectionRegistry.java
     //   "allowlist validation"  - watchlist-function TickerValidator.java
     //   "consent required"      - watchlist-function WatchlistHandler.java
-    private static final String CLIENT_ERROR_PATTERN = "Invalid ticker|allowlist validation|consent required";
+    //   "deletion pending"      - watchlist-function WatchlistHandler.java, consent-function
+    //                             ConsentStoreService.java (notifier-function's WebSocket routes use
+    //                             the same phrase but return their own statusCode directly, not
+    //                             through this REST selectionPattern mapping)
+    private static final String CLIENT_ERROR_PATTERN =
+            "Invalid ticker|allowlist validation|consent required|deletion pending";
     private static final String CORS_HEADER = "method.response.header.Access-Control-Allow-Origin";
 
     // Non-proxy integrations never emit response headers unless every IntegrationResponse maps them

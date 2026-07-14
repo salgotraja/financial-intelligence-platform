@@ -108,4 +108,22 @@ class RealtimeStackTest {
         var uri = (Map<String, Object>) props.get("AuthorizerUri");
         LiveAliasAssertions.assertUriTargetsLiveAlias(entry.getKey(), uri, aliases);
     }
+
+    // Spec s11 erasure step 1: $connect/subscribe must be able to read USER#{sub}/PROFILE on the
+    // platform table to refuse registration for a deletion-pending caller.
+    @Test
+    void manageConnectionFnCanReadThePlatformTable() {
+        var envVars = Map.of("Variables", Match.objectLike(Map.of("PLATFORM_TABLE", Match.anyValue())));
+        synth().hasResourceProperties(
+                        "AWS::Lambda::Function",
+                        Match.objectLike(
+                                Map.of("FunctionName", "financial-manage-connection-dev", "Environment", envVars)));
+
+        var readStatement = Match.objectLike(Map.of("Action", Match.arrayWith(List.of("dynamodb:GetItem"))));
+        var policyDocument = Match.objectLike(Map.of("Statement", Match.arrayWith(List.of(readStatement))));
+        var roleRef = Map.of("Ref", Match.stringLikeRegexp("ManageConnectionLambdaRole.*"));
+        synth().hasResourceProperties(
+                        "AWS::IAM::Policy",
+                        Match.objectLike(Map.of("Roles", List.of(roleRef), "PolicyDocument", policyDocument)));
+    }
 }

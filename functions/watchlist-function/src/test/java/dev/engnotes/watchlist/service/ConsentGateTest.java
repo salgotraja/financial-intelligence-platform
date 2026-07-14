@@ -68,4 +68,31 @@ class ConsentGateTest {
 
         assertThat(gate.isActive("user-123")).isFalse();
     }
+
+    @Test
+    void deletionPendingWhenFlagTrue() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "deletionPending",
+                                AttributeValue.builder().bool(true).build()))
+                        .build());
+
+        assertThat(gate.isDeletionPending("user-123")).isTrue();
+    }
+
+    @Test
+    void notDeletionPendingWhenProfileAbsent() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().build());
+
+        assertThat(gate.isDeletionPending("user-123")).isFalse();
+    }
+
+    @Test
+    void deletionPendingFailsClosedOnReadError() {
+        when(dynamoDb.getItem(any(GetItemRequest.class))).thenThrow(new RuntimeException("boom"));
+
+        assertThat(gate.isDeletionPending("user-123")).isTrue();
+    }
 }

@@ -1,6 +1,7 @@
 package dev.engnotes.consent.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -75,6 +76,9 @@ class ConsentStoreServiceTest {
 
     @Test
     void grantWritesConsentTrueAndGrantedAudit() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().build());
+
         ConsentRecord record = store.grant("user-123", "v1", "market", "1.2.3.4", "corr-1");
 
         ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
@@ -100,6 +104,9 @@ class ConsentStoreServiceTest {
 
     @Test
     void grantDefaultsBlankVersionToConfiguredVersion() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().build());
+
         store.grant("user-123", "  ", "market", null, "corr-2");
 
         ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
@@ -107,6 +114,32 @@ class ConsentStoreServiceTest {
         assertThat(captor.getAllValues().get(0).item().get("version").s()).isEqualTo("v1");
         PutItemRequest auditPut = captor.getAllValues().get(1);
         assertThat(auditPut.item().get("version").s()).isEqualTo("v1");
+    }
+
+    @Test
+    void grantRefusesWhenDeletionPending() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "deletionPending",
+                                AttributeValue.builder().bool(true).build()))
+                        .build());
+
+        assertThatThrownBy(() -> store.grant("user-123", "v1", "market", "1.2.3.4", "corr-5"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("deletion pending");
+        verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
+    void grantAllowedWhenProfileAbsent() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().build());
+
+        ConsentRecord record = store.grant("user-123", "v1", "market", "1.2.3.4", "corr-6");
+
+        assertThat(record.consentGiven()).isTrue();
+        verify(dynamoDb, times(2)).putItem(any(PutItemRequest.class));
     }
 
     @Test
