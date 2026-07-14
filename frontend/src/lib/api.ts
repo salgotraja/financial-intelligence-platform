@@ -68,6 +68,20 @@ export interface DailyMarketData {
   found: boolean
 }
 
+export interface StoryInputs {
+  days: number
+  insightCount: number
+}
+
+export interface Story {
+  ticker: string
+  story: string
+  generatedAt: string | null
+  source: string | null
+  inputs: StoryInputs
+  found: boolean
+}
+
 export interface WatchlistResult {
   status: string
   ticker: string | null
@@ -161,6 +175,9 @@ export const getDailyMarketData = (ticker: string, days?: number): Promise<Daily
   apiFetch<DailyMarketData>(
     `/market-data/${encodeURIComponent(ticker)}/daily${days !== undefined ? `?days=${days}` : ''}`,
   )
+
+export const getStory = (ticker: string): Promise<Story> =>
+  apiFetch<Story>(`/stories/${encodeURIComponent(ticker)}`)
 
 export const getWatchlist = (): Promise<WatchlistResult> =>
   apiFetch<WatchlistResult>('/watchlist')

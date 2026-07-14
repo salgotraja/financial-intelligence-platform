@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, getDailyMarketData, getInsight, getWatchlist, grantConsent } from './api'
+import { ApiError, getDailyMarketData, getInsight, getStory, getWatchlist, grantConsent } from './api'
 
 vi.mock('./auth', () => ({
   getAccessToken: vi.fn(async () => 'token-123'),
@@ -88,5 +88,25 @@ describe('api client', () => {
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toContain('/market-data/X/daily')
     expect(url).not.toContain('?days=')
+  })
+
+  it('requests the story route', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, {
+        ticker: 'X',
+        story: 'X is flat.',
+        generatedAt: '2026-07-14T00:00:00Z',
+        source: 'RULE_BASED',
+        inputs: { days: 1, insightCount: 0 },
+        found: true,
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await getStory('X')
+
+    expect(result.story).toBe('X is flat.')
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/stories/X')
   })
 })

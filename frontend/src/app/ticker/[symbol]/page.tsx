@@ -9,6 +9,7 @@ import { IngestButton } from '@/components/ingest-button'
 import { InsightPanel } from '@/components/insight-panel'
 import { LiveDot } from '@/components/live-dot'
 import { StatDelta } from '@/components/stat-delta'
+import { StoryPanel } from '@/components/story-panel'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError, getInsight, getMarketData } from '@/lib/api'
@@ -143,6 +144,7 @@ const TickerView = ({ symbol }: { symbol: string }) => {
         </CardContent>
       </Card>
       {shownInsight && <InsightPanel insight={shownInsight} live={liveInsight !== null} />}
+      <StoryPanel symbol={symbol} enabled={status === 'signed-in'} />
     </main>
   )
 }
