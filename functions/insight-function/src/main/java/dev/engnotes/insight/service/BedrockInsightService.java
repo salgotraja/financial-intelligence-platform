@@ -1,6 +1,8 @@
 package dev.engnotes.insight.service;
 
 import dev.engnotes.insight.exception.InsightException;
+import dev.engnotes.insight.model.GroupInsightContext;
+import dev.engnotes.insight.model.GroupInsightResponse;
 import dev.engnotes.insight.model.InsightRequest;
 import dev.engnotes.insight.model.InsightResponse;
 import dev.engnotes.insight.model.Signal;
@@ -44,6 +46,13 @@ import tools.jackson.databind.node.ObjectNode;
  *
  * <p>Model: Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1, so BEDROCK_MODEL_ID is the global
  * inference-profile id, not the bare foundation-model id (set in IngestionStack).
+ *
+ * <p>Task 7 (cross-ticker insight on groups): {@link #generateForGroup} reuses this exact tool-use
+ * call, retry, cost-tracking, and circuit-breaker machinery via the shared {@link
+ * #tryBedrock(String, String, String)} - only the prompt text and the fallback generator differ.
+ * {@code groupId} and {@code tickers} are not part of the model's tool schema: they are context the
+ * caller already knows, so {@link #generateForGroup} stamps them onto the result the same way
+ * {@link #generate} stamps ticker/generatedAt/modelId onto a per-ticker result.
  */
 @Service
 public class BedrockInsightService {
@@ -60,6 +69,7 @@ public class BedrockInsightService {
     private final ObjectMapper objectMapper;
     private final FinancialInsightPrompt prompt;
     private final RuleBasedInsightGenerator fallback;
+    private final RuleBasedGroupInsightGenerator groupFallback;
     private final CostTrackingService costTracker;
 
     @Value("${BEDROCK_MODEL_ID:global.anthropic.claude-sonnet-4-6}")
@@ -73,11 +83,13 @@ public class BedrockInsightService {
             ObjectMapper objectMapper,
             FinancialInsightPrompt prompt,
             RuleBasedInsightGenerator fallback,
+            RuleBasedGroupInsightGenerator groupFallback,
             CostTrackingService costTracker) {
         this.bedrock = bedrock;
         this.objectMapper = objectMapper;
         this.prompt = prompt;
         this.fallback = fallback;
+        this.groupFallback = groupFallback;
         this.costTracker = costTracker;
     }
 
@@ -97,7 +109,8 @@ public class BedrockInsightService {
                     ticker,
                     data.getCorrelationId());
         }
-        Optional<StructuredInsight> bedrockResult = breakerOpen ? Optional.empty() : tryBedrock(data);
+        Optional<StructuredInsight> bedrockResult =
+                breakerOpen ? Optional.empty() : tryBedrock(ticker, data.getCorrelationId(), prompt.promptText(data));
         boolean fromBedrock = bedrockResult.isPresent();
         StructuredInsight insight = bedrockResult.orElseGet(() -> fallback.generate(data));
         String source = fromBedrock ? SOURCE_BEDROCK : SOURCE_RULE_BASED;
@@ -114,9 +127,58 @@ public class BedrockInsightService {
         return toResponse(data, insight, source);
     }
 
-    /** Calls Bedrock, retrying once on invalid output; empty triggers the rule-based fallback. */
-    private Optional<StructuredInsight> tryBedrock(InsightRequest data) {
-        String requestBody = buildToolRequest(prompt.promptText(data));
+    /**
+     * Cross-ticker insight for a correlation group (Task 7): the same tool-use call, retry, cost
+     * tracking, and circuit breaker as {@link #generate}, with the group prompt and the cross-ticker
+     * rule-based fallback. {@code groupId}/{@code tickers} are stamped from {@code context}, not
+     * asked of the model.
+     */
+    public GroupInsightResponse generateForGroup(GroupInsightContext context, String correlationId) {
+        String groupId = context.groupId();
+        long startMs = System.currentTimeMillis();
+
+        boolean breakerOpen = costTracker.isBreakerOpen();
+        if (breakerOpen) {
+            log.warn(
+                    "Cost circuit breaker open, skipping Bedrock for rule-based group fallback. groupId={} correlationId={}",
+                    groupId,
+                    correlationId);
+        }
+        Optional<StructuredInsight> bedrockResult =
+                breakerOpen ? Optional.empty() : tryBedrock(groupId, correlationId, prompt.groupPromptText(context));
+        boolean fromBedrock = bedrockResult.isPresent();
+        StructuredInsight insight = bedrockResult.orElseGet(() -> groupFallback.generate(context));
+        String source = fromBedrock ? SOURCE_BEDROCK : SOURCE_RULE_BASED;
+
+        log.info(
+                "Group insight ready. groupId={} source={} signal={} confidence={} latencyMs={} correlationId={}",
+                groupId,
+                source,
+                insight.signal(),
+                insight.confidence(),
+                System.currentTimeMillis() - startMs,
+                correlationId);
+
+        return new GroupInsightResponse(
+                groupId,
+                context.tickers(),
+                Instant.now().toString(),
+                insight.signal().name(),
+                insight.confidence(),
+                insight.rationale(),
+                insight.drivers(),
+                source,
+                modelId,
+                prompt.version(),
+                correlationId);
+    }
+
+    /**
+     * Calls Bedrock for the given prompt, retrying once on invalid output; empty triggers the
+     * caller's rule-based fallback. {@code logLabel} is the ticker or groupId, for logging only.
+     */
+    private Optional<StructuredInsight> tryBedrock(String logLabel, String correlationId, String promptText) {
+        String requestBody = buildToolRequest(promptText);
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
@@ -129,38 +191,35 @@ public class BedrockInsightService {
 
                 // Tokens are billed whether or not the output parses, so record before validating.
                 String responseBody = response.body().asUtf8String();
-                recordCost(data, responseBody);
+                recordCost(correlationId, responseBody, logLabel);
 
                 StructuredInsight insight = parseToolUse(responseBody);
                 return Optional.of(insight);
 
             } catch (ThrottlingException | ModelTimeoutException e) {
                 log.warn(
-                        "Bedrock unavailable, using rule-based fallback. ticker={} error={}",
-                        data.getTicker(),
+                        "Bedrock unavailable, using rule-based fallback. label={} error={}",
+                        logLabel,
                         e.getClass().getSimpleName());
                 return Optional.empty();
             } catch (IllegalArgumentException e) {
                 log.warn(
-                        "Invalid Bedrock output. ticker={} attempt={}/{} reason={}",
-                        data.getTicker(),
+                        "Invalid Bedrock output. label={} attempt={}/{} reason={}",
+                        logLabel,
                         attempt,
                         MAX_ATTEMPTS,
                         e.getMessage());
                 // fall through to retry
             } catch (Exception e) {
-                log.warn(
-                        "Bedrock call failed, using rule-based fallback. ticker={} error={}",
-                        data.getTicker(),
-                        e.toString());
+                log.warn("Bedrock call failed, using rule-based fallback. label={} error={}", logLabel, e.toString());
                 return Optional.empty();
             }
         }
 
         log.warn(
-                "Bedrock returned invalid output {} times, using rule-based fallback. ticker={}",
+                "Bedrock returned invalid output {} times, using rule-based fallback. label={}",
                 MAX_ATTEMPTS,
-                data.getTicker());
+                logLabel);
         return Optional.empty();
     }
 
@@ -217,7 +276,7 @@ public class BedrockInsightService {
     }
 
     /** Reads token usage from the Bedrock response and records the invocation's cost. */
-    private void recordCost(InsightRequest data, String responseJson) {
+    private void recordCost(String correlationId, String responseJson, String logLabel) {
         long inputTokens = 0;
         long outputTokens = 0;
         try {
@@ -225,9 +284,9 @@ public class BedrockInsightService {
             inputTokens = usage.path("input_tokens").asLong(0);
             outputTokens = usage.path("output_tokens").asLong(0);
         } catch (Exception e) {
-            log.warn("Could not read Bedrock token usage, recording zero. ticker={}", data.getTicker());
+            log.warn("Could not read Bedrock token usage, recording zero. label={}", logLabel);
         }
-        costTracker.record(data.getCorrelationId(), inputTokens, outputTokens);
+        costTracker.record(correlationId, inputTokens, outputTokens);
     }
 
     /** Extracts and validates the forced tool_use block. Throws IllegalArgumentException if invalid. */

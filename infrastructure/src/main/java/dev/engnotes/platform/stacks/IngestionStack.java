@@ -192,6 +192,9 @@ public class IngestionStack extends Stack {
         // operable without a redeploy.
         insightEnv.put("RULE_BULLISH_THRESHOLD_PERCENT", "1.0");
         insightEnv.put("RULE_FALLBACK_CONFIDENCE", "0.4");
+        // Cross-ticker group insight anti-spam window (Task 7), set to the InsightGenerationService
+        // code default so it is operable without a redeploy.
+        insightEnv.put("MIN_GROUP_INSIGHT_INTERVAL_MINUTES", "15");
 
         Function generateInsightFn = Function.Builder.create(this, "GenerateInsightFn")
                 .functionName("financial-generate-insight-" + env)

@@ -4,9 +4,8 @@ import dev.engnotes.insight.model.CorrelationRequest;
 import dev.engnotes.insight.model.CorrelationResponse;
 import dev.engnotes.insight.model.InsightRequest;
 import dev.engnotes.insight.model.InsightResponse;
-import dev.engnotes.insight.service.BedrockInsightService;
 import dev.engnotes.insight.service.CorrelationService;
-import dev.engnotes.insight.service.InsightStoreService;
+import dev.engnotes.insight.service.InsightGenerationService;
 import dev.engnotes.insight.service.MarketHours;
 import java.time.Clock;
 import java.util.function.Function;
@@ -20,8 +19,9 @@ import org.springframework.context.annotation.Bean;
  * Insight Lambda - Spring Cloud Function entry point.
  *
  * <p>Two beans share this jar, selected per-Lambda by SPRING_CLOUD_FUNCTION_DEFINITION (CDK
- * IngestionStack): "generateInsight" for the per-ticker Bedrock insight, and "computeCorrelations"
- * for the scheduled cross-ticker correlation pass (spec section 7).
+ * IngestionStack): "generateInsight" for the Bedrock insight (per-ticker, or cross-ticker when the
+ * ticker belongs to a correlation group - Task 7), and "computeCorrelations" for the scheduled
+ * cross-ticker correlation pass (spec section 7).
  *
  * <p>generateInsight: the GenerateInsight state passes this function the FetchMarketData output (a
  * MarketDataResponse), and its output is the pipeline's final payload before ExecutionSucceeded.
@@ -38,25 +38,15 @@ public class InsightHandler {
     }
 
     /**
-     * Generates a Bedrock insight for the ticker's market data, stores it in DynamoDB, and
-     * returns it as the pipeline's output.
+     * Generates an insight for the ticker's market data and returns it as the pipeline's output.
+     * Delegates entirely to {@link InsightGenerationService}, which resolves the ticker's
+     * correlation group (Task 7) and either runs the unchanged per-ticker Bedrock path or generates
+     * one cross-ticker insight for the whole group, storing it for every member.
      */
     @Bean
     public Function<InsightRequest, InsightResponse> generateInsight(
-            BedrockInsightService insightService, InsightStoreService storeService) {
-        return request -> {
-            String ticker = request.getTicker();
-            String correlationId = request.getCorrelationId();
-
-            log.info("Starting insight generation. ticker={} correlationId={}", ticker, correlationId);
-
-            InsightResponse insight = insightService.generate(request);
-            storeService.store(insight);
-
-            log.info("Insight generation complete. ticker={} correlationId={}", ticker, correlationId);
-
-            return insight;
-        };
+            InsightGenerationService insightGenerationService) {
+        return insightGenerationService::generate;
     }
 
     /**

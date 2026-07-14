@@ -11,10 +11,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.engnotes.insight.exception.InsightException;
+import dev.engnotes.insight.model.CorrelationEdge;
+import dev.engnotes.insight.model.GroupInsightContext;
+import dev.engnotes.insight.model.GroupInsightResponse;
 import dev.engnotes.insight.model.InsightRequest;
 import dev.engnotes.insight.model.InsightResponse;
+import dev.engnotes.insight.model.MemberSnapshot;
 import dev.engnotes.insight.service.prompt.FinancialInsightPrompt;
 import java.math.BigDecimal;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -52,6 +57,7 @@ class BedrockInsightServiceTest {
                 objectMapper,
                 new FinancialInsightPrompt(),
                 new RuleBasedInsightGenerator(1.0, 0.4),
+                new RuleBasedGroupInsightGenerator(1.0, 0.4),
                 costTracker);
         ReflectionTestUtils.setField(service, "modelId", "test-model");
         ReflectionTestUtils.setField(service, "maxTokens", 512);
@@ -148,6 +154,57 @@ class BedrockInsightServiceTest {
     @Test
     void missingTickerThrows() {
         assertThatThrownBy(() -> service.generate(new InsightRequest())).isInstanceOf(InsightException.class);
+    }
+
+    @Test
+    void validToolUseResponseProducesBedrockGroupInsightStampedWithGroupIdAndTickers() {
+        when(bedrock.invokeModel(any(InvokeModelRequest.class))).thenReturn(modelResponse(VALID));
+
+        GroupInsightResponse response = service.generateForGroup(groupContext(), "corr-2");
+
+        assertThat(response.groupId()).isEqualTo("g1");
+        assertThat(response.tickers()).containsExactly("RELIANCE.NS", "TCS.NS");
+        assertThat(response.source()).isEqualTo("BEDROCK");
+        assertThat(response.signal()).isEqualTo("BULLISH");
+        assertThat(response.correlationId()).isEqualTo("corr-2");
+        verify(bedrock, times(1)).invokeModel(any(InvokeModelRequest.class));
+    }
+
+    @Test
+    void groupThrottleFallsBackToCrossTickerRuleBasedInsight() {
+        when(bedrock.invokeModel(any(InvokeModelRequest.class)))
+                .thenThrow(ThrottlingException.builder().message("slow down").build());
+
+        GroupInsightResponse response = service.generateForGroup(groupContext(), "corr-2");
+
+        assertThat(response.source()).isEqualTo("RULE_BASED");
+        assertThat(response.groupId()).isEqualTo("g1");
+        assertThat(response.rationale()).contains("g1");
+    }
+
+    @Test
+    void groupOpenCircuitBreakerSkipsBedrockAndServesRuleBasedFallback() {
+        when(costTracker.isBreakerOpen()).thenReturn(true);
+
+        GroupInsightResponse response = service.generateForGroup(groupContext(), "corr-2");
+
+        assertThat(response.source()).isEqualTo("RULE_BASED");
+        verify(bedrock, never()).invokeModel(any(InvokeModelRequest.class));
+    }
+
+    private static GroupInsightContext groupContext() {
+        return new GroupInsightContext(
+                "g1",
+                List.of("RELIANCE.NS", "TCS.NS"),
+                "RELIANCE.NS",
+                "return z=5.20",
+                List.of(
+                        new MemberSnapshot(
+                                "RELIANCE.NS", new BigDecimal("2900"), new BigDecimal("3.2"), 1000L, 800.0, 50.0),
+                        new MemberSnapshot("TCS.NS", new BigDecimal("3900"), new BigDecimal("2.8"), 900L, 700.0, 40.0)),
+                List.of(new CorrelationEdge("RELIANCE.NS", "TCS.NS", 0.82)),
+                "30-point window",
+                "2026-07-14T10:15:00Z");
     }
 
     private static InvokeModelResponse modelResponse(String json) {
