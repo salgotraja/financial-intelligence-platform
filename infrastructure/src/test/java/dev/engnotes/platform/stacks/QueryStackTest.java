@@ -131,6 +131,31 @@ class QueryStackTest {
         }
     }
 
+    // The ingest 202 response echoes the caller-supplied ticker back in its own ResponseTemplates,
+    // a second interpolation site distinct from (and previously missed by) the request-template
+    // escaping above - a quote-breaking ticker here could otherwise inject into the response body.
+    @Test
+    @SuppressWarnings("unchecked")
+    void ingestAcceptedResponseTemplateEscapesTheTicker() {
+        var ingestResponseTemplates = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .map(p -> (Map<String, Object>) p.get("Integration"))
+                .filter(i -> i != null && i.get("IntegrationResponses") instanceof List)
+                .flatMap(i -> ((List<Map<String, Object>>) i.get("IntegrationResponses")).stream())
+                .filter(r -> "202".equals(r.get("StatusCode")))
+                .map(r -> (Map<String, Object>) r.get("ResponseTemplates"))
+                .filter(Objects::nonNull)
+                .map(t -> String.valueOf(t.get("application/json")))
+                .filter(body -> body.contains("\"ticker\""))
+                .toList();
+        assertEquals(1, ingestResponseTemplates.size(), "expected exactly one ingest-accepted response template");
+        var body = ingestResponseTemplates.get(0);
+        assertFalse(
+                body.replace("$util.escapeJavaScript($input.params('ticker'))", "")
+                        .contains("$input.params('ticker')"),
+                "raw unescaped $input.params('ticker') in ingest response template: " + body);
+    }
+
     // Item 5: the TokenAuthorizer used to target $LATEST directly, so the authorizer paid the full
     // Spring Boot cold start on every request even though SnapStart was enabled on the function.
     @Test

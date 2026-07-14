@@ -1206,9 +1206,10 @@ public class QueryStack extends Stack {
                         .integrationResponses(List.of(IntegrationResponse.builder()
                                 .statusCode("202")
                                 .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
-                                .responseTemplates(Map.of(
-                                        "application/json",
-                                        "{\"status\":\"accepted\",\"ticker\":\"$input.params('ticker')\"}"))
+                                .responseTemplates(
+                                        Map.of(
+                                                "application/json",
+                                                "{\"status\":\"accepted\",\"ticker\":\"$util.escapeJavaScript($input.params('ticker'))\"}"))
                                 .build()))
                         .build())
                 .build();
