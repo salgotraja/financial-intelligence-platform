@@ -6,6 +6,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.engnotes.dsr.model.ErasureResult;
@@ -26,6 +27,8 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
@@ -176,6 +179,66 @@ class UserErasureServiceTest {
 
         verify(dynamoDb, times(2)).deleteItem(any(DeleteItemRequest.class));
         verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
+    void deleteUserItemsDeletesConsentAndWatchlistMirrorsWithoutTouchingPendingFlagOrCognito() {
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder()
+                        .items(List.of(Map.of("ticker", s("RELIANCE.NS"))))
+                        .build());
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
+                .thenReturn(BatchWriteItemResponse.builder().build());
+
+        int itemsDeleted = erasure.deleteUserItems("user-1");
+
+        assertThat(itemsDeleted).isEqualTo(3); // CONSENT + WATCH# + WATCHSET mirror
+        verify(dynamoDb, never()).putItem(any(PutItemRequest.class));
+        verify(dynamoDb, never()).deleteItem(any(DeleteItemRequest.class));
+        verifyNoInteractions(cognito);
+    }
+
+    @Test
+    void isDeletionPendingReturnsTrueWhenFlagSet() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "PK", s("USER#user-1"),
+                                "SK", s("PROFILE"),
+                                "deletionPending",
+                                        AttributeValue.builder().bool(true).build()))
+                        .build());
+
+        assertThat(erasure.isDeletionPending("user-1")).isTrue();
+    }
+
+    @Test
+    void isDeletionPendingReturnsFalseWhenNoProfileItem() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().build());
+
+        assertThat(erasure.isDeletionPending("user-1")).isFalse();
+    }
+
+    @Test
+    void isDeletionPendingReturnsFalseWhenFlagFalse() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "deletionPending",
+                                AttributeValue.builder().bool(false).build()))
+                        .build());
+
+        assertThat(erasure.isDeletionPending("user-1")).isFalse();
+    }
+
+    @Test
+    void s3SafeguardIsANoOpWithNoAwsInteractions() {
+        erasure.s3Safeguard("user-1");
+
+        verifyNoInteractions(dynamoDb, cognito);
     }
 
     private static AttributeValue s(String value) {

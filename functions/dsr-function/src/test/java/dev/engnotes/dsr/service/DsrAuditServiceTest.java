@@ -52,4 +52,37 @@ class DsrAuditServiceTest {
         verify(dynamoDb).putItem(captor.capture());
         assertThat(captor.getValue().item()).doesNotContainKey("sourceIp");
     }
+
+    @Test
+    void recordErasureCompletionWritesTimestampsAndEmailSentFlag() {
+        DsrAuditService audit = new DsrAuditService(dynamoDb, AUDIT_TABLE, clock);
+
+        audit.recordErasureCompletion(
+                "user-3", "admin-1", "1.2.3.4", "corr-7", "2026-06-28T09:00:00Z", "2026-06-28T09:05:00Z", true);
+
+        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamoDb).putItem(captor.capture());
+        var item = captor.getValue().item();
+        assertThat(item.get("PK").s()).isEqualTo("USER#user-3");
+        assertThat(item.get("eventType").s()).isEqualTo("ACCOUNT_ERASED");
+        assertThat(item.get("actorSub").s()).isEqualTo("admin-1");
+        assertThat(item.get("sourceIp").s()).isEqualTo("1.2.3.4");
+        assertThat(item.get("requestedAt").s()).isEqualTo("2026-06-28T09:00:00Z");
+        assertThat(item.get("completedAt").s()).isEqualTo("2026-06-28T09:05:00Z");
+        assertThat(item.get("emailSent").bool()).isTrue();
+    }
+
+    @Test
+    void recordErasureCompletionWritesEmailSentFalse() {
+        DsrAuditService audit = new DsrAuditService(dynamoDb, AUDIT_TABLE, clock);
+
+        audit.recordErasureCompletion(
+                "user-4", "user-4", null, "corr-8", "2026-06-28T09:00:00Z", "2026-06-28T09:05:00Z", false);
+
+        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamoDb).putItem(captor.capture());
+        var item = captor.getValue().item();
+        assertThat(item.get("emailSent").bool()).isFalse();
+        assertThat(item).doesNotContainKey("sourceIp");
+    }
 }
