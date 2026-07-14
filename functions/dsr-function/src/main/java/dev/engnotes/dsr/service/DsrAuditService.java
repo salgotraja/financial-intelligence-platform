@@ -2,13 +2,9 @@ package dev.engnotes.dsr.service;
 
 import dev.engnotes.dsr.model.AuditEventType;
 import dev.engnotes.dsr.model.ComplianceEventType;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.HashMap;
-import java.util.HexFormat;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -122,25 +118,16 @@ public class DsrAuditService {
         Map<String, AttributeValue> item = new HashMap<>();
         item.put("PK", s("AUDIT#" + type.name() + "#" + date));
         item.put("SK", s(occurredAt + "#" + correlationId));
-        item.put("subjectHash", s(sha256Hex(subjectSub)));
+        item.put("subjectHash", s(Hashing.sha256Hex(subjectSub)));
         item.put("eventType", s(type.name()));
         item.put("occurredAt", s(occurredAt));
-        item.put("actorHash", s(sha256Hex(actorSub)));
+        item.put("actorHash", s(Hashing.sha256Hex(actorSub)));
         if (emailSent != null) {
             item.put("emailSent", AttributeValue.builder().bool(emailSent).build());
         }
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(auditTable).item(item).build());
         log.info("Wrote hashed compliance audit record. type={} date={}", type, date);
-    }
-
-    private static String sha256Hex(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
     }
 
     private static AttributeValue s(String value) {

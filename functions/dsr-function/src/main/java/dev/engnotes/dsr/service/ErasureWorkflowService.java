@@ -86,16 +86,15 @@ public class ErasureWorkflowService {
     }
 
     /**
-     * Deterministic Step Functions execution name (Task 12): {@code subjectSub} and {@code requestedAt}
-     * sanitized to the ASL name charset ({@code [A-Za-z0-9_-]}, so ISO-8601 colons and any other
-     * disallowed characters are stripped) and capped at the 80-character execution-name limit.
+     * Deterministic Step Functions execution name (Task 12): {@code erasure-} plus the SHA-256 hex of
+     * {@code subjectSub + "#" + requestedAt}. Hashing (rather than sanitizing the raw values) keeps the
+     * name injective per (subject, requestedAt) pair: character-stripping or truncation of an
+     * admin-supplied {@code subjectSub} could make two distinct subjects collide onto one name, and a
+     * collision here silently no-ops a legitimate erasure as {@code ExecutionAlreadyExists}. Hex is
+     * entirely within the execution-name charset and the result is a fixed 72 characters, under the
+     * 80-character limit.
      */
     private static String executionName(String subjectSub, String requestedAt) {
-        String name = "erasure-" + sanitize(subjectSub) + "-" + sanitize(requestedAt);
-        return name.length() > 80 ? name.substring(0, 80) : name;
-    }
-
-    private static String sanitize(String value) {
-        return value.replaceAll("[^A-Za-z0-9_-]", "");
+        return "erasure-" + Hashing.sha256Hex(subjectSub + "#" + requestedAt);
     }
 }

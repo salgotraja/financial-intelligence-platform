@@ -2,7 +2,9 @@ package dev.engnotes.dsr.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -10,6 +12,7 @@ import dev.engnotes.dsr.model.ErasureAcceptance;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -77,8 +80,10 @@ class ErasureWorkflowServiceTest {
                 .contains("\"sourceIp\":\"9.9.9.9\"")
                 .contains("\"correlationId\":\"corr-2\"")
                 .contains("\"requestedAt\":\"" + NOW + "\"");
-        // Deterministic: subject + requestedAt, sanitized to the ASL name charset (colons stripped).
-        assertThat(request.name()).isEqualTo("erasure-user-2-2026-07-14T093000Z");
+        // Deterministic and injective: "erasure-" + SHA-256 hex of "user-2#2026-07-14T09:30:00Z".
+        // Expected literal computed independently via `printf '...' | shasum -a 256`.
+        assertThat(request.name())
+                .isEqualTo("erasure-4c9322d6eeda64175234e4f0ba30f9c0aca9950dc9b300bc61ad33b455c40f6e");
     }
 
     @Test
@@ -96,21 +101,30 @@ class ErasureWorkflowServiceTest {
         assertThat(result.executionArn()).isNull();
     }
 
+    // Injectivity against hostile subjectSub values: these four subjects would all collapse to
+    // "usera" under charset-stripping, silently no-oping a legitimate erasure via
+    // ExecutionAlreadyExists. Hash-based names must stay distinct, valid, and within 80 chars.
     @Test
-    void startErasureExecutionNameIsSanitizedAndCappedAt80Characters() {
-        String longSubject = "a".repeat(100);
-        when(erasure.isDeletionPending(longSubject)).thenReturn(false);
+    void startErasureExecutionNamesStayDistinctAndValidForHostileSubjects() {
+        List<String> hostileSubjects = List.of("user:a", "user/a", "useréa", "usera", "a".repeat(100));
+        when(erasure.isDeletionPending(anyString())).thenReturn(false);
         when(sfn.startExecution(any(StartExecutionRequest.class)))
                 .thenReturn(StartExecutionResponse.builder()
                         .executionArn("arn:aws:states:...:execution:financial-erasure-dev:xyz")
                         .build());
 
-        workflow.startErasure(longSubject, longSubject, "1.2.3.4", "corr-4");
+        for (String subject : hostileSubjects) {
+            workflow.startErasure(subject, subject, "1.2.3.4", "corr-4");
+        }
 
         ArgumentCaptor<StartExecutionRequest> captor = ArgumentCaptor.forClass(StartExecutionRequest.class);
-        verify(sfn).startExecution(captor.capture());
-        String name = captor.getValue().name();
-        assertThat(name).hasSizeLessThanOrEqualTo(80);
-        assertThat(name).matches("[A-Za-z0-9_-]+");
+        verify(sfn, times(hostileSubjects.size())).startExecution(captor.capture());
+        List<String> names =
+                captor.getAllValues().stream().map(StartExecutionRequest::name).toList();
+        assertThat(names).doesNotHaveDuplicates();
+        for (String name : names) {
+            assertThat(name).hasSizeLessThanOrEqualTo(80);
+            assertThat(name).matches("[A-Za-z0-9_-]+");
+        }
     }
 }

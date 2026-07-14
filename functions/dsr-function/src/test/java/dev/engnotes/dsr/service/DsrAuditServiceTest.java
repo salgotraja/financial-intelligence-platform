@@ -130,7 +130,10 @@ class DsrAuditServiceTest {
         assertThat(req.tableName()).isEqualTo(AUDIT_TABLE);
         assertThat(item.get("PK").s()).isEqualTo("AUDIT#ERASURE#2026-06-28");
         assertThat(item.get("SK").s()).isEqualTo("2026-06-28T09:05:00Z#corr-7");
-        assertThat(item.get("subjectHash").s()).isEqualTo(sha256Hex("sub-abc-123"));
+        // Independent SHA-256 vector, computed once via `printf 'sub-abc-123' | shasum -a 256` - not
+        // derived from the production implementation, so a broken hash cannot self-verify.
+        assertThat(item.get("subjectHash").s())
+                .isEqualTo("e594381c308ef23318d045d4b5188940da1591293dbb6b68b2a247bafdc151ed");
         assertThat(item.get("actorHash").s()).isEqualTo(sha256Hex("admin-sub-999"));
         assertThat(item.get("eventType").s()).isEqualTo("ERASURE");
         assertThat(item.get("occurredAt").s()).isEqualTo("2026-06-28T09:05:00Z");
