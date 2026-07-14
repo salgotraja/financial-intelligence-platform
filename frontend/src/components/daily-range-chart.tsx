@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react'
 import type { ComponentType } from 'react'
+import { Skeleton } from '@/components/ui/skeleton'
 import { getDailyMarketData } from '@/lib/api'
 import { dailySeriesForRange, fetchDaysForRange, type DailyChartRange } from '@/lib/daily-range'
 import { useAsyncData } from '@/hooks/use-async-data'
@@ -24,10 +25,24 @@ export const DailyRangeChart = ({
   enabled: boolean
   PriceChart: ComponentType<PriceChartProps>
 }) => {
-  const { data } = useAsyncData(
+  const { data, error, loading } = useAsyncData(
     useMemo(() => () => getDailyMarketData(symbol, fetchDaysForRange(range)), [symbol, range]),
     enabled,
   )
+
+  // The empty-state copy inside PriceChart is reserved for a successful fetch with thin
+  // history; an in-flight or failed fetch must not masquerade as "no data yet".
+  if (loading) {
+    return <Skeleton className="h-60 w-full" />
+  }
+  if (error !== null) {
+    return (
+      <p className="py-8 text-center text-sm text-destructive">
+        Could not load daily history.
+      </p>
+    )
+  }
+
   const series = dailySeriesForRange(data?.days ?? [], range)
 
   return (

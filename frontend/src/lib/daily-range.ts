@@ -3,10 +3,10 @@ import type { DailyPoint, SeriesPoint } from './api'
 export type DailyChartRange = '1W' | '1M'
 export type ChartRange = '1D' | DailyChartRange
 
-// Trading-day window shown on the chart (and used for the weekly chip), and the raw
-// `days` requested from GET /market-data/{ticker}/daily to cover that window with slack
-// for weekends/holidays: DAY# rollups exist only for actual trading days, so slicing the
-// newest-first response to the window size below yields exactly that many trading days.
+// Trading-day window shown on the chart (and used for the weekly chip), and the `days`
+// requested from GET /market-data/{ticker}/daily: the backend Limit already counts DAY#
+// rollups (trading days, not calendar days), so 10/30 is just headroom over the window,
+// and slicing the newest-first response to the window size yields exactly that many days.
 const RANGE_TRADING_DAYS: Record<DailyChartRange, number> = { '1W': 5, '1M': 22 }
 const RANGE_FETCH_DAYS: Record<DailyChartRange, number> = { '1W': 10, '1M': 30 }
 

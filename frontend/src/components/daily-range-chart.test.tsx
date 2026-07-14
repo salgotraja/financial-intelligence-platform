@@ -83,4 +83,24 @@ describe('DailyRangeChart', () => {
     render(<DailyRangeChart symbol="X" range="1W" enabled={false} PriceChart={StubPriceChart} />)
     expect(getDailyMarketData).not.toHaveBeenCalled()
   })
+
+  it('renders a skeleton, not the empty-state chart, while the fetch is in flight', () => {
+    getDailyMarketData.mockImplementation(() => new Promise(() => {}))
+
+    const { container } = render(
+      <DailyRangeChart symbol="X" range="1W" enabled PriceChart={StubPriceChart} />,
+    )
+
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+    expect(screen.queryByTestId('chart-props')).not.toBeInTheDocument()
+  })
+
+  it('renders an error message, not the empty-state chart, when the fetch fails', async () => {
+    getDailyMarketData.mockRejectedValue(new Error('boom'))
+
+    render(<DailyRangeChart symbol="X" range="1W" enabled PriceChart={StubPriceChart} />)
+
+    expect(await screen.findByText('Could not load daily history.')).toBeInTheDocument()
+    expect(screen.queryByTestId('chart-props')).not.toBeInTheDocument()
+  })
 })
