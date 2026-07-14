@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,11 +28,15 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
  *
  * <p>Design: reads the caller's watchlist (PK=USER#{sub}, SK begins_with WATCH#), then for each
  * ticker queries GSI1 (GSI1PK=TICKER#{ticker}, newest-first, small limit) for the group-insight
- * mirror items {@code GroupInsightStoreService} writes, and reuses {@link InsightQuery} for the
- * ticker's own latest per-ticker insight (an ungrouped ticker has no GSI1 mirror). Group insights
- * dedupe by {@code groupId} keeping the newest; a per-ticker insight is dropped when a deduped
- * group insight covers the same ticker with a {@code generatedAt} at or after the per-ticker one,
- * so the same event never appears twice. The combined list sorts newest first and caps at 25.
+ * mirror items {@code GroupInsightStoreService} writes. Group insights dedupe by {@code groupId}
+ * keeping the newest. A ticker already covered by a deduped group insight never gets a per-ticker
+ * {@link InsightQuery} read at all: {@code InsightGenerationService} writes every group member's
+ * per-ticker item with the group's own {@code generatedAt} in the same generation, so a covered
+ * ticker's own latest can never be stored with a fresher timestamp - the group entry is always the
+ * observably newest for that ticker, and skipping the read halves read volume on group-heavy
+ * watchlists. Only an ungrouped ticker (no covering mirror) pays for the per-ticker read. The
+ * combined list sorts newest first and caps at 25. ({@link #latestForTicker}, a single-ticker read,
+ * keeps the precise timestamp-compared supersession below since it has no read volume to save.)
  *
  * <p>Feed assembly is item-tolerant: an item with a missing or unparseable {@code generatedAt}, or
  * a malformed list attribute, is skipped with a warning at the mapping boundary rather than thrown,
@@ -70,12 +76,15 @@ public class InsightFeedQuery {
         List<FeedInsight> groupInsights = dedupeByGroupId(tickers.stream()
                 .flatMap(ticker -> queryGroupInsights(ticker).stream())
                 .toList());
+        Set<String> coveredByGroup = groupInsights.stream()
+                .flatMap(insight -> insight.tickers().stream())
+                .collect(Collectors.toSet());
 
         List<FeedInsight> perTickerInsights = tickers.stream()
+                .filter(ticker -> !coveredByGroup.contains(ticker))
                 .map(insightQuery::findLatestInsight)
                 .filter(QueryResponse::found)
                 .flatMap(response -> fromPerTickerResponse(response).stream())
-                .filter(insight -> !supersededByGroup(insight, groupInsights))
                 .toList();
 
         List<FeedInsight> combined = Stream.concat(groupInsights.stream(), perTickerInsights.stream())

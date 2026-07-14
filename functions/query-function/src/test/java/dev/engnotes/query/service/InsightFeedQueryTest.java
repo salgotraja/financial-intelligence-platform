@@ -105,7 +105,6 @@ class InsightFeedQueryTest {
                 "A",
                 groupItem("G1", "2026-07-14T10:00:00Z", "A", "B"),
                 groupItem("G1", "2026-07-14T09:00:00Z", "A", "B"));
-        when(insightQuery.findLatestInsight("A")).thenReturn(QueryResponse.notFound("A"));
 
         InsightFeedResponse response = feedQuery.feed(OWNER);
 
@@ -115,30 +114,21 @@ class InsightFeedQueryTest {
         assertThat(response.insights().getFirst().generatedAt()).isEqualTo("2026-07-14T10:00:00Z");
     }
 
+    /**
+     * A ticker covered by a group insight never triggers {@link InsightQuery#findLatestInsight}:
+     * {@code InsightGenerationService} writes every group member's per-ticker item with the group's
+     * own {@code generatedAt} in the same generation, so the group entry is always the observably
+     * newest for a covered ticker and the read is redundant.
+     */
     @Test
-    void perTickerInsightSupersededByNewerOrEqualGroupInsightCoveringTheSameTicker() {
+    void coveredTickerSkipsThePerTickerReadEntirely() {
         groupInsightsFor("A", groupItem("G1", "2026-07-14T10:00:00Z", "A"));
-        when(insightQuery.findLatestInsight("A"))
-                .thenReturn(new QueryResponse(
-                        "A", "2026-07-14T09:00:00Z", "BULLISH", 0.7, "r", List.of(), "RULE_BASED", "r", "m", true));
 
         InsightFeedResponse response = feedQuery.feed(OWNER);
 
         assertThat(response.insights()).hasSize(1);
         assertThat(response.insights().getFirst().groupId()).isEqualTo("G1");
-    }
-
-    @Test
-    void perTickerInsightSupersededWhenGroupGeneratedAtExactlyMatches() {
-        groupInsightsFor("A", groupItem("G1", "2026-07-14T09:00:00Z", "A"));
-        when(insightQuery.findLatestInsight("A"))
-                .thenReturn(new QueryResponse(
-                        "A", "2026-07-14T09:00:00Z", "BULLISH", 0.7, "r", List.of(), "RULE_BASED", "r", "m", true));
-
-        InsightFeedResponse response = feedQuery.feed(OWNER);
-
-        assertThat(response.insights()).hasSize(1);
-        assertThat(response.insights().getFirst().groupId()).isEqualTo("G1");
+        verify(insightQuery, never()).findLatestInsight(any());
     }
 
     @Test
@@ -191,7 +181,6 @@ class InsightFeedQueryTest {
                     .items(List.of())
                     .build();
         });
-        when(insightQuery.findLatestInsight("A")).thenReturn(QueryResponse.notFound("A"));
         when(insightQuery.findLatestInsight("B"))
                 .thenReturn(new QueryResponse(
                         "B", "2026-07-14T12:00:00Z", "HOLD", 0.5, "r", List.of(), "RULE_BASED", "r", "m", true));
@@ -245,7 +234,6 @@ class InsightFeedQueryTest {
     @Test
     void skipsGroupItemWithMalformedGeneratedAtWhileHealthyItemsServe() {
         groupInsightsFor("A", groupItem("G1", "not-a-timestamp", "A"), groupItem("G2", "2026-07-14T10:00:00Z", "A"));
-        when(insightQuery.findLatestInsight("A")).thenReturn(QueryResponse.notFound("A"));
 
         InsightFeedResponse response = feedQuery.feed(OWNER);
 
@@ -258,7 +246,6 @@ class InsightFeedQueryTest {
         Map<String, AttributeValue> missing = new java.util.HashMap<>(groupItem("G1", "unused", "A"));
         missing.remove("generatedAt");
         groupInsightsFor("A", missing, groupItem("G2", "2026-07-14T10:00:00Z", "A"));
-        when(insightQuery.findLatestInsight("A")).thenReturn(QueryResponse.notFound("A"));
 
         InsightFeedResponse response = feedQuery.feed(OWNER);
 
@@ -271,7 +258,6 @@ class InsightFeedQueryTest {
         Map<String, AttributeValue> malformed = new java.util.HashMap<>(groupItem("G1", "2026-07-14T11:00:00Z", "A"));
         malformed.put("tickers", AttributeValue.builder().l(str("A"), num("42")).build());
         groupInsightsFor("A", malformed, groupItem("G2", "2026-07-14T10:00:00Z", "A"));
-        when(insightQuery.findLatestInsight("A")).thenReturn(QueryResponse.notFound("A"));
 
         InsightFeedResponse response = feedQuery.feed(OWNER);
 
