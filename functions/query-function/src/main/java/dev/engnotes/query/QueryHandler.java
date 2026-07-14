@@ -1,8 +1,11 @@
 package dev.engnotes.query;
 
+import dev.engnotes.query.model.InsightFeedRequest;
+import dev.engnotes.query.model.InsightFeedResponse;
 import dev.engnotes.query.model.MarketDataResponse;
 import dev.engnotes.query.model.QueryRequest;
 import dev.engnotes.query.model.QueryResponse;
+import dev.engnotes.query.service.InsightFeedQuery;
 import dev.engnotes.query.service.InsightQuery;
 import dev.engnotes.query.service.MarketDataQuery;
 import java.util.function.Function;
@@ -71,6 +74,27 @@ public class QueryHandler {
                     ticker,
                     response.found(),
                     response.points().size(),
+                    correlationId);
+
+            return response;
+        };
+    }
+
+    /** Returns the caller's watchlist insight feed: group insights plus ungrouped tickers' latest. */
+    @Bean
+    public Function<InsightFeedRequest, InsightFeedResponse> serveInsightFeed(InsightFeedQuery insightFeedQuery) {
+        return request -> {
+            String ownerSub = request.ownerSub();
+            String correlationId = request.correlationId();
+
+            log.info("Serving insight feed. owner={} correlationId={}", ownerSub, correlationId);
+
+            InsightFeedResponse response = insightFeedQuery.feed(ownerSub);
+
+            log.info(
+                    "Insight feed query complete. owner={} insights={} correlationId={}",
+                    ownerSub,
+                    response.insights().size(),
                     correlationId);
 
             return response;

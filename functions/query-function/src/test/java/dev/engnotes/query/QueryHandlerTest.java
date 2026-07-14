@@ -3,10 +3,13 @@ package dev.engnotes.query;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import dev.engnotes.query.model.InsightFeedRequest;
+import dev.engnotes.query.model.InsightFeedResponse;
 import dev.engnotes.query.model.MarketDataPoint;
 import dev.engnotes.query.model.MarketDataResponse;
 import dev.engnotes.query.model.QueryRequest;
 import dev.engnotes.query.model.QueryResponse;
+import dev.engnotes.query.service.InsightFeedQuery;
 import dev.engnotes.query.service.InsightQuery;
 import dev.engnotes.query.service.MarketDataQuery;
 import java.util.List;
@@ -23,6 +26,9 @@ class QueryHandlerTest {
 
     @Mock
     private MarketDataQuery marketDataQuery;
+
+    @Mock
+    private InsightFeedQuery insightFeedQuery;
 
     @Test
     void serveInsightDelegatesToInsightQuery() {
@@ -58,6 +64,18 @@ class QueryHandlerTest {
 
         var actual =
                 new QueryHandler().serveMarketData(marketDataQuery).apply(new QueryRequest("RELIANCE.NS", "corr-2"));
+
+        assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveInsightFeedDelegatesToInsightFeedQuery() {
+        InsightFeedResponse expected = new InsightFeedResponse(List.of(), true);
+        when(insightFeedQuery.feed("user-123")).thenReturn(expected);
+
+        InsightFeedResponse actual = new QueryHandler()
+                .serveInsightFeed(insightFeedQuery)
+                .apply(new InsightFeedRequest("user-123", "corr-3"));
 
         assertThat(actual).isEqualTo(expected);
     }
