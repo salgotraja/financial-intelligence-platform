@@ -225,6 +225,21 @@ class ConsentStoreServiceTest {
     }
 
     @Test
+    void gateLoginStillDeniesStaleVersionWhenAuditWriteFails() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(Map.of(
+                                "consentGiven",
+                                        AttributeValue.builder().bool(true).build(),
+                                "version", AttributeValue.builder().s("v0").build(),
+                                "updatedAt", AttributeValue.builder().s(INSTANT).build()))
+                        .build());
+        when(dynamoDb.putItem(any(PutItemRequest.class))).thenThrow(new RuntimeException("audit down"));
+
+        assertThat(store.gateLogin("user-123", "login")).isEqualTo(LoginGate.RECONSENT_REQUIRED);
+    }
+
+    @Test
     void gateLoginAllowsOnDynamoDbReadFailure() {
         when(dynamoDb.getItem(any(GetItemRequest.class))).thenThrow(new RuntimeException("boom"));
 

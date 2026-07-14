@@ -38,7 +38,7 @@ public class ConsentStoreService {
             DynamoDbClient dynamoDb,
             @Value("${PLATFORM_TABLE:financial-platform-dev}") String platformTable,
             @Value("${AUDIT_TABLE:financial-platform-audit-dev}") String auditTable,
-            @Value("${CONSENT_POLICY_VERSION:v1.0}") String consentVersion,
+            @Value("${CONSENT_POLICY_VERSION:v1}") String consentVersion,
             Clock clock) {
         this.dynamoDb = dynamoDb;
         this.platformTable = platformTable;
@@ -110,14 +110,18 @@ public class ConsentStoreService {
         if (consentVersion.equals(record.version())) {
             return LoginGate.ALLOWED;
         }
-        putAudit(
-                sub,
-                AuditEventType.CONSENT_RECONSENT_REQUIRED,
-                record.version(),
-                record.purpose(),
-                null,
-                Instant.now(clock).toString(),
-                seq);
+        try {
+            putAudit(
+                    sub,
+                    AuditEventType.CONSENT_RECONSENT_REQUIRED,
+                    record.version(),
+                    record.purpose(),
+                    null,
+                    Instant.now(clock).toString(),
+                    seq);
+        } catch (RuntimeException e) {
+            log.error("CONSENT_RECONSENT_REQUIRED audit write failed; denial stands. sub={}", sub, e);
+        }
         return LoginGate.RECONSENT_REQUIRED;
     }
 

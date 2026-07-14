@@ -247,7 +247,7 @@ public class QueryStack extends Stack {
                         "ENVIRONMENT",
                         env,
                         "CONSENT_POLICY_VERSION",
-                        "v1.0",
+                        "v1",
                         "DEFAULT_OWNER_SUB",
                         "dev-user",
                         "SPRING_CLOUD_FUNCTION_DEFINITION",
