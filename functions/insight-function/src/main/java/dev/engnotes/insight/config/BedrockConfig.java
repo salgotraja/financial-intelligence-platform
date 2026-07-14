@@ -1,5 +1,6 @@
 package dev.engnotes.insight.config;
 
+import java.time.Clock;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -48,5 +49,11 @@ public class BedrockConfig {
                 .region(Region.of(region))
                 .httpClient(UrlConnectionHttpClient.create())
                 .build();
+    }
+
+    /** computeCorrelations' market-hours guard needs a real clock; ingestion keeps its own equivalent bean. */
+    @Bean
+    public Clock clock() {
+        return Clock.systemUTC();
     }
 }
