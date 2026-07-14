@@ -115,6 +115,8 @@ public class ConsentStoreService {
         if (!record.consentGiven()) {
             return record.version() == null ? LoginGate.ALLOWED : LoginGate.WITHDRAWN;
         }
+        // Exact ordinal comparison, not case-folding, so no Locale is involved here (unlike
+        // equalsIgnoreCase/toUpperCase, which are Locale-sensitive) - already safe as written.
         if (consentVersion.equals(record.version())) {
             return LoginGate.ALLOWED;
         }
