@@ -154,6 +154,106 @@ class QueryStackTest {
         }
     }
 
+    // The 60s stage cache has no caller identity in its key by default: one user's cached GET could
+    // be served to another for up to 60s. `/watchlist`, `/user/consent`, `/user/export` all return
+    // caller-scoped data, so Authorization must be part of the cache key on each (found 2026-07-13,
+    // STATUS.md "Recommended next steps" item 0, LEARNING-GUIDE 13.9).
+    @Test
+    @SuppressWarnings("unchecked")
+    void userScopedGetMethodsCacheKeyOnAuthorizationHeader() {
+        var methods = userScopedGetMethods();
+        assertEquals(
+                3, methods.size(), "expected LIST/VIEW/EXPORT GET methods (/watchlist, /user/consent, /user/export)");
+        for (var props : methods) {
+            var integration = (Map<String, Object>) props.get("Integration");
+            var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");
+            assertTrue(
+                    cacheKeyParameters != null && cacheKeyParameters.contains("method.request.header.Authorization"),
+                    "expected Authorization cache key on " + props.get("ResourceId") + ": " + integration);
+
+            var requestParameters = (Map<String, Object>) props.get("RequestParameters");
+            assertEquals(
+                    Boolean.TRUE,
+                    requestParameters == null ? null : requestParameters.get("method.request.header.Authorization"),
+                    "expected required Authorization request parameter on " + props.get("ResourceId"));
+        }
+    }
+
+    // Ticker-scoped routes serve the same data to every caller, so their existing {ticker}-only
+    // cache key must not change.
+    @Test
+    @SuppressWarnings("unchecked")
+    void tickerScopedGetMethodsKeepTickerOnlyCacheKey() {
+        var methods = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> "GET".equals(p.get("HttpMethod")))
+                .filter(p -> requestTemplateBody(p).contains("$input.params('ticker')"))
+                .filter(p -> !requestTemplateBody(p).contains("\"operation\""))
+                .toList();
+        assertEquals(2, methods.size(), "expected /insights/{ticker} and /market-data/{ticker} GET methods");
+        for (var props : methods) {
+            var integration = (Map<String, Object>) props.get("Integration");
+            var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");
+            assertEquals(List.of("method.request.path.ticker"), cacheKeyParameters);
+        }
+    }
+
+    // API Gateway only activates caching for GET methods by default even when the stage-level
+    // MethodSettings override targets HttpMethod=* (AWS docs: "only GET methods have caching
+    // activated to ensure API safety... unless overridden"). Confirm this stack never adds a
+    // method-specific override that would turn caching on for a write (POST/DELETE) method.
+    @Test
+    @SuppressWarnings("unchecked")
+    void noMethodSettingOverrideEnablesCachingForWriteMethods() {
+        var stages = synth().findResources("AWS::ApiGateway::Stage").values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .toList();
+        assertEquals(1, stages.size());
+        var methodSettings = (List<Map<String, Object>>) stages.get(0).get("MethodSettings");
+        assertEquals(1, methodSettings.size(), "expected only the single default */* MethodSetting");
+        assertEquals("*", methodSettings.get(0).get("HttpMethod"));
+
+        var writeMethods = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> "POST".equals(p.get("HttpMethod")) || "DELETE".equals(p.get("HttpMethod")))
+                .toList();
+        assertFalse(writeMethods.isEmpty());
+        for (var props : writeMethods) {
+            var integration = (Map<String, Object>) props.get("Integration");
+            assertTrue(
+                    integration.get("CacheKeyParameters") == null,
+                    "write method must not declare cache key parameters: " + props.get("ResourceId"));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> userScopedGetMethods() {
+        return synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> "GET".equals(p.get("HttpMethod")))
+                .filter(p -> {
+                    var body = requestTemplateBody(p);
+                    return body.contains("\"operation\": \"LIST\"")
+                            || body.contains("\"operation\": \"VIEW\"")
+                            || body.contains("\"operation\": \"EXPORT\"");
+                })
+                .toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String requestTemplateBody(Map<String, Object> methodProps) {
+        var integration = (Map<String, Object>) methodProps.get("Integration");
+        if (integration == null) {
+            return "";
+        }
+        var requestTemplates = (Map<String, Object>) integration.get("RequestTemplates");
+        if (requestTemplates == null) {
+            return "";
+        }
+        var body = requestTemplates.get("application/json");
+        return body == null ? "" : body.toString();
+    }
+
     // Authorizer 401/403 (ACCESS_DENIED/UNAUTHORIZED, both DEFAULT_4XX) and any DEFAULT_5XX are
     // Gateway Responses, generated outside the per-method Integration/MethodResponses wiring above:
     // without an explicit Gateway Response, they carry no CORS header at all.

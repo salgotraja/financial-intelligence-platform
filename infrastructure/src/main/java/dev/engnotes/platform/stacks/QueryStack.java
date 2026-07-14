@@ -535,11 +535,15 @@ public class QueryStack extends Stack {
                                 "{ \"operation\": \"LIST\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
+                        // Authorization must be a cache key, else the 60s stage cache serves one
+                        // caller's list to every other caller for up to 60s.
+                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.header.Authorization", true))
                         .methodResponses(standardMethodResponses())
                         .build());
 
@@ -580,11 +584,15 @@ public class QueryStack extends Stack {
                                         + "  \"sub\": \"$context.authorizer.sub\","
                                         + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
+                        // Authorization must be a cache key, else the 60s stage cache serves one
+                        // caller's consent record to every other caller for up to 60s.
+                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.header.Authorization", true))
                         .methodResponses(standardMethodResponses())
                         .build());
 
@@ -622,12 +630,19 @@ public class QueryStack extends Stack {
                                         + "  \"correlationId\": \"$context.requestId\","
                                         + "  \"callerSub\": \"$context.authorizer.sub\","
                                         + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
+                        // Authorization must be a cache key, else the 60s stage cache serves one
+                        // caller's export to every other caller for up to 60s.
+                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
-                        .requestParameters(Map.of("method.request.querystring.subjectSub", false))
+                        .requestParameters(Map.of(
+                                "method.request.querystring.subjectSub",
+                                false,
+                                "method.request.header.Authorization",
+                                true))
                         .methodResponses(standardMethodResponses())
                         .build());
 
