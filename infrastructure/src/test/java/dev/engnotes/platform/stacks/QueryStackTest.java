@@ -429,6 +429,29 @@ class QueryStackTest {
                 "days must stay optional (absent defaults to 30)");
     }
 
+    // The daily route's template interpolates TWO caller-supplied params. The class-wide ticker
+    // test above covers 'ticker'; this pins 'days' in the same no-raw-remainder style, so a future
+    // template rewrite cannot drop $util.escapeJavaScript from either param unseen.
+    @Test
+    @SuppressWarnings("unchecked")
+    void dailyMarketDataTemplateEscapesBothTickerAndDays() {
+        var templates = synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .map(QueryStackTest::requestTemplateBody)
+                .filter(body -> body.contains("$input.params('days')"))
+                .toList();
+        assertEquals(1, templates.size(), "expected exactly one days-interpolating request template (daily GET)");
+        var body = templates.get(0);
+        var unescapedRemainder = body.replace("$util.escapeJavaScript($input.params('ticker'))", "")
+                .replace("$util.escapeJavaScript($input.params('days'))", "");
+        assertFalse(
+                unescapedRemainder.contains("$input.params('ticker')"),
+                "raw unescaped $input.params('ticker') in daily request template: " + body);
+        assertFalse(
+                unescapedRemainder.contains("$input.params('days')"),
+                "raw unescaped $input.params('days') in daily request template: " + body);
+    }
+
     // Confirms the new /market-data/{ticker}/daily resource is nested under {ticker}, not a sibling
     // top-level resource, and that GET /market-data/{ticker}/daily resolves to the dedicated
     // DailyMarketDataFn Lambda via SPRING_CLOUD_FUNCTION_DEFINITION=serveDailyMarketData.

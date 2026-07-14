@@ -49,6 +49,8 @@ public class DailyMarketDataQuery {
         this.platformTable = platformTable;
     }
 
+    // Invariant: 90 DAY# items fit one DynamoDB Query page at current item sizes; item growth past
+    // ~11KB average would silently truncate results below the requested days.
     public DailyMarketDataResponse findDailyPoints(String rawTicker, String rawDays) {
         String ticker = Tickers.validated(rawTicker);
         int days = parseDays(rawDays);
