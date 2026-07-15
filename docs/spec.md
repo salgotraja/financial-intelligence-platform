@@ -349,7 +349,7 @@ JWT and enforced at the authorizer:
 On registration, before any data endpoint is reachable, the user sees a consent screen stating
 what is collected, why, retention, and sharing. On accept, PostConfirmation writes the consent
 attributes. PreAuthentication re-checks them on every login. Bumping `consent_version` (e.g.
-`v1.0` to `v2.0`) forces re-consent on the next login.
+`v1` to `v2`) forces re-consent on the next login.
 
 ### Right to access
 `GET /user/my-data` returns everything stored about the caller: Cognito attributes
@@ -491,7 +491,7 @@ load test with recorded p50/p95/p99, CI/CD gates, the three write-ups.
 | Min interval per group | 15 min | Anti-spam on insighting |
 | Correlation threshold | 0.6 | Group membership |
 | Correlation refresh | 15 min | Scheduled Lambda |
-| Hot history TTL | ~48h | DynamoDB; full history in S3 |
+| Hot history TTL | 24h | DynamoDB; full history in S3 |
 | Max tickers per user | 25 | API-enforced cap |
 | Max users | 20 | Test-window cap |
 | Bedrock daily spend cap | ~USD 5/day | Circuit breaker trip |
