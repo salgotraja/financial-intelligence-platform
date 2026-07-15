@@ -10,6 +10,11 @@ import java.util.List;
  * <p>Carries the structured contract (signal/confidence/rationale/drivers, spec section 9) plus
  * {@code source} (BEDROCK or RULE_BASED) so consumers know whether the insight came from the model
  * or the deterministic fallback. {@code insightText} mirrors the rationale for the read path.
+ *
+ * <p>{@code skipped} is true only for the group anti-spam path (Task 7): the ticker belongs to a
+ * group whose {@code INSIGHT#LATEST} is younger than the configured interval, so nothing was
+ * generated or stored. It is a clean pipeline success, not a failure, so the state machine
+ * continues normally.
  */
 public class InsightResponse {
 
@@ -25,6 +30,7 @@ public class InsightResponse {
     private String rationale;
     private List<String> drivers;
     private String source;
+    private boolean skipped;
 
     public InsightResponse() {}
 
@@ -41,6 +47,7 @@ public class InsightResponse {
         this.rationale = b.rationale;
         this.drivers = b.drivers;
         this.source = b.source;
+        this.skipped = b.skipped;
     }
 
     public static Builder builder() {
@@ -99,6 +106,10 @@ public class InsightResponse {
         return source;
     }
 
+    public boolean isSkipped() {
+        return skipped;
+    }
+
     public static final class Builder {
         private String ticker;
         private String generatedAt;
@@ -112,6 +123,7 @@ public class InsightResponse {
         private String rationale;
         private List<String> drivers;
         private String source;
+        private boolean skipped;
 
         public Builder ticker(String ticker) {
             this.ticker = ticker;
@@ -170,6 +182,11 @@ public class InsightResponse {
 
         public Builder source(String source) {
             this.source = source;
+            return this;
+        }
+
+        public Builder skipped(boolean skipped) {
+            this.skipped = skipped;
             return this;
         }
 

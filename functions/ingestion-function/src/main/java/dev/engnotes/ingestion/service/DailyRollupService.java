@@ -114,7 +114,7 @@ public class DailyRollupService {
             List<AttributeValue> series = existing.containsKey("series")
                     ? new ArrayList<>(existing.get("series").l())
                     : new ArrayList<>();
-            if (MarketHours.isSession(observedAt)) {
+            if (MarketHours.isMarketOpen(observedAt)) {
                 String t = SERIES_TIME.format(observedAt);
                 AttributeValue point = AttributeValue.builder()
                         .m(Map.of("t", str(t), "p", num(price)))

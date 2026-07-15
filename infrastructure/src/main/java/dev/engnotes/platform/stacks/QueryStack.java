@@ -6,13 +6,20 @@ import software.amazon.awscdk.*;
 import software.amazon.awscdk.services.apigateway.*;
 import software.amazon.awscdk.services.cloudwatch.*;
 import software.amazon.awscdk.services.cloudwatch.actions.SnsAction;
+import software.amazon.awscdk.services.iam.Effect;
 import software.amazon.awscdk.services.iam.ManagedPolicy;
+import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
 import software.amazon.awscdk.services.lambda.*;
 import software.amazon.awscdk.services.lambda.Runtime;
 import software.amazon.awscdk.services.logs.LogGroup;
+import software.amazon.awscdk.services.logs.LogGroupProps;
 import software.amazon.awscdk.services.logs.RetentionDays;
+import software.amazon.awscdk.services.stepfunctions.*;
+import software.amazon.awscdk.services.stepfunctions.tasks.*;
+import software.amazon.awscdk.services.wafv2.CfnWebACL;
+import software.amazon.awscdk.services.wafv2.CfnWebACLAssociation;
 import software.constructs.Construct;
 
 /**
@@ -20,14 +27,20 @@ import software.constructs.Construct;
  * <p>
  * Serves user-facing API requests:
  *   GET /insights/{ticker} - latest insight for a ticker
+ *   GET /insights - watchlist-scoped insight feed (group insights + ungrouped tickers' latest)
  *   GET /market-data/{ticker} - recent market-data points for a ticker
+ *   GET /stories/{ticker} - rule-based per-ticker narrative
  *   GET /health - health check
  * <p>
  * Production decisions:
- *   - Provisioned concurrency: eliminates cold starts on the user-facing path
+ *   - SnapStart: eliminates Spring Boot cold starts on the user-facing path
  *   - API Gateway caching: 60s TTL reduces DynamoDB reads for popular tickers
  *   - WAF: rate limiting and known bad input patterns
  *   - CloudWatch alarms: p99 > 500ms pages on-call via SNS
+ * <p>
+ * Provisioned concurrency is not configured on any alias here: AWS rejects it on the same
+ * version/alias as SnapStart, and every Lambda in this stack is SnapStart-enabled. It could be
+ * reintroduced on a future Lambda that opts out of SnapStart.
  */
 public class QueryStack extends Stack {
     public QueryStack(
@@ -64,7 +77,7 @@ public class QueryStack extends Stack {
         // Query Lambda
         var queryFn = Function.Builder.create(this, "QueryFn")
                 .functionName("financial-query-" + env)
-                .description("Serves insight and market data API requests")
+                .description("Serves insight API requests")
                 .runtime(Runtime.JAVA_25)
                 .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
                 .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
@@ -73,17 +86,12 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "serveInsight",
-                        "MAIN_CLASS",
-                        "dev.engnotes.query.QueryHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveInsight"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -106,22 +114,113 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "serveMarketData",
-                        "MAIN_CLASS",
-                        "dev.engnotes.query.QueryHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveMarketData"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "MarketDataFnLogs")
                 .logGroupName("/aws/lambda/" + marketDataFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // Daily market-data Lambda: serves GET /market-data/{ticker}/daily (spec sub-project B, Task
+        // 14), a third function from the same query-function asset. A separate Lambda rather than a
+        // branch inside serveMarketData: it returns a distinct response shape (DailyMarketDataResponse,
+        // one row per trading day, no intraday series blob), mirroring how insightsFeedFn already gets
+        // its own Lambda alongside queryFn/marketDataFn for a related-but-differently-shaped route
+        // nested under the same resource tree. Shares the read-only queryRole.
+        var dailyMarketDataFn = Function.Builder.create(this, "DailyMarketDataFn")
+                .functionName("financial-market-data-daily-" + env)
+                .description("Serves daily OHLCV rollups for weekly/period charting")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
+                .role(queryRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveDailyMarketData"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "DailyMarketDataFnLogs")
+                .logGroupName("/aws/lambda/" + dailyMarketDataFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // Story Lambda: rule-based per-ticker narrative (spec sub-project C, Task 16), a fourth
+        // function from the same query-function asset alongside queryFn/marketDataFn/
+        // dailyMarketDataFn. Shares the read-only queryRole: StoryQuery only reads the platform
+        // table (DAY# rollups, INSIGHT# items, GSI1 group mirrors, TS# points), never writes and
+        // never calls Bedrock.
+        var storiesFn = Function.Builder.create(this, "StoriesFn")
+                .functionName("financial-stories-" + env)
+                .description("Serves the rule-based per-ticker story")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
+                .role(queryRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveStory"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "StoriesFnLogs")
+                .logGroupName("/aws/lambda/" + storiesFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // Insight-feed Lambda: watchlist-scoped insight feed (GET /insights, no ticker). Third
+        // function from the same query-function asset, sharing the read-only queryRole: it reads the
+        // caller's watchlist plus GSI1 (group-insight mirror items written by insight-function on
+        // correlation groups, DataStack's "GSI1 (insight-by-ticker)" comment). GSI1 access needs no
+        // extra grant: CDK's Table.grantReadData covers Query on the base table AND every index
+        // (tableArn + tableArn/index/*) once the table has an index, which platformTable already does
+        // (queryRoleGrantCoversGsi1Index in QueryStackTest pins this).
+        var insightsFeedFn = Function.Builder.create(this, "InsightsFeedFn")
+                .functionName("financial-insights-feed-" + env)
+                .description("Serves the watchlist-scoped insight feed")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
+                .role(queryRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveInsightFeed"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "InsightsFeedFnLogs")
+                .logGroupName("/aws/lambda/" + insightsFeedFn.getFunctionName())
                 .retention(RetentionDays.ONE_MONTH)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
@@ -149,19 +248,13 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "DEFAULT_OWNER_SUB",
-                        "dev-user",
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "watchlist",
-                        "MAIN_CLASS",
-                        "dev.engnotes.watchlist.WatchlistHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("DEFAULT_OWNER_SUB", "dev-user"),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "watchlist"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.watchlist.WatchlistHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -196,23 +289,15 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "AUDIT_TABLE",
-                        data.getAuditTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "CONSENT_VERSION",
-                        "v1",
-                        "DEFAULT_OWNER_SUB",
-                        "dev-user",
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "consent",
-                        "MAIN_CLASS",
-                        "dev.engnotes.consent.ConsentHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("AUDIT_TABLE", data.getAuditTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("CONSENT_POLICY_VERSION", "v1"),
+                        Map.entry("DEFAULT_OWNER_SUB", "dev-user"),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "consent"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.consent.ConsentHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -251,21 +336,14 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(30))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "AUDIT_TABLE",
-                        data.getAuditTable().getTableName(),
-                        "USER_POOL_ID",
-                        security.getUserPoolId(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "dsr",
-                        "MAIN_CLASS",
-                        "dev.engnotes.dsr.DsrHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("AUDIT_TABLE", data.getAuditTable().getTableName()),
+                        Map.entry("USER_POOL_ID", security.getUserPoolId()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "dsr"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.dsr.DsrHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -296,19 +374,13 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "COGNITO_REGION",
-                        this.getRegion(),
-                        "COGNITO_USER_POOL_ID",
-                        security.getUserPoolId(),
-                        "COGNITO_CLIENT_ID",
-                        security.getUserPoolClientId(),
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "authorize",
-                        "MAIN_CLASS",
-                        "dev.engnotes.authorizer.AuthorizerHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("COGNITO_REGION", this.getRegion()),
+                        Map.entry("COGNITO_USER_POOL_ID", security.getUserPoolId()),
+                        Map.entry("COGNITO_CLIENT_ID", security.getUserPoolClientId()),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "authorize"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.authorizer.AuthorizerHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .build();
 
         LogGroup.Builder.create(this, "AuthorizerFnLogs")
@@ -332,14 +404,12 @@ public class QueryStack extends Stack {
                 .build();
 
         // Invoke the query Lambda via a published-version alias so SnapStart engages; invoking
-        // $LATEST would run the full Spring Boot init (~5-10s) on every cold start. Provisioned
-        // concurrency (paid even when idle) stays prod-only.
-        var queryAliasBuilder =
-                Alias.Builder.create(this, "QueryFnAlias").aliasName("live").version(queryFn.getCurrentVersion());
-        if (env.equals("prod")) {
-            queryAliasBuilder.provisionedConcurrentExecutions(2); // adjust based on load test
-        }
-        var queryFnAlias = queryAliasBuilder.build();
+        // $LATEST would run the full Spring Boot init (~5-10s) on every cold start. No provisioned
+        // concurrency: AWS rejects it on a SnapStart-enabled version/alias.
+        var queryFnAlias = Alias.Builder.create(this, "QueryFnAlias")
+                .aliasName("live")
+                .version(queryFn.getCurrentVersion())
+                .build();
 
         // Same SnapStart rule for the remaining API Lambdas: only a published version restores from
         // the snapshot, so every integration below targets a live alias, never $LATEST.
@@ -360,6 +430,215 @@ public class QueryStack extends Stack {
                 .aliasName("live")
                 .version(marketDataFn.getCurrentVersion())
                 .build();
+
+        var dailyMarketDataFnAlias = Alias.Builder.create(this, "DailyMarketDataFnAlias")
+                .aliasName("live")
+                .version(dailyMarketDataFn.getCurrentVersion())
+                .build();
+
+        var insightsFeedFnAlias = Alias.Builder.create(this, "InsightsFeedFnAlias")
+                .aliasName("live")
+                .version(insightsFeedFn.getCurrentVersion())
+                .build();
+
+        var storiesFnAlias = Alias.Builder.create(this, "StoriesFnAlias")
+                .aliasName("live")
+                .version(storiesFn.getCurrentVersion())
+                .build();
+
+        // == Erasure Step Functions workflow (spec s11, Task 11) ==
+        // Standard state machine driving the dsr Lambda's per-operation dispatch, in order:
+        // MarkDeletionPending -> DeleteUserItems -> S3SafeguardDelete -> DeleteCognitoUser ->
+        // SendConfirmationEmail -> WriteErasureAudit. Every LambdaInvoke uses payloadResponseOnly and
+        // targets the same live alias as the API routes (mirrors IngestionStack's retry/log patterns):
+        // the running JSON is fully replaced by each state's own output, so DsrHandler's workflow
+        // operations echo forward whatever later states still need (subjectSub, callerSub, sourceIp,
+        // correlationId, requestedAt, email, emailSent).
+        RetryProps erasureRetry = RetryProps.builder()
+                .errors(List.of(
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException",
+                        "Lambda.TooManyRequestsException",
+                        "States.TaskFailed"))
+                .interval(Duration.seconds(2))
+                .maxAttempts(2)
+                .backoffRate(2.0)
+                .build();
+
+        LambdaInvoke markDeletionPending = LambdaInvoke.Builder.create(this, "MarkDeletionPending")
+                .lambdaFunction(dsrFnAlias)
+                .comment("Set the deletion-pending gate and capture the subject's email before Cognito deletion")
+                .payloadResponseOnly(true)
+                .retryOnServiceExceptions(false)
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "MARK_PENDING"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"))))
+                .build();
+        markDeletionPending.addRetry(erasureRetry);
+
+        LambdaInvoke deleteUserItems = LambdaInvoke.Builder.create(this, "DeleteUserItems")
+                .lambdaFunction(dsrFnAlias)
+                .comment("Delete the CONSENT record and every WATCH#/WATCHSET mirror")
+                .payloadResponseOnly(true)
+                .retryOnServiceExceptions(false)
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "DELETE_USER_ITEMS"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("email.$", "$.email"))))
+                .build();
+        deleteUserItems.addRetry(erasureRetry);
+
+        LambdaInvoke s3SafeguardDelete = LambdaInvoke.Builder.create(this, "S3SafeguardDelete")
+                .lambdaFunction(dsrFnAlias)
+                .comment("Documented no-op: the data lake holds no subject-linked keys")
+                .payloadResponseOnly(true)
+                .retryOnServiceExceptions(false)
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "S3_SAFEGUARD"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("email.$", "$.email"))))
+                .build();
+        s3SafeguardDelete.addRetry(erasureRetry);
+
+        LambdaInvoke deleteCognitoUser = LambdaInvoke.Builder.create(this, "DeleteCognitoUser")
+                .lambdaFunction(dsrFnAlias)
+                .comment("Delete the Cognito identity - the final, irreversible erasure step")
+                .payloadResponseOnly(true)
+                .retryOnServiceExceptions(false)
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "DELETE_COGNITO_USER"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("email.$", "$.email"))))
+                .build();
+        deleteCognitoUser.addRetry(erasureRetry);
+
+        LambdaInvoke writeErasureAudit = LambdaInvoke.Builder.create(this, "WriteErasureAudit")
+                .lambdaFunction(dsrFnAlias)
+                .comment("Clear the deletion-pending gate and write the ACCOUNT_ERASED audit record")
+                .payloadResponseOnly(true)
+                .retryOnServiceExceptions(false)
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "WRITE_ERASURE_AUDIT"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("emailSent.$", "$.emailSent"))))
+                .build();
+        writeErasureAudit.addRetry(erasureRetry);
+
+        LambdaInvoke sendConfirmationEmail = LambdaInvoke.Builder.create(this, "SendConfirmationEmail")
+                .lambdaFunction(dsrFnAlias)
+                .comment("Email the subject a factual erasure confirmation")
+                .payloadResponseOnly(true)
+                .retryOnServiceExceptions(false)
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "SEND_CONFIRMATION_EMAIL"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("email.$", "$.email"))))
+                .build();
+        sendConfirmationEmail.addRetry(erasureRetry);
+
+        // A failed send (including SES sandbox rejection of an unverified recipient) must not fail the
+        // erasure: catch to a Pass state that records emailSent=false and continues to the audit write.
+        // The catch's own resultPath keeps the error detail out of the way ($.errorInfo) rather than
+        // replacing the whole running JSON, so subjectSub/callerSub/etc. survive into WriteErasureAudit.
+        Pass emailFailed = Pass.Builder.create(this, "EmailFailed")
+                .comment("Confirmation email failed after retries; erasure still completes")
+                .resultPath("$.emailSent")
+                .result(Result.fromBoolean(false))
+                .build();
+        emailFailed.next(writeErasureAudit);
+        sendConfirmationEmail.addCatch(
+                emailFailed,
+                CatchProps.builder()
+                        .errors(List.of("States.ALL"))
+                        .resultPath("$.errorInfo")
+                        .build());
+
+        Succeed erasureCompleted = Succeed.Builder.create(this, "ErasureCompleted")
+                .comment("Erasure workflow completed")
+                .build();
+
+        Chain erasureChain = Chain.start(markDeletionPending)
+                .next(deleteUserItems)
+                .next(s3SafeguardDelete)
+                .next(deleteCognitoUser)
+                .next(sendConfirmationEmail)
+                .next(writeErasureAudit)
+                .next(erasureCompleted);
+
+        // The state machine name is fixed (not CDK-generated), so its ARN is fully deterministic from
+        // account/region/name alone (Step Functions ARN format never varies). Built as a literal string
+        // below, rather than read off erasureStateMachine.getStateMachineArn(), because the dsr Lambda
+        // both starts this execution AND is the Lambda every state invokes: a construct-reference grant
+        // in either direction closes a cycle (DsrLambdaRolePolicy -> state machine -> state machine
+        // role -> DsrFnAlias -> DsrFn -> DsrLambdaRolePolicy), which CloudFormation cannot deploy.
+        String erasureStateMachineName = "financial-erasure-" + env;
+        String erasureStateMachineArn = "arn:aws:states:" + this.getRegion() + ":" + this.getAccount()
+                + ":stateMachine:" + erasureStateMachineName;
+
+        var erasureStateMachine = StateMachine.Builder.create(this, "ErasureStateMachine")
+                .stateMachineName(erasureStateMachineName)
+                .definitionBody(DefinitionBody.fromChainable(erasureChain))
+                .tracingEnabled(true)
+                .stateMachineType(StateMachineType.STANDARD)
+                .logs(LogOptions.builder()
+                        .destination(new LogGroup(
+                                this,
+                                "ErasureStateMachineLogs",
+                                LogGroupProps.builder()
+                                        .logGroupName("/aws/states/financial-erasure-" + env)
+                                        .retention(RetentionDays.ONE_MONTH)
+                                        .removalPolicy(RemovalPolicy.DESTROY)
+                                        .build()))
+                        .level(LogLevel.ERROR)
+                        .includeExecutionData(true)
+                        .build())
+                .build();
+
+        // The dsr Lambda starts this execution itself (DELETE /user/account's ERASE case), so it needs
+        // StartExecution scoped to just this state machine - not the ingestion one - via the literal
+        // ARN above (see its comment: a construct-reference grant here would cycle back through
+        // DsrFnAlias). It also needs ses:SendEmail scoped to the shared alertEmail identity for
+        // SendConfirmationEmail (that grant is safe: DataStack has no reference back to QueryStack).
+        // A manual statement, not EmailIdentity.grantSendEmail(), since that convenience grant also
+        // adds ses:SendRawEmail (the SES v1 raw-MIME action); this Lambda only ever calls SES v2's
+        // SendEmail, so ses:SendEmail alone is the least-privilege grant.
+        dsrRole.addToPolicy(PolicyStatement.Builder.create()
+                .effect(Effect.ALLOW)
+                .actions(List.of("states:StartExecution"))
+                .resources(List.of(erasureStateMachineArn))
+                .build());
+        dsrRole.addToPolicy(PolicyStatement.Builder.create()
+                .effect(Effect.ALLOW)
+                .actions(List.of("ses:SendEmail"))
+                .resources(List.of(data.getSenderIdentity().getEmailIdentityArn()))
+                .build());
+        dsrFn.addEnvironment("STATE_MACHINE_ARN", erasureStateMachineArn);
+        dsrFn.addEnvironment("ALERT_EMAIL", data.getAlertEmail());
 
         // API Gateway
         var apiGwLogs = LogGroup.Builder.create(this, "ApiGwAccessLogs")
@@ -410,6 +689,102 @@ public class QueryStack extends Stack {
                         .responseHeaders(Map.of("Access-Control-Allow-Origin", "'" + allowOrigin + "'"))
                         .build());
 
+        // == WAF (spec s12, Task 13) ==
+        // Regional Web ACL on the deployed stage, every env (user accepted the cost). Rules run in
+        // priority order: the two AWS managed rule groups (OverrideAction none, so each managed
+        // rule's own action - almost always Block - applies directly instead of only being counted),
+        // then the rate-based rule (300 requests per 5-minute window per source IP, generous for a
+        // single-user dev account but a real ceiling). Each rule and the ACL itself carry CloudWatch
+        // metrics + sampled requests for visibility.
+        var commonRuleSetVisibility = CfnWebACL.VisibilityConfigProperty.builder()
+                .sampledRequestsEnabled(true)
+                .cloudWatchMetricsEnabled(true)
+                .metricName("financial-waf-common-" + env)
+                .build();
+        var commonRuleSetRule = CfnWebACL.RuleProperty.builder()
+                .name("AWSManagedRulesCommonRuleSet")
+                .priority(0)
+                .overrideAction(CfnWebACL.OverrideActionProperty.builder()
+                        .none(Map.of())
+                        .build())
+                .statement(CfnWebACL.StatementProperty.builder()
+                        .managedRuleGroupStatement(CfnWebACL.ManagedRuleGroupStatementProperty.builder()
+                                .vendorName("AWS")
+                                .name("AWSManagedRulesCommonRuleSet")
+                                .build())
+                        .build())
+                .visibilityConfig(commonRuleSetVisibility)
+                .build();
+
+        var knownBadInputsVisibility = CfnWebACL.VisibilityConfigProperty.builder()
+                .sampledRequestsEnabled(true)
+                .cloudWatchMetricsEnabled(true)
+                .metricName("financial-waf-badinputs-" + env)
+                .build();
+        var knownBadInputsRule = CfnWebACL.RuleProperty.builder()
+                .name("AWSManagedRulesKnownBadInputsRuleSet")
+                .priority(1)
+                .overrideAction(CfnWebACL.OverrideActionProperty.builder()
+                        .none(Map.of())
+                        .build())
+                .statement(CfnWebACL.StatementProperty.builder()
+                        .managedRuleGroupStatement(CfnWebACL.ManagedRuleGroupStatementProperty.builder()
+                                .vendorName("AWS")
+                                .name("AWSManagedRulesKnownBadInputsRuleSet")
+                                .build())
+                        .build())
+                .visibilityConfig(knownBadInputsVisibility)
+                .build();
+
+        var rateLimitVisibility = CfnWebACL.VisibilityConfigProperty.builder()
+                .sampledRequestsEnabled(true)
+                .cloudWatchMetricsEnabled(true)
+                .metricName("financial-waf-ratelimit-" + env)
+                .build();
+        var rateLimitRule = CfnWebACL.RuleProperty.builder()
+                .name("RateLimitPerIp")
+                .priority(2)
+                .action(CfnWebACL.RuleActionProperty.builder()
+                        .block(CfnWebACL.BlockActionProperty.builder().build())
+                        .build())
+                .statement(CfnWebACL.StatementProperty.builder()
+                        .rateBasedStatement(CfnWebACL.RateBasedStatementProperty.builder()
+                                .limit(300)
+                                .evaluationWindowSec(300)
+                                .aggregateKeyType("IP")
+                                .build())
+                        .build())
+                .visibilityConfig(rateLimitVisibility)
+                .build();
+
+        var webAcl = CfnWebACL.Builder.create(this, "ApiWebAcl")
+                .name("financial-waf-" + env)
+                .description("Regional Web ACL protecting the Financial Intelligence API")
+                .scope("REGIONAL")
+                .defaultAction(CfnWebACL.DefaultActionProperty.builder()
+                        .allow(CfnWebACL.AllowActionProperty.builder().build())
+                        .build())
+                .rules(List.of(commonRuleSetRule, knownBadInputsRule, rateLimitRule))
+                .visibilityConfig(CfnWebACL.VisibilityConfigProperty.builder()
+                        .sampledRequestsEnabled(true)
+                        .cloudWatchMetricsEnabled(true)
+                        .metricName("financial-waf-acl-" + env)
+                        .build())
+                .build();
+
+        // Stage ARN is derived from the RestApi construct (restApiId + deployed stage name), not
+        // hardcoded: arn:aws:apigateway:{region}::/restapis/{restApiId}/stages/{stageName}.
+        var deployedStage = api.getDeploymentStage();
+        String apiStageArn = "arn:aws:apigateway:" + this.getRegion() + "::/restapis/" + api.getRestApiId() + "/stages/"
+                + deployedStage.getStageName();
+
+        var webAclAssociation = CfnWebACLAssociation.Builder.create(this, "ApiWebAclAssociation")
+                .resourceArn(apiStageArn)
+                .webAclArn(webAcl.getAttrArn())
+                .build();
+        // Explicit dependency: associating before the stage exists fails the deploy.
+        webAclAssociation.getNode().addDependency(deployedStage);
+
         // Non-proxy: the request template maps the path ticker + request id onto the function's
         // QueryRequest record. With the default proxy integration the template is ignored and the
         // raw event arrives, so the ticker resolves to null.
@@ -417,7 +792,7 @@ public class QueryStack extends Stack {
                 .proxy(false)
                 .requestTemplates(Map.of(
                         "application/json",
-                        "{ \"ticker\": \"$input.params('ticker')\", "
+                        "{ \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\", "
                                 + "  \"correlationId\": \"$context.requestId\" }"))
                 // {ticker} must be a cache key, else the 60s stage cache serves one ticker's
                 // response for every ticker (wrong data + collapses the load-test cache mix).
@@ -425,9 +800,10 @@ public class QueryStack extends Stack {
                 .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                 .build();
 
+        var insightsResource = api.getRoot().addResource("insights");
+
         // /insights/{ticker} - protected (readers+)
-        api.getRoot()
-                .addResource("insights")
+        insightsResource
                 .addResource("{ticker}")
                 .addMethod(
                         "GET",
@@ -439,23 +815,101 @@ public class QueryStack extends Stack {
                                 .methodResponses(standardMethodResponses())
                                 .build());
 
+        // /insights - protected (readers+), watchlist-scoped insight feed (no ticker). Bare resource,
+        // separate from /insights/{ticker} above and from RoutePolicy's "insights/*" rule.
+        insightsResource.addMethod(
+                "GET",
+                LambdaIntegration.Builder.create(insightsFeedFnAlias)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"ownerSub\": \"$context.authorizer.sub\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        // Authorization must be a cache key, else the 60s stage cache serves one
+                        // caller's feed to every other caller for up to 60s (Task 1's user-scoped
+                        // cache-key rule).
+                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.header.Authorization", true))
+                        .methodResponses(standardMethodResponses())
+                        .build());
+
         var marketDataIntegration = LambdaIntegration.Builder.create(marketDataFnAlias)
                 .proxy(false)
                 .requestTemplates(Map.of(
                         "application/json",
-                        "{ \"ticker\": \"$input.params('ticker')\", "
+                        "{ \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\", "
                                 + "  \"correlationId\": \"$context.requestId\" }"))
                 .cacheKeyParameters(List.of("method.request.path.ticker"))
                 .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                 .build();
 
         // /market-data/{ticker} - protected (readers+), chart data for the frontend
+        var marketDataTickerResource = api.getRoot().addResource("market-data").addResource("{ticker}");
+        marketDataTickerResource.addMethod(
+                "GET",
+                marketDataIntegration,
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.path.ticker", true))
+                        .methodResponses(standardMethodResponses())
+                        .build());
+
+        // /market-data/{ticker}/daily - protected (readers+), daily OHLCV rollups for weekly/period
+        // charts (spec sub-project B, Task 14). `days` (default 30, capped 90) is validated and
+        // clamped in DailyMarketDataQuery, never in VTL, so it stays optional here; both caller-
+        // supplied params are escaped to guard the non-proxy request template against JSON injection.
+        var dailyMarketDataIntegration = LambdaIntegration.Builder.create(dailyMarketDataFnAlias)
+                .proxy(false)
+                .requestTemplates(Map.of(
+                        "application/json",
+                        "{ \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\", "
+                                + "  \"days\": \"$util.escapeJavaScript($input.params('days'))\", "
+                                + "  \"correlationId\": \"$context.requestId\" }"))
+                // ticker AND days must both be cache keys, else the 60s stage cache would serve one
+                // days-window's response for every other days-window on the same ticker.
+                .cacheKeyParameters(List.of("method.request.path.ticker", "method.request.querystring.days"))
+                .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                .build();
+
+        marketDataTickerResource
+                .addResource("daily")
+                .addMethod(
+                        "GET",
+                        dailyMarketDataIntegration,
+                        MethodOptions.builder()
+                                .authorizer(apiAuthorizer)
+                                .authorizationType(AuthorizationType.CUSTOM)
+                                .requestParameters(OrderedMap.of(
+                                        Map.entry("method.request.path.ticker", true),
+                                        Map.entry("method.request.querystring.days", false)))
+                                .methodResponses(standardMethodResponses())
+                                .build());
+
+        // /stories/{ticker} - protected (readers+), rule-based per-ticker narrative (spec
+        // sub-project C, Task 16). Ticker-only cache key, same as /insights/{ticker} and
+        // /market-data/{ticker}: the response is identical for every caller.
+        var storiesIntegration = LambdaIntegration.Builder.create(storiesFnAlias)
+                .proxy(false)
+                .requestTemplates(Map.of(
+                        "application/json",
+                        "{ \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\", "
+                                + "  \"correlationId\": \"$context.requestId\" }"))
+                .cacheKeyParameters(List.of("method.request.path.ticker"))
+                .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                .build();
+
         api.getRoot()
-                .addResource("market-data")
+                .addResource("stories")
                 .addResource("{ticker}")
                 .addMethod(
                         "GET",
-                        marketDataIntegration,
+                        storiesIntegration,
                         MethodOptions.builder()
                                 .authorizer(apiAuthorizer)
                                 .authorizationType(AuthorizationType.CUSTOM)
@@ -495,7 +949,7 @@ public class QueryStack extends Stack {
                         .requestTemplates(Map.of(
                                 "application/json",
                                 "{ \"operation\": \"ADD\","
-                                        + "  \"ticker\": \"$input.params('ticker')\","
+                                        + "  \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
@@ -514,7 +968,7 @@ public class QueryStack extends Stack {
                         .requestTemplates(Map.of(
                                 "application/json",
                                 "{ \"operation\": \"REMOVE\","
-                                        + "  \"ticker\": \"$input.params('ticker')\","
+                                        + "  \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
@@ -535,18 +989,23 @@ public class QueryStack extends Stack {
                                 "{ \"operation\": \"LIST\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
+                        // Authorization must be a cache key, else the 60s stage cache serves one
+                        // caller's list to every other caller for up to 60s.
+                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.header.Authorization", true))
                         .methodResponses(standardMethodResponses())
                         .build());
 
         // Consent routes (non-proxy, spec sub-project B): POST -> GRANT, GET -> VIEW, DELETE ->
         // WITHDRAW. The caller sub is taken from the authorizer context, never the body. POST reads
         // {version?, purpose} from the body; both fields are escaped via $util.escapeJavaScript to
-        // prevent injection. An absent/blank version is defaulted to CONSENT_VERSION in the handler.
+        // prevent injection. An absent/blank version is defaulted to CONSENT_POLICY_VERSION in the
+        // handler; the PreAuthentication trigger (SecurityStack) gates login on the same version.
         var userResource = api.getRoot().addResource("user");
         var consentResource = userResource.addResource("consent");
 
@@ -580,11 +1039,15 @@ public class QueryStack extends Stack {
                                         + "  \"sub\": \"$context.authorizer.sub\","
                                         + "  \"sourceIp\": \"$context.identity.sourceIp\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
+                        // Authorization must be a cache key, else the 60s stage cache serves one
+                        // caller's consent record to every other caller for up to 60s.
+                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.header.Authorization", true))
                         .methodResponses(standardMethodResponses())
                         .build());
 
@@ -622,15 +1085,27 @@ public class QueryStack extends Stack {
                                         + "  \"correlationId\": \"$context.requestId\","
                                         + "  \"callerSub\": \"$context.authorizer.sub\","
                                         + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
+                        // Authorization must be a cache key, else the 60s stage cache serves one
+                        // caller's export to every other caller for up to 60s. subjectSub too:
+                        // the same admin token exporting subject A then subject B within the TTL
+                        // would otherwise get A's cached response for B.
+                        .cacheKeyParameters(
+                                List.of("method.request.header.Authorization", "method.request.querystring.subjectSub"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
-                        .requestParameters(Map.of("method.request.querystring.subjectSub", false))
+                        .requestParameters(OrderedMap.of(
+                                Map.entry("method.request.querystring.subjectSub", false),
+                                Map.entry("method.request.header.Authorization", true)))
                         .methodResponses(standardMethodResponses())
                         .build());
 
+        // Starts the financial-erasure workflow instead of erasing synchronously (spec s11, Task 11);
+        // the dsr Lambda validates the subject and idempotency, then calls StartExecution itself, so
+        // the API Gateway integration is unchanged (still a plain Lambda invocation) except that its
+        // success status is 202, not 200 - see erasureAcceptedIntegrationResponses/acceptedMethodResponses.
         var accountResource = userResource.addResource("account");
         accountResource.addMethod(
                 "DELETE",
@@ -644,13 +1119,13 @@ public class QueryStack extends Stack {
                                         + "  \"correlationId\": \"$context.requestId\","
                                         + "  \"callerSub\": \"$context.authorizer.sub\","
                                         + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                        .integrationResponses(erasureAcceptedIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
                         .requestParameters(Map.of("method.request.querystring.subjectSub", false))
-                        .methodResponses(standardMethodResponses())
+                        .methodResponses(acceptedMethodResponses())
                         .build());
 
         // On-demand ingest (spec section 5): POST /ingest/{ticker} -> Step Functions StartExecution.
@@ -678,9 +1153,10 @@ public class QueryStack extends Stack {
                         .integrationResponses(List.of(IntegrationResponse.builder()
                                 .statusCode("202")
                                 .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
-                                .responseTemplates(Map.of(
-                                        "application/json",
-                                        "{\"status\":\"accepted\",\"ticker\":\"$input.params('ticker')\"}"))
+                                .responseTemplates(
+                                        Map.of(
+                                                "application/json",
+                                                "{\"status\":\"accepted\",\"ticker\":\"$util.escapeJavaScript($input.params('ticker'))\"}"))
                                 .build()))
                         .build())
                 .build();
@@ -726,17 +1202,19 @@ public class QueryStack extends Stack {
         // yields 0 (never breaches); otherwise it yields the true error-rate percentage.
         var serverErrorRate = MathExpression.Builder.create()
                 .expression("IF(errors >= 5, 100 * errors / total, 0)")
-                .usingMetrics(Map.of(
-                        "errors",
-                        api.metricServerError(MetricOptions.builder()
-                                .statistic("Sum")
-                                .period(Duration.minutes(5))
-                                .build()),
-                        "total",
-                        api.metricCount(MetricOptions.builder()
-                                .statistic("Sum")
-                                .period(Duration.minutes(5))
-                                .build())))
+                .usingMetrics(OrderedMap.of(
+                        Map.entry(
+                                "errors",
+                                api.metricServerError(MetricOptions.builder()
+                                        .statistic("Sum")
+                                        .period(Duration.minutes(5))
+                                        .build())),
+                        Map.entry(
+                                "total",
+                                api.metricCount(MetricOptions.builder()
+                                        .statistic("Sum")
+                                        .period(Duration.minutes(5))
+                                        .build()))))
                 .period(Duration.minutes(5))
                 .build();
 
@@ -761,13 +1239,16 @@ public class QueryStack extends Stack {
                 .dashboardName("financial-platform-" + env)
                 .build();
 
-        var fns = Map.of(
-                "query", queryFn,
-                "marketdata", marketDataFn,
-                "watchlist", watchlistFn,
-                "consent", consentFn,
-                "dsr", dsrFn,
-                "authorizer", authorizerFn);
+        var fns = OrderedMap.of(
+                Map.entry("query", queryFn),
+                Map.entry("marketdata", marketDataFn),
+                Map.entry("marketdatadaily", dailyMarketDataFn),
+                Map.entry("insightsfeed", insightsFeedFn),
+                Map.entry("stories", storiesFn),
+                Map.entry("watchlist", watchlistFn),
+                Map.entry("consent", consentFn),
+                Map.entry("dsr", dsrFn),
+                Map.entry("authorizer", authorizerFn));
 
         dashboard.addWidgets(
                 GraphWidget.Builder.create()
@@ -928,7 +1409,20 @@ public class QueryStack extends Stack {
     // pattern excludes them because API Gateway's pattern match order is undefined. The 500
     // pattern requires at least one character (+, not *): API Gateway evaluates patterns against
     // an EMPTY errorMessage on successful invocations, so a pattern matching "" hijacks every 200.
-    private static final String CLIENT_ERROR_PATTERN = "Invalid ticker|allowlist validation|consent required";
+    //
+    // No shared Java constant backs this string: each phrase below is duplicated in a Lambda
+    // exception message in a separate Maven module, and those modules cannot depend on
+    // infrastructure/. Changing a phrase here or in any of the sites below without updating the
+    // other silently reclassifies that error as a 500. Sites, by phrase:
+    //   "Invalid ticker"        - query-function Tickers.java, notifier-function ConnectionRegistry.java
+    //   "allowlist validation"  - watchlist-function TickerValidator.java
+    //   "consent required"      - watchlist-function WatchlistHandler.java
+    //   "deletion pending"      - watchlist-function WatchlistHandler.java, consent-function
+    //                             ConsentStoreService.java (notifier-function's WebSocket routes use
+    //                             the same phrase but return their own statusCode directly, not
+    //                             through this REST selectionPattern mapping)
+    private static final String CLIENT_ERROR_PATTERN =
+            "Invalid ticker|allowlist validation|consent required|deletion pending";
     private static final String CORS_HEADER = "method.response.header.Access-Control-Allow-Origin";
 
     // Non-proxy integrations never emit response headers unless every IntegrationResponse maps them
@@ -960,6 +1454,49 @@ public class QueryStack extends Stack {
         return List.of(
                 MethodResponse.builder()
                         .statusCode("200")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build(),
+                MethodResponse.builder()
+                        .statusCode("400")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build(),
+                MethodResponse.builder()
+                        .statusCode("500")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build());
+    }
+
+    // DELETE /user/account starts a workflow rather than completing synchronously, so its success
+    // status is 202 (Accepted), not 200 - both the genuinely-started and idempotent-no-op-pending
+    // cases return normally from the dsr Lambda (denied does too, the same 200-with-error-body
+    // convention EXPORT/ERASE already use elsewhere, just at 202 instead of 200 for this route). Error
+    // mapping (400/500 by selectionPattern) is identical to errorAwareIntegrationResponses.
+    private static List<IntegrationResponse> erasureAcceptedIntegrationResponses(String allowOrigin) {
+        return List.of(
+                IntegrationResponse.builder()
+                        .statusCode("202")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
+                        .build(),
+                IntegrationResponse.builder()
+                        .statusCode("400")
+                        .selectionPattern(".*(" + CLIENT_ERROR_PATTERN + ").*")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
+                        .responseTemplates(Map.of(
+                                "application/json",
+                                "{\"error\":\"$util.escapeJavaScript($input.path('$.errorMessage'))\"}"))
+                        .build(),
+                IntegrationResponse.builder()
+                        .statusCode("500")
+                        .selectionPattern("^((?!" + CLIENT_ERROR_PATTERN + ")(.|\\n))+$")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
+                        .responseTemplates(Map.of("application/json", "{\"error\":\"internal error\"}"))
+                        .build());
+    }
+
+    private static List<MethodResponse> acceptedMethodResponses() {
+        return List.of(
+                MethodResponse.builder()
+                        .statusCode("202")
                         .responseParameters(Map.of(CORS_HEADER, true))
                         .build(),
                 MethodResponse.builder()

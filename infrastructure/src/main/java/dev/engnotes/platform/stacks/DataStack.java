@@ -8,6 +8,8 @@ import software.amazon.awscdk.services.kms.Key;
 import software.amazon.awscdk.services.kms.KeySpec;
 import software.amazon.awscdk.services.kms.KeyUsage;
 import software.amazon.awscdk.services.s3.*;
+import software.amazon.awscdk.services.ses.EmailIdentity;
+import software.amazon.awscdk.services.ses.Identity;
 import software.amazon.awscdk.services.sns.*;
 import software.amazon.awscdk.services.sns.subscriptions.EmailSubscription;
 import software.constructs.Construct;
@@ -33,6 +35,8 @@ public class DataStack extends Stack {
     private final IBucket dataLakeBucket;
     private final Topic alertTopic;
     private final Topic criticalTopic;
+    private final String alertEmail;
+    private final EmailIdentity senderIdentity;
 
     public DataStack(final Construct scope, final String id, final StackProps props, final String env) {
         super(scope, id, props);
@@ -150,7 +154,7 @@ public class DataStack extends Stack {
         // auto-confirm email subscriptions. Point it at an inbox you control with
         // `--context alertEmail=you@example.com`.
         Object alertEmailContext = this.getNode().tryGetContext("alertEmail");
-        String alertEmail = alertEmailContext != null ? alertEmailContext.toString() : "alerts@engnotes.dev";
+        this.alertEmail = alertEmailContext != null ? alertEmailContext.toString() : "alerts@engnotes.dev";
         alertTopic.addSubscription(EmailSubscription.Builder.create(alertEmail).build());
 
         // SNS Critical/Page Topic - P1 symptom alarms (API availability, p99 latency) publish here,
@@ -163,6 +167,16 @@ public class DataStack extends Stack {
                 .build();
         criticalTopic.addSubscription(
                 EmailSubscription.Builder.create(alertEmail).build());
+
+        // SES sender identity - reuses the same verified alertEmail address as the erasure workflow's
+        // confirmation-email sender (spec s11, Task 11), so it needs no separate verification click.
+        // Lives here, not QueryStack, for the same "confirmed once, survives compute/network teardown"
+        // reason as the SNS subscriptions above. SES sandbox note: until the account requests
+        // production access, the recipient must ALSO be a verified identity, so dev-mode sends
+        // effectively land in this same inbox regardless of the subject's real address.
+        this.senderIdentity = EmailIdentity.Builder.create(this, "AlertSenderEmailIdentity")
+                .identity(Identity.email(alertEmail))
+                .build();
 
         // Monthly cost budget - codifies the lean learning-account limit. Notify-only (no enforcement).
         // Notifications use EMAIL subscribers (not SNS): the alert topics are KMS-encrypted, and routing
@@ -258,5 +272,13 @@ public class DataStack extends Stack {
 
     public Topic getCriticalTopic() {
         return criticalTopic;
+    }
+
+    public String getAlertEmail() {
+        return alertEmail;
+    }
+
+    public EmailIdentity getSenderIdentity() {
+        return senderIdentity;
     }
 }

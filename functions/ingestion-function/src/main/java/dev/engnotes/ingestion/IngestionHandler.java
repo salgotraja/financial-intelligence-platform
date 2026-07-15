@@ -5,7 +5,9 @@ import dev.engnotes.ingestion.model.MarketDataResponse;
 import dev.engnotes.ingestion.service.AnomalyDetectionService;
 import dev.engnotes.ingestion.service.MarketDataFetchService;
 import dev.engnotes.ingestion.service.MarketDataStoreService;
+import dev.engnotes.ingestion.service.MarketHours;
 import dev.engnotes.ingestion.validation.TickerValidator;
+import java.time.Clock;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +32,9 @@ public class IngestionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(IngestionHandler.class);
 
+    /** Matches the "source" the EventBridge rules put on the state machine input (IngestionStack). */
+    private static final String SCHEDULED_SOURCE = "eventbridge-schedule";
+
     public static void main(String[] args) {
         SpringApplication.run(IngestionHandler.class, args);
     }
@@ -38,17 +43,35 @@ public class IngestionHandler {
      * Fetches live market data for a ticker, evaluates it against the rolling baseline to flag
      * anomalies (the Bedrock gate, spec section 6), then stores it in DynamoDB (hot) and S3 (cold).
      * The Step Functions Choice routes to insight generation only when {@code anomaly} is true.
+     *
+     * <p>Scheduled runs ({@code source=eventbridge-schedule}) no-op when the market is closed
+     * (weekend, NSE holiday, or outside the session window): the two EventBridge rules already
+     * cron-gate weekdays and hours, so this only ever trips on a holiday or a session edge, and it
+     * burns one trivial invocation per rule fire instead of a provider call and a write. On-demand
+     * runs ({@code source=on-demand}, from {@code POST /ingest/{ticker}}) are exempt and always fetch.
      */
     @Bean
     public Function<MarketDataRequest, MarketDataResponse> fetchMarketData(
             MarketDataFetchService fetchService,
             AnomalyDetectionService anomalyService,
-            MarketDataStoreService storeService) {
+            MarketDataStoreService storeService,
+            Clock clock) {
         return request -> {
             String correlationId = request.correlationId();
             // Validate at the trust boundary (spec section 12) before the ticker reaches the
             // provider URL, S3 keys/tags, or DynamoDB writes downstream.
             String ticker = TickerValidator.validate(request.ticker());
+
+            if (SCHEDULED_SOURCE.equals(request.source()) && !MarketHours.isMarketOpen(clock.instant())) {
+                log.info("Market closed: skipping scheduled fetch. ticker={} correlationId={}", ticker, correlationId);
+                return MarketDataResponse.builder()
+                        .ticker(ticker)
+                        .correlationId(correlationId)
+                        .dataSource("market-closed")
+                        .stored(false)
+                        .anomaly(false)
+                        .build();
+            }
 
             log.info("Starting market data fetch. ticker={} correlationId={}", ticker, correlationId);
 

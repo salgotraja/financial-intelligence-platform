@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.engnotes.ingestion.model.MarketDataRequest;
@@ -12,6 +13,9 @@ import dev.engnotes.ingestion.service.AnomalyDetectionService;
 import dev.engnotes.ingestion.service.MarketDataFetchService;
 import dev.engnotes.ingestion.service.MarketDataStoreService;
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +25,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class IngestionHandlerTest {
+
+    // 2026-07-13 is a Monday, 10:00 IST (04:30 UTC): inside the NSE session.
+    private static final Clock OPEN_MONDAY = Clock.fixed(Instant.parse("2026-07-13T04:30:00Z"), ZoneOffset.UTC);
+    // 2026-01-26 is Republic Day (an NSE holiday), 10:00 IST.
+    private static final Clock HOLIDAY = Clock.fixed(Instant.parse("2026-01-26T04:30:00Z"), ZoneOffset.UTC);
 
     @Mock
     private MarketDataFetchService fetchService;
@@ -36,7 +45,7 @@ class IngestionHandlerTest {
     @Test
     void onDemandSourceForcesAnomalyWhenEvaluatorFoundNone() {
         Function<MarketDataRequest, MarketDataResponse> fetchMarketData =
-                handler.fetchMarketData(fetchService, anomalyService, storeService);
+                handler.fetchMarketData(fetchService, anomalyService, storeService, OPEN_MONDAY);
 
         MarketDataResponse fetched = base().build();
         MarketDataResponse evaluated = base().anomaly(false).anomalyReason(null).build();
@@ -59,7 +68,7 @@ class IngestionHandlerTest {
     @Test
     void nonOnDemandSourceLeavesEvaluatorVerdictUntouched() {
         Function<MarketDataRequest, MarketDataResponse> fetchMarketData =
-                handler.fetchMarketData(fetchService, anomalyService, storeService);
+                handler.fetchMarketData(fetchService, anomalyService, storeService, OPEN_MONDAY);
 
         MarketDataResponse fetched = base().build();
         MarketDataResponse evaluated = base().anomaly(false).anomalyReason(null).build();
@@ -82,7 +91,7 @@ class IngestionHandlerTest {
     @Test
     void onDemandSourceKeepsOriginalReasonWhenAlreadyAnomalous() {
         Function<MarketDataRequest, MarketDataResponse> fetchMarketData =
-                handler.fetchMarketData(fetchService, anomalyService, storeService);
+                handler.fetchMarketData(fetchService, anomalyService, storeService, OPEN_MONDAY);
 
         MarketDataResponse fetched = base().build();
         MarketDataResponse evaluated =
@@ -96,6 +105,39 @@ class IngestionHandlerTest {
 
         assertThat(result.anomaly()).isTrue();
         assertThat(result.anomalyReason()).isEqualTo("return z=5.00");
+    }
+
+    @Test
+    void scheduledSourceSkipsFetchWhenMarketClosedOnHoliday() {
+        Function<MarketDataRequest, MarketDataResponse> fetchMarketData =
+                handler.fetchMarketData(fetchService, anomalyService, storeService, HOLIDAY);
+
+        MarketDataResponse result =
+                fetchMarketData.apply(new MarketDataRequest("RELIANCE.NS", "corr-4", "eventbridge-schedule"));
+
+        assertThat(result.stored()).isFalse();
+        assertThat(result.anomaly()).isFalse();
+        assertThat(result.dataSource()).isEqualTo("market-closed");
+        verifyNoInteractions(fetchService, anomalyService, storeService);
+    }
+
+    @Test
+    void onDemandSourceFetchesEvenWhenMarketClosedOnHoliday() {
+        Function<MarketDataRequest, MarketDataResponse> fetchMarketData =
+                handler.fetchMarketData(fetchService, anomalyService, storeService, HOLIDAY);
+
+        MarketDataResponse fetched = base().build();
+        MarketDataResponse evaluated = base().anomaly(false).anomalyReason(null).build();
+        when(fetchService.fetch("RELIANCE.NS", "corr-5")).thenReturn(fetched);
+        when(anomalyService.evaluate(fetched, "corr-5")).thenReturn(evaluated);
+        when(storeService.store(any(MarketDataResponse.class), eq("corr-5")))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        MarketDataResponse result = fetchMarketData.apply(new MarketDataRequest("RELIANCE.NS", "corr-5", "on-demand"));
+
+        assertThat(result.anomaly()).isTrue();
+        assertThat(result.anomalyReason()).isEqualTo("on-demand refresh");
+        verify(storeService).store(any(MarketDataResponse.class), eq("corr-5"));
     }
 
     private static MarketDataResponse.Builder base() {

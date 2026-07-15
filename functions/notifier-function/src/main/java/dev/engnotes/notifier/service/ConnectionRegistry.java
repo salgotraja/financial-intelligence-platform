@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 
@@ -35,11 +37,44 @@ public class ConnectionRegistry {
 
     private final DynamoDbClient dynamoDb;
     private final String connectionsTable;
+    private final String platformTable;
 
     public ConnectionRegistry(
-            DynamoDbClient dynamoDb, @Value("${CONNECTIONS_TABLE:financial-connections-dev}") String connectionsTable) {
+            DynamoDbClient dynamoDb,
+            @Value("${CONNECTIONS_TABLE:financial-connections-dev}") String connectionsTable,
+            @Value("${PLATFORM_TABLE:financial-platform-dev}") String platformTable) {
         this.dynamoDb = dynamoDb;
         this.connectionsTable = connectionsTable;
+        this.platformTable = platformTable;
+    }
+
+    /**
+     * Spec s11 erasure step 1: refuses $connect/subscribe registration while the caller is
+     * deletion-pending, mirroring watchlist ConsentGate's strongly-consistent GetItem on {@code
+     * USER#{sub}/PROFILE}. A missing sub (no authorizer context) allows rather than denies: it is
+     * not a read failure, and every real connection is already authenticated upstream by the
+     * WebSocket authorizer. Fails closed on an actual read error.
+     */
+    public boolean isDeletionPending(String sub) {
+        if (sub == null || sub.isBlank()) {
+            return false;
+        }
+        try {
+            GetItemResponse response = dynamoDb.getItem(GetItemRequest.builder()
+                    .tableName(platformTable)
+                    .key(Map.of(
+                            "PK", AttributeValue.builder().s("USER#" + sub).build(),
+                            "SK", AttributeValue.builder().s("PROFILE").build()))
+                    .consistentRead(true)
+                    .build());
+            return response.hasItem()
+                    && response.item().containsKey("deletionPending")
+                    && Boolean.TRUE.equals(
+                            response.item().get("deletionPending").bool());
+        } catch (RuntimeException e) {
+            log.warn("Deletion-pending read failed; denying (fail-closed). sub={} error={}", sub, e.getMessage());
+            return true;
+        }
     }
 
     /** Registers the connection for each ticker; returns the number of rows written. */

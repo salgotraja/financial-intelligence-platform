@@ -1,6 +1,5 @@
 package dev.engnotes.platform.stacks;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import software.amazon.awscdk.*;
@@ -15,6 +14,7 @@ import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
 import software.amazon.awscdk.services.cloudwatch.actions.SnsAction;
 import software.amazon.awscdk.services.events.*;
 import software.amazon.awscdk.services.events.Schedule;
+import software.amazon.awscdk.services.events.targets.LambdaFunction;
 import software.amazon.awscdk.services.events.targets.SfnStateMachine;
 import software.amazon.awscdk.services.iam.*;
 import software.amazon.awscdk.services.lambda.*;
@@ -117,31 +117,27 @@ public class IngestionStack extends Stack {
 
         // == Common Lambda environment ==
         // Keys must NOT start with AWS_ - Lambda reserves that prefix and rejects the deploy.
-        Map<String, String> commonEnvVars = Map.of(
-                "PLATFORM_TABLE",
-                data.getPlatformTable().getTableName(),
-                "DATA_LAKE_BUCKET",
-                data.getDataLakeBucket().getBucketName(),
-                "ENVIRONMENT",
-                env,
-                "POWERTOOLS_SERVICE_NAME",
-                "financial-intelligence-platform",
-                "LOG_LEVEL",
-                env.equals("prod") ? "INFO" : "DEBUG");
+        Map<String, String> commonEnvVars = OrderedMap.of(
+                Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                Map.entry("DATA_LAKE_BUCKET", data.getDataLakeBucket().getBucketName()),
+                Map.entry("ENVIRONMENT", env),
+                Map.entry("POWERTOOLS_SERVICE_NAME", "financial-intelligence-platform"),
+                Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG"));
 
         // == Fetch Market Data Lambda ==
         // SnapStart removes Spring Boot cold start (3-8s -> <200ms) on published versions.
-        Map<String, String> fetchEnv = new HashMap<>(commonEnvVars);
-        fetchEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "fetchMarketData");
         // FunctionInvoker locates the @SpringBootApplication via MAIN_CLASS (the shaded uber-JAR has
-        // no Boot Start-Class manifest entry).
-        fetchEnv.put("MAIN_CLASS", "dev.engnotes.ingestion.IngestionHandler");
-        fetchEnv.put("MARKET_DATA_API_SECRET", "financial-platform/market-data-api-key");
-        // Anomaly-gate tunables (spec section 6), set to the AnomalyDetectionService code defaults so
-        // they are operable without a redeploy. ANOMALY_MIN_SAMPLES gates the z-score until the
-        // baseline has enough history; ANOMALY_Z_THRESHOLD is the standard-deviation trip point.
-        fetchEnv.put("ANOMALY_Z_THRESHOLD", "3.0");
-        fetchEnv.put("ANOMALY_MIN_SAMPLES", "5");
+        // no Boot Start-Class manifest entry). Anomaly-gate tunables (spec section 6), set to the
+        // AnomalyDetectionService code defaults so they are operable without a redeploy.
+        // ANOMALY_MIN_SAMPLES gates the z-score until the baseline has enough history;
+        // ANOMALY_Z_THRESHOLD is the standard-deviation trip point.
+        Map<String, String> fetchEnv = OrderedMap.of(
+                commonEnvVars,
+                Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "fetchMarketData"),
+                Map.entry("MAIN_CLASS", "dev.engnotes.ingestion.IngestionHandler"),
+                Map.entry("MARKET_DATA_API_SECRET", "financial-platform/market-data-api-key"),
+                Map.entry("ANOMALY_Z_THRESHOLD", "3.0"),
+                Map.entry("ANOMALY_MIN_SAMPLES", "5"));
 
         Function fetchMarketDataFn = Function.Builder.create(this, "FetchMarketDataFn")
                 .functionName("financial-fetch-market-data-" + env)
@@ -173,24 +169,27 @@ public class IngestionStack extends Stack {
         // == Generate Insight Lambda ==
         // Higher memory: Bedrock response parsing benefits from it.
         // Invoked only when the anomaly gate routes here (see the Choice state below).
-        Map<String, String> insightEnv = new HashMap<>(commonEnvVars);
-        insightEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "generateInsight");
-        insightEnv.put("MAIN_CLASS", "dev.engnotes.insight.InsightHandler");
-        // Claude is INFERENCE_PROFILE-only in ap-south-1; invoke the global profile id,
-        // not the bare foundation-model id (the latter returns ValidationException on demand).
-        insightEnv.put("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-6");
-        insightEnv.put("BEDROCK_MAX_TOKENS", "1024");
-        // Cost tracking + daily-spend circuit breaker (spec section 9). Claude Sonnet list pricing
-        // (USD per 1K tokens); the breaker opens once a day's spend reaches the cap and routes to
-        // the rule-based fallback. Cost records share the insight table (already granted to the role).
-        insightEnv.put("COST_DAILY_CAP_USD", "5.0");
-        insightEnv.put("BEDROCK_INPUT_PRICE_PER_1K", "0.003");
-        insightEnv.put("BEDROCK_OUTPUT_PRICE_PER_1K", "0.015");
-        // Rule-based fallback tunables (spec section 9), set to the RuleBasedInsightGenerator code
-        // defaults so the static-threshold signal and its (deliberately lower) confidence are
-        // operable without a redeploy.
-        insightEnv.put("RULE_BULLISH_THRESHOLD_PERCENT", "1.0");
-        insightEnv.put("RULE_FALLBACK_CONFIDENCE", "0.4");
+        // Claude is INFERENCE_PROFILE-only in ap-south-1; invoke the global profile id, not the bare
+        // foundation-model id (the latter returns ValidationException on demand). Cost tracking +
+        // daily-spend circuit breaker (spec section 9): Claude Sonnet list pricing (USD per 1K
+        // tokens); the breaker opens once a day's spend reaches the cap and routes to the rule-based
+        // fallback. Cost records share the insight table (already granted to the role). Rule-based
+        // fallback tunables (spec section 9), set to the RuleBasedInsightGenerator code defaults so
+        // the static-threshold signal and its (deliberately lower) confidence are operable without a
+        // redeploy. Cross-ticker group insight anti-spam window (Task 7), set to the
+        // InsightGenerationService code default so it is operable without a redeploy.
+        Map<String, String> insightEnv = OrderedMap.of(
+                commonEnvVars,
+                Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "generateInsight"),
+                Map.entry("MAIN_CLASS", "dev.engnotes.insight.InsightHandler"),
+                Map.entry("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-6"),
+                Map.entry("BEDROCK_MAX_TOKENS", "1024"),
+                Map.entry("COST_DAILY_CAP_USD", "5.0"),
+                Map.entry("BEDROCK_INPUT_PRICE_PER_1K", "0.003"),
+                Map.entry("BEDROCK_OUTPUT_PRICE_PER_1K", "0.015"),
+                Map.entry("RULE_BULLISH_THRESHOLD_PERCENT", "1.0"),
+                Map.entry("RULE_FALLBACK_CONFIDENCE", "0.4"),
+                Map.entry("MIN_GROUP_INSIGHT_INTERVAL_MINUTES", "15"));
 
         Function generateInsightFn = Function.Builder.create(this, "GenerateInsightFn")
                 .functionName("financial-generate-insight-" + env)
@@ -218,6 +217,78 @@ public class IngestionStack extends Stack {
                 .logGroupName("/aws/lambda/" + generateInsightFn.getFunctionName())
                 .retention(RetentionDays.ONE_MONTH)
                 .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // == Compute Correlations Lambda (spec section 7) ==
+        // A second bean in the insight-function jar (dev.engnotes.insight.InsightHandler), selected by
+        // SPRING_CLOUD_FUNCTION_DEFINITION like GenerateInsightFn above. EventBridge invokes it directly
+        // (no Step Functions state machine): it reads the WATCHSET, not a single ticker, so it has no
+        // place in the per-ticker fan-out chain.
+        //
+        // Dedicated least-privilege role, NOT the shared ingestionRole: this Lambda only ever reads and
+        // writes the platform table (WATCHSET, TS# points, GROUP#/META, TICKER#/GROUP), so it gets none
+        // of ingestionRole's Bedrock, Secrets Manager, or S3 grants.
+        Role correlationsRole = Role.Builder.create(this, "CorrelationsLambdaRole")
+                .roleName("financial-correlations-lambda-role-" + env)
+                .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
+                .managedPolicies(List.of(
+                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
+                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .build();
+        data.getPlatformTable().grantReadWriteData(correlationsRole);
+        data.getEncryptionKey().grantEncryptDecrypt(correlationsRole);
+
+        // Threshold clustering tunable (spec section 7), set to the CorrelationService code default so
+        // it is operable without a redeploy.
+        Map<String, String> correlationsEnv = OrderedMap.of(
+                commonEnvVars,
+                Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "computeCorrelations"),
+                Map.entry("MAIN_CLASS", "dev.engnotes.insight.InsightHandler"),
+                Map.entry("CORRELATION_THRESHOLD", "0.6"));
+
+        Function computeCorrelationsFn = Function.Builder.create(this, "ComputeCorrelationsFn")
+                .functionName("financial-correlations-" + env)
+                .description("Computes cross-ticker return correlations and persists threshold-clustered groups")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker")
+                .code(Code.fromAsset("../functions/insight-function/target/insight-function.jar"))
+                .role(correlationsRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(30))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(correlationsEnv)
+                .vpc(network.getVpc())
+                .build();
+
+        Alias correlationsAlias = Alias.Builder.create(this, "ComputeCorrelationsAlias")
+                .aliasName("live")
+                .version(computeCorrelationsFn.getCurrentVersion())
+                .build();
+
+        LogGroup.Builder.create(this, "ComputeCorrelationsLogs")
+                .logGroupName("/aws/lambda/" + computeCorrelationsFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // 15-minute refresh (spec section 7) inside the same market-hours cron envelope as
+        // MarketDataSchedule's main session rule (03:00-09:59 UTC = ~08:30-15:25 IST, Mon-Fri; see that
+        // rule's comment for the derivation), stepped by minute 0/15/30/45 instead of every 5. Fixed
+        // cadence in every env (unlike ingestion's dev/prod poll-frequency split): the brief's 15-minute
+        // refresh isn't an env-tiering knob. Doesn't chase the 15:30/15:35 IST closing-print ticks the
+        // way MarketDataCloseSchedule does for ingestion: a correlation group is a rolling-window signal
+        // over up to 30 points, not a point-in-time capture, so ending ~20 minutes before the literal
+        // close is an acceptable trade rather than a second rule. The bean's own MarketHours guard still
+        // no-ops on a holiday, since cron cannot express the NSE holiday calendar.
+        Rule.Builder.create(this, "CorrelationsSchedule")
+                .ruleName("financial-correlations-schedule-" + env)
+                .description("Triggers the correlation pass every 15 minutes during NSE market hours")
+                .schedule(Schedule.expression("cron(0/15 3-9 ? * MON-FRI *)"))
+                .targets(List.of(LambdaFunction.Builder.create(correlationsAlias)
+                        .event(RuleTargetInput.fromObject(Map.of("source", "eventbridge-schedule")))
+                        .retryAttempts(2)
+                        .build()))
                 .build();
 
         // == Step Functions Workflow ==
@@ -311,10 +382,10 @@ public class IngestionStack extends Stack {
         CallAwsService readWatchset = CallAwsService.Builder.create(this, "ReadWatchset")
                 .service("dynamodb")
                 .action("query")
-                .parameters(Map.of(
-                        "TableName", data.getPlatformTable().getTableName(),
-                        "KeyConditionExpression", "PK = :pk",
-                        "ExpressionAttributeValues", Map.of(":pk", Map.of("S", "WATCHSET"))))
+                .parameters(OrderedMap.of(
+                        Map.entry("TableName", data.getPlatformTable().getTableName()),
+                        Map.entry("KeyConditionExpression", "PK = :pk"),
+                        Map.entry("ExpressionAttributeValues", Map.of(":pk", Map.of("S", "WATCHSET")))))
                 .iamResources(List.of(data.getPlatformTable().getTableArn()))
                 .resultPath("$.watchset")
                 .build();
@@ -333,15 +404,13 @@ public class IngestionStack extends Stack {
                 // "Rate Exceeded" 500s (observed live 2026-07-12). Keep pipeline bursts well
                 // under half the pool until the requested quota increase (->1000) is granted.
                 .maxConcurrency(2)
-                .itemSelector(Map.of(
-                        "ticker.$",
-                        "$$.Map.Item.Value.ticker.S",
-                        "requestedAt.$",
-                        "$$.Execution.StartTime",
-                        "correlationId.$",
-                        "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)",
-                        "source.$",
-                        "$$.Execution.Input.source"))
+                .itemSelector(OrderedMap.of(
+                        Map.entry("ticker.$", "$$.Map.Item.Value.ticker.S"),
+                        Map.entry("requestedAt.$", "$$.Execution.StartTime"),
+                        Map.entry(
+                                "correlationId.$",
+                                "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)"),
+                        Map.entry("source.$", "$$.Execution.Input.source")))
                 .toleratedFailurePercentage(100)
                 .build();
         // executionType on ProcessorConfig is the working path in this CDK version; the synth-time
@@ -449,10 +518,10 @@ public class IngestionStack extends Stack {
                         "PutRequest",
                         Map.of(
                                 "Item",
-                                Map.of(
-                                        "PK", Map.of("S", "WATCHSET"),
-                                        "SK", Map.of("S", "TICKER#" + t),
-                                        "ticker", Map.of("S", t)))))
+                                OrderedMap.of(
+                                        Map.entry("PK", Map.of("S", "WATCHSET")),
+                                        Map.entry("SK", Map.of("S", "TICKER#" + t)),
+                                        Map.entry("ticker", Map.of("S", t))))))
                 .toList();
         AwsCustomResource.Builder.create(this, "WatchsetSeed")
                 .onUpdate(AwsSdkCall.builder()

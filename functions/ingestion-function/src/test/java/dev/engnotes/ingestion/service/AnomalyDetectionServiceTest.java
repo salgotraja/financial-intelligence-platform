@@ -2,6 +2,7 @@ package dev.engnotes.ingestion.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -17,9 +18,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.PutItemResponse;
 
 @ExtendWith(MockitoExtension.class)
 class AnomalyDetectionServiceTest {
@@ -58,7 +61,10 @@ class AnomalyDetectionServiceTest {
         assertThat(item.get("SK").s()).isEqualTo("BASELINE");
         assertThat(item.get("returnCount").n()).isEqualTo("1");
         assertThat(item.get("volumeCount").n()).isEqualTo("1");
+        assertThat(item.get("version").n()).isEqualTo("1"); // first write: version starts at 1
         assertThat(item).doesNotContainKey("ttl"); // baseline must persist
+        assertThat(captor.getValue().conditionExpression())
+                .isEqualTo("attribute_not_exists(version) OR version = :expected");
     }
 
     @Test
@@ -168,6 +174,69 @@ class AnomalyDetectionServiceTest {
     }
 
     @Test
+    void conflictThenSuccessRetriesAndPersistsAgainstTheReReadBaseline() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(baselineItem(10, 0.0, 9.0, 10, 1000.0, 900.0, 1))
+                        .build())
+                .thenReturn(GetItemResponse.builder()
+                        .item(baselineItem(11, 0.0, 9.5, 11, 1000.0, 910.0, 2))
+                        .build());
+        when(dynamoDb.putItem(any(PutItemRequest.class)))
+                .thenThrow(ConditionalCheckFailedException.builder()
+                        .message("conflict")
+                        .build())
+                .thenReturn(PutItemResponse.builder().build());
+
+        MarketDataResponse data = base().changePercent(new BigDecimal("0.5")) // z computed off the ORIGINAL baseline
+                .volume(1005L)
+                .price(new BigDecimal("100"))
+                .high52Week(new BigDecimal("200"))
+                .low52Week(new BigDecimal("50"))
+                .build();
+
+        MarketDataResponse result = service.evaluate(data, "corr-conflict");
+
+        assertThat(result.anomaly()).isFalse();
+
+        verify(dynamoDb, times(2)).getItem(any(GetItemRequest.class));
+        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamoDb, times(2)).putItem(captor.capture());
+
+        PutItemRequest retriedWrite = captor.getAllValues().get(1);
+        // Refolded against the re-read baseline (count 11 -> 12), not the stale original (10 -> 11).
+        assertThat(retriedWrite.item().get("returnCount").n()).isEqualTo("12");
+        assertThat(retriedWrite.item().get("version").n()).isEqualTo("3");
+        assertThat(retriedWrite.expressionAttributeValues().get(":expected").n())
+                .isEqualTo("2");
+    }
+
+    @Test
+    void attemptsExhaustedLogsWarningAndSkipsTheBaselineUpdate() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder()
+                        .item(baselineItem(10, 0.0, 9.0, 10, 1000.0, 900.0, 1))
+                        .build());
+        when(dynamoDb.putItem(any(PutItemRequest.class)))
+                .thenThrow(ConditionalCheckFailedException.builder()
+                        .message("conflict")
+                        .build());
+
+        MarketDataResponse data = base().changePercent(new BigDecimal("0.5"))
+                .volume(1005L)
+                .price(new BigDecimal("100"))
+                .high52Week(new BigDecimal("200"))
+                .low52Week(new BigDecimal("50"))
+                .build();
+
+        MarketDataResponse result = service.evaluate(data, "corr-exhausted"); // must not throw
+
+        assertThat(result.anomaly()).isFalse();
+        verify(dynamoDb, times(3)).putItem(any(PutItemRequest.class));
+        verify(dynamoDb, times(3)).getItem(any(GetItemRequest.class)); // 1 initial read + 2 retries
+    }
+
+    @Test
     void baselineFailureFailsOpenToNoInsight() {
         when(dynamoDb.getItem(any(GetItemRequest.class))).thenThrow(new RuntimeException("DynamoDB down"));
 
@@ -195,6 +264,13 @@ class AnomalyDetectionServiceTest {
         item.put("volumeCount", num(Long.toString(vCount)));
         item.put("volumeMean", num(Double.toString(vMean)));
         item.put("volumeM2", num(Double.toString(vM2)));
+        return item;
+    }
+
+    private static Map<String, AttributeValue> baselineItem(
+            long rCount, double rMean, double rM2, long vCount, double vMean, double vM2, long version) {
+        Map<String, AttributeValue> item = baselineItem(rCount, rMean, rM2, vCount, vMean, vM2);
+        item.put("version", num(Long.toString(version)));
         return item;
     }
 

@@ -10,17 +10,21 @@ import java.util.Set;
  * {@code premium} read plus watchlist CRUD and on-demand ingest; {@code admins} everything.
  *
  * <p>{@code resourcePattern} is the API Gateway resource path with {@code *} wildcards for path
- * parameters (e.g. {@code insights/*} matches {@code GET /insights/RELIANCE.NS}). The authorizer
- * expands an allowed rule into a method-ARN resource so the returned policy is reusable across the
- * caller's routes (safe under API Gateway authorizer caching).
+ * parameters (e.g. {@code insights/*} matches {@code GET /insights/RELIANCE.NS}). The bare
+ * {@code insights} resource is a separate rule: it matches only {@code GET /insights} (the
+ * watchlist-scoped feed, no ticker), distinct from the {@code insights/*} per-ticker route. The
+ * authorizer expands an allowed rule into a method-ARN resource so the returned policy is reusable
+ * across the caller's routes (safe under API Gateway authorizer caching).
  */
 public final class RoutePolicy {
 
     public record Rule(String httpMethod, String resourcePattern, Set<String> allowedGroups) {}
 
     private static final List<Rule> RULES = List.of(
+            new Rule("GET", "insights", Set.of("readers", "premium", "admins")),
             new Rule("GET", "insights/*", Set.of("readers", "premium", "admins")),
             new Rule("GET", "market-data/*", Set.of("readers", "premium", "admins")),
+            new Rule("GET", "stories/*", Set.of("readers", "premium", "admins")),
             new Rule("GET", "watchlist", Set.of("premium", "admins")),
             new Rule("POST", "watchlist/*", Set.of("premium", "admins")),
             new Rule("DELETE", "watchlist/*", Set.of("premium", "admins")),

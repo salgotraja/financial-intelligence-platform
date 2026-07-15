@@ -6,12 +6,14 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 
@@ -30,8 +32,14 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
  *
  * <p>Resilience: evaluation is best-effort. Any failure reading or writing the baseline logs and
  * leaves the response flagged as non-anomalous, so a DynamoDB blip never spends Bedrock and never
- * fails ingestion. Read-modify-write is safe for the single-ticker skeleton; concurrent ingests of
- * the same ticker would need an atomic conditional update (future hardening).
+ * fails ingestion. The anomaly verdict is judged once against the baseline read at the start of
+ * {@link #evaluate}; persisting the folded-in observation is optimistically locked on a numeric
+ * {@code version} attribute (conditional put, {@code attribute_not_exists(version) OR version =
+ * :expected}) so concurrent Distributed Map fan-out for the same ticker cannot lose an update. A
+ * losing writer re-reads the committed baseline, refolds the same observation, and retries with
+ * jittered backoff, up to {@link #MAX_WRITE_ATTEMPTS} attempts; if every attempt loses the race the
+ * sample is dropped and a warning is logged - a lost baseline sample is acceptable, a corrupted
+ * baseline is not.
  */
 @Service
 public class AnomalyDetectionService {
@@ -39,6 +47,9 @@ public class AnomalyDetectionService {
     private static final Logger log = LoggerFactory.getLogger(AnomalyDetectionService.class);
 
     private static final String BASELINE_SK = "BASELINE";
+    private static final int MAX_WRITE_ATTEMPTS = 3;
+    private static final long BACKOFF_BASE_MILLIS = 20L;
+    private static final long BACKOFF_JITTER_MILLIS = 20L;
 
     private final DynamoDbClient dynamoDb;
     private final String platformTable;
@@ -80,10 +91,7 @@ public class AnomalyDetectionService {
             boolean anomaly = returnAnomaly || volumeAnomaly || weekBreak;
             String reason = anomaly ? buildReason(returnAnomaly, returnZ, volumeAnomaly, volumeZ, weekBreak) : null;
 
-            // Fold the new observations into the baseline, then persist.
-            RunningStats updatedReturn = returnObs == null ? returnStats : returnStats.accept(returnObs);
-            RunningStats updatedVolume = volumeObs == null ? volumeStats : volumeStats.accept(volumeObs);
-            writeBaseline(ticker, updatedReturn, updatedVolume);
+            long returnCount = persistBaselineWithRetry(ticker, baseline, returnObs, volumeObs, correlationId);
 
             log.info(
                     "Anomaly evaluation. ticker={} anomaly={} reason={} returnZ={} volumeZ={} returnCount={} correlationId={}",
@@ -92,7 +100,7 @@ public class AnomalyDetectionService {
                     reason,
                     returnZ,
                     volumeZ,
-                    updatedReturn.count(),
+                    returnCount,
                     correlationId);
 
             return data.withAnomaly(anomaly, reason);
@@ -161,7 +169,56 @@ public class AnomalyDetectionService {
         return new RunningStats(count, mean, m2);
     }
 
-    private void writeBaseline(String ticker, RunningStats returnStats, RunningStats volumeStats) {
+    /**
+     * Folds the observations into the baseline and persists them under optimistic locking, retrying
+     * on a lost race by re-reading the committed baseline and refolding the same observations. Gives
+     * up silently (after logging a warning) once {@link #MAX_WRITE_ATTEMPTS} is exhausted; the
+     * anomaly verdict for this point was already decided against the baseline read in {@link
+     * #evaluate}, so a dropped sample here only means the baseline warms up one point slower.
+     */
+    /**
+     * Persists the folded-in baseline and returns its returnCount for the caller's observability log
+     * - on a give-up (race lost {@link #MAX_WRITE_ATTEMPTS} times), returns the last computed,
+     * unpersisted candidate count instead, since the caller logs unconditionally either way.
+     */
+    private long persistBaselineWithRetry(
+            String ticker,
+            Map<String, AttributeValue> initialBaseline,
+            Double returnObs,
+            Double volumeObs,
+            String correlationId) {
+        Map<String, AttributeValue> baseline = initialBaseline;
+        long returnCount = readStats(baseline, "return").count();
+
+        for (int attempt = 1; attempt <= MAX_WRITE_ATTEMPTS; attempt++) {
+            RunningStats returnStats = readStats(baseline, "return");
+            RunningStats volumeStats = readStats(baseline, "volume");
+            RunningStats updatedReturn = returnObs == null ? returnStats : returnStats.accept(returnObs);
+            RunningStats updatedVolume = volumeObs == null ? volumeStats : volumeStats.accept(volumeObs);
+            long expectedVersion = readVersion(baseline);
+            returnCount = updatedReturn.count();
+
+            try {
+                writeBaseline(ticker, updatedReturn, updatedVolume, expectedVersion);
+                return returnCount;
+            } catch (ConditionalCheckFailedException e) {
+                if (attempt == MAX_WRITE_ATTEMPTS) {
+                    log.warn(
+                            "Baseline update lost the optimistic-lock race after {} attempts; skipping this sample. ticker={} correlationId={}",
+                            MAX_WRITE_ATTEMPTS,
+                            ticker,
+                            correlationId);
+                    return returnCount;
+                }
+                sleepWithJitter(attempt);
+                baseline = readBaseline(ticker);
+            }
+        }
+        return returnCount;
+    }
+
+    private void writeBaseline(
+            String ticker, RunningStats returnStats, RunningStats volumeStats, long expectedVersion) {
         Map<String, AttributeValue> item = new HashMap<>();
         item.put("PK", str("TICKER#" + ticker));
         item.put("SK", str(BASELINE_SK));
@@ -171,10 +228,33 @@ public class AnomalyDetectionService {
         item.put("volumeCount", num(volumeStats.count()));
         item.put("volumeMean", num(volumeStats.mean()));
         item.put("volumeM2", num(volumeStats.m2()));
+        item.put("version", num(expectedVersion + 1));
         item.put("updatedAt", str(Instant.now().toString()));
 
-        dynamoDb.putItem(
-                PutItemRequest.builder().tableName(platformTable).item(item).build());
+        dynamoDb.putItem(PutItemRequest.builder()
+                .tableName(platformTable)
+                .item(item)
+                // Optimistic lock: first write ever (no item, so no version attribute) or the
+                // version we read still matches what is committed. A concurrent winner bumps the
+                // version first and this check fails with ConditionalCheckFailedException.
+                .conditionExpression("attribute_not_exists(version) OR version = :expected")
+                .expressionAttributeValues(Map.of(":expected", num(expectedVersion)))
+                .build());
+    }
+
+    private long readVersion(Map<String, AttributeValue> baseline) {
+        return (long) readNumber(baseline, "version");
+    }
+
+    private void sleepWithJitter(int attempt) {
+        try {
+            long delay =
+                    BACKOFF_BASE_MILLIS * attempt + ThreadLocalRandom.current().nextLong(BACKOFF_JITTER_MILLIS);
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            // Restore the flag and let the retry loop continue; there is no cancellation path to honor here.
+            Thread.currentThread().interrupt();
+        }
     }
 
     private double readNumber(Map<String, AttributeValue> item, String key) {

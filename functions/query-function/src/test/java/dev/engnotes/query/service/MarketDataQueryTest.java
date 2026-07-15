@@ -217,6 +217,47 @@ class MarketDataQueryTest {
         assertThat(response.day()).isEqualTo("2026-07-13");
     }
 
+    @Test
+    void findLatestPointReturnsTheNewestTsItemWithLimitOneAndNoDayQuery() {
+        Map<String, AttributeValue> newest = Map.of(
+                "timestamp", str("2026-07-12T10:00:00Z"),
+                "price", num("2950.50"));
+        when(dynamoDb.query(any(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.QueryResponse.builder()
+                        .items(List.of(newest))
+                        .build());
+
+        var latest = marketDataQuery.findLatestPoint("RELIANCE.NS");
+
+        assertThat(latest).isPresent();
+        assertThat(latest.get().timestamp()).isEqualTo("2026-07-12T10:00:00Z");
+        assertThat(latest.get().price()).isEqualByComparingTo(new BigDecimal("2950.50"));
+
+        ArgumentCaptor<software.amazon.awssdk.services.dynamodb.model.QueryRequest> captor =
+                ArgumentCaptor.forClass(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class);
+        verify(dynamoDb, times(1)).query(captor.capture());
+        assertThat(captor.getValue().limit()).isEqualTo(1);
+        assertThat(captor.getValue().expressionAttributeValues()).containsValue(str("TS#"));
+    }
+
+    @Test
+    void findLatestPointReturnsEmptyWhenNoTsItemExists() {
+        when(dynamoDb.query(any(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.QueryResponse.builder()
+                        .items(List.of())
+                        .build());
+
+        assertThat(marketDataQuery.findLatestPoint("RELIANCE.NS")).isEmpty();
+    }
+
+    @Test
+    void findLatestPointRejectsMalformedTickerWithoutTouchingDynamoDb() {
+        assertThatThrownBy(() -> marketDataQuery.findLatestPoint("bad ticker"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageStartingWith("Invalid ticker:");
+        verify(dynamoDb, never()).query(any(software.amazon.awssdk.services.dynamodb.model.QueryRequest.class));
+    }
+
     private static AttributeValue seriesEntry(String time, String price) {
         return AttributeValue.builder()
                 .m(Map.of("t", str(time), "p", num(price)))

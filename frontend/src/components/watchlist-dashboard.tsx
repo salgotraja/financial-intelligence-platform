@@ -162,6 +162,7 @@ export const WatchlistDashboard = () => {
                     loading: true,
                     marketData: null,
                     insight: null,
+                    weeklyChangePercent: null,
                     error: null,
                   }
                 }

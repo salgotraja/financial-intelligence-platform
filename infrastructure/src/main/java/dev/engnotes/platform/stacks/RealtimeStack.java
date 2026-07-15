@@ -99,19 +99,13 @@ public class RealtimeStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "COGNITO_REGION",
-                        this.getRegion(),
-                        "COGNITO_USER_POOL_ID",
-                        security.getUserPoolId(),
-                        "COGNITO_CLIENT_ID",
-                        security.getUserPoolClientId(),
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "authorizeWebSocket",
-                        "MAIN_CLASS",
-                        "dev.engnotes.authorizer.AuthorizerHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("COGNITO_REGION", this.getRegion()),
+                        Map.entry("COGNITO_USER_POOL_ID", security.getUserPoolId()),
+                        Map.entry("COGNITO_CLIENT_ID", security.getUserPoolClientId()),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "authorizeWebSocket"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.authorizer.AuthorizerHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .build();
 
         LogGroup.Builder.create(this, "WsAuthorizerFnLogs")
@@ -135,6 +129,10 @@ public class RealtimeStack extends Stack {
                         ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
                 .build();
         connectionsTable.grantReadWriteData(manageRole);
+        // Spec s11 erasure step 1: $connect/subscribe read USER#{sub}/PROFILE on the platform table
+        // to refuse registration for a deletion-pending caller. Read-only; no write path here.
+        data.getPlatformTable().grantReadData(manageRole);
+        data.getEncryptionKey().grantDecrypt(manageRole);
 
         var manageFn = Function.Builder.create(this, "ManageConnectionFn")
                 .functionName("financial-manage-connection-" + env)
@@ -147,17 +145,13 @@ public class RealtimeStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "CONNECTIONS_TABLE",
-                        connectionsTable.getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "manageConnection",
-                        "MAIN_CLASS",
-                        "dev.engnotes.notifier.NotifierHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("CONNECTIONS_TABLE", connectionsTable.getTableName()),
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "manageConnection"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.notifier.NotifierHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .build();
 
         LogGroup.Builder.create(this, "ManageConnectionFnLogs")
@@ -196,17 +190,12 @@ public class RealtimeStack extends Stack {
                 .timeout(Duration.seconds(30))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "CONNECTIONS_TABLE",
-                        connectionsTable.getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "notifyInsight",
-                        "MAIN_CLASS",
-                        "dev.engnotes.notifier.NotifierHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("CONNECTIONS_TABLE", connectionsTable.getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "notifyInsight"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.notifier.NotifierHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .build();
 
         LogGroup.Builder.create(this, "NotifierFnLogs")
@@ -255,15 +244,20 @@ public class RealtimeStack extends Stack {
         notifierFn.addEnvironment("WS_CALLBACK_URL", stage.getCallbackUrl());
         stage.grantManagementApiAccess(notifierRole);
 
-        // Fan-out trigger: INSERTs on the platform table. SK filtering to INSIGHT# happens in
-        // code; the coarse INSERT filter is enough at this scale (market-data INSERTs invoke the
-        // Lambda but exit fast on the SK check). Bounded retries: a poison batch must not block
-        // the shard forever; missed pushes are tolerable (clients re-query on load).
+        // Fan-out trigger: INSERTs on the platform table whose SK begins with INSIGHT#. The event
+        // source filter (not just the code-level SK check in the notifier) stops market-data
+        // INSERTs from invoking the Lambda at all, since market-data volume dwarfs insight volume.
+        // Bounded retries: a poison batch must not block the shard forever; missed pushes are
+        // tolerable (clients re-query on load).
         notifierFnAlias.addEventSource(DynamoEventSource.Builder.create(data.getPlatformTable())
                 .startingPosition(StartingPosition.LATEST)
                 .batchSize(10)
                 .retryAttempts(2)
-                .filters(List.of(FilterCriteria.filter(Map.of("eventName", FilterRule.isEqual("INSERT")))))
+                .filters(List.of(FilterCriteria.filter(OrderedMap.of(
+                        Map.entry("eventName", FilterRule.isEqual("INSERT")),
+                        Map.entry(
+                                "dynamodb",
+                                Map.of("Keys", Map.of("SK", Map.of("S", FilterRule.beginsWith("INSIGHT#")))))))))
                 .build());
 
         new CfnOutput(

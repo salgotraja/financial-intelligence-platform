@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Badge } from '@/components/ui/badge'
+import { SourceBadge } from '@/components/source-badge'
 import { SignInButton } from './sign-in-button'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -45,13 +45,7 @@ export const NavBar = () => {
             <span className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
               {email ?? username ?? 'signed in'}
               {groups.map((group) => (
-                <Badge
-                  key={group}
-                  variant="outline"
-                  className="border-border text-[10px] text-muted-foreground"
-                >
-                  {group}
-                </Badge>
+                <SourceBadge key={group}>{group}</SourceBadge>
               ))}
             </span>
           )}

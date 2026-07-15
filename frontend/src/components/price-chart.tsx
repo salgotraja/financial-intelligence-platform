@@ -13,18 +13,37 @@ import {
 import { CHART_COLORS } from '@/lib/theme'
 import type { SeriesPoint } from '@/lib/api'
 
+/**
+ * Where `previousClose` sits vertically within the plotted price range, as a gradient
+ * offset (0 = top, 1 = bottom). Extracted as a pure function so the up/down colour split
+ * is unit-testable without rendering recharts, which needs a measured container size that
+ * jsdom does not provide.
+ */
+export const thresholdOffset = (prices: number[], previousClose: number | null): number => {
+  if (previousClose === null) return 1
+  const hi = Math.max(...prices, previousClose)
+  const lo = Math.min(...prices, previousClose)
+  return hi === lo ? 0.5 : (hi - previousClose) / (hi - lo)
+}
+
+export interface PriceChartProps {
+  daySeries: SeriesPoint[]
+  previousClose: number | null
+  // 1D intraday is the default language for both props below; 1W/1M callers override
+  // them since `previousClose` there is the range's first close, not yesterday's close.
+  emptyMessage?: string
+  referenceLabel?: string
+}
+
 export const PriceChart = ({
   daySeries,
   previousClose,
-}: {
-  daySeries: SeriesPoint[]
-  previousClose: number | null
-}) => {
+  emptyMessage = 'Intraday data begins with the next market session.',
+  referenceLabel = 'Prev Close',
+}: PriceChartProps) => {
   if (daySeries.length < 2) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        Intraday data begins with the next market session.
-      </p>
+      <p className="py-8 text-center text-sm text-muted-foreground">{emptyMessage}</p>
     )
   }
 
@@ -34,12 +53,7 @@ export const PriceChart = ({
   // Threshold colouring at previous close: green above the prev-close line, red below, at every
   // point (Google-Finance baseline style). A session spent mostly under prev close reads red overall
   // while the header/tile still shows the net % change. `offset` is where prev close sits vertically.
-  let offset = 1
-  if (previousClose !== null) {
-    const hi = Math.max(...prices, previousClose)
-    const lo = Math.min(...prices, previousClose)
-    offset = hi === lo ? 0.5 : (hi - previousClose) / (hi - lo)
-  }
+  const offset = thresholdOffset(prices, previousClose)
 
   return (
     <ResponsiveContainer width="100%" height={240}>
@@ -85,7 +99,7 @@ export const PriceChart = ({
             stroke={CHART_COLORS.tick}
             strokeDasharray="4 4"
             label={{
-              value: 'Prev Close',
+              value: referenceLabel,
               position: 'insideTopLeft',
               fill: CHART_COLORS.tick,
               fontSize: 10,

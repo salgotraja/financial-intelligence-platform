@@ -51,12 +51,20 @@ public class WatchlistHandler {
                     request.correlationId());
 
             // Consent gate (spec decision 5): no active consent -> no watchlist interaction at all.
+            // The "consent required" prefix keeps QueryStack's CLIENT_ERROR_PATTERN 400 mapping in
+            // sync; changing it here requires the matching change in QueryStack.
             if (!consentGate.isActive(owner)) {
                 throw new WatchlistException("consent required: no active consent for owner");
             }
 
             return switch (request.operation()) {
                 case ADD -> {
+                    // Spec s11 erasure step 1: refuse new watchlist rows while erasure is in flight.
+                    // Scoped to ADD only, not the consent check above: REMOVE and LIST stay allowed.
+                    // The "deletion pending" prefix keeps QueryStack's CLIENT_ERROR_PATTERN in sync.
+                    if (consentGate.isDeletionPending(owner)) {
+                        throw new WatchlistException("deletion pending: erasure in progress for this account");
+                    }
                     String ticker = TickerValidator.validate(request.ticker());
                     store.add(owner, ticker);
                     yield WatchlistResponse.added(ticker);

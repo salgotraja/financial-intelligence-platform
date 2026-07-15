@@ -15,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminDeleteUserRequest;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.AttributeType;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.ListUsersRequest;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.ListUsersResponse;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.UserType;
@@ -64,5 +65,46 @@ class CognitoUserServiceTest {
 
         assertThat(deleted).isFalse();
         verify(cognito, never()).adminDeleteUser(any(AdminDeleteUserRequest.class));
+    }
+
+    @Test
+    void findEmailBySubReturnsEmailAttribute() {
+        when(cognito.listUsers(any(ListUsersRequest.class)))
+                .thenReturn(ListUsersResponse.builder()
+                        .users(UserType.builder()
+                                .username("jdoe")
+                                .attributes(
+                                        AttributeType.builder()
+                                                .name("sub")
+                                                .value("user-1")
+                                                .build(),
+                                        AttributeType.builder()
+                                                .name("email")
+                                                .value("jdoe@example.com")
+                                                .build())
+                                .build())
+                        .build());
+
+        String email = service.findEmailBySub("user-1");
+
+        assertThat(email).isEqualTo("jdoe@example.com");
+    }
+
+    @Test
+    void findEmailBySubReturnsNullWhenUserAbsent() {
+        when(cognito.listUsers(any(ListUsersRequest.class)))
+                .thenReturn(ListUsersResponse.builder().users(List.of()).build());
+
+        assertThat(service.findEmailBySub("ghost")).isNull();
+    }
+
+    @Test
+    void findEmailBySubReturnsNullWhenEmailAttributeMissing() {
+        when(cognito.listUsers(any(ListUsersRequest.class)))
+                .thenReturn(ListUsersResponse.builder()
+                        .users(UserType.builder().username("jdoe").build())
+                        .build());
+
+        assertThat(service.findEmailBySub("user-1")).isNull();
     }
 }

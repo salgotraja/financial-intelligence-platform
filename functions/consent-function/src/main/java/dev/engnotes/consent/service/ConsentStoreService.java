@@ -2,6 +2,7 @@ package dev.engnotes.consent.service;
 
 import dev.engnotes.consent.model.AuditEventType;
 import dev.engnotes.consent.model.ConsentRecord;
+import dev.engnotes.consent.model.LoginGate;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.HashMap;
@@ -37,7 +38,7 @@ public class ConsentStoreService {
             DynamoDbClient dynamoDb,
             @Value("${PLATFORM_TABLE:financial-platform-dev}") String platformTable,
             @Value("${AUDIT_TABLE:financial-platform-audit-dev}") String auditTable,
-            @Value("${CONSENT_VERSION:v1}") String consentVersion,
+            @Value("${CONSENT_POLICY_VERSION:v1}") String consentVersion,
             Clock clock) {
         this.dynamoDb = dynamoDb;
         this.platformTable = platformTable;
@@ -62,8 +63,16 @@ public class ConsentStoreService {
         return new ConsentRecord(given, str(item, "version"), str(item, "purpose"), str(item, "updatedAt"));
     }
 
-    /** Grants consent (version defaults to CONSENT_VERSION when blank) and audits CONSENT_GRANTED. */
+    /**
+     * Grants consent (version defaults to CONSENT_POLICY_VERSION when blank) and audits
+     * CONSENT_GRANTED. Refuses while the subject is deletion-pending (spec s11 erasure step 1): a
+     * granted consent is new personal data, and reads/withdrawal must stay unaffected by the check
+     * that lives only here.
+     */
     public ConsentRecord grant(String sub, String version, String purpose, String sourceIp, String seq) {
+        if (isDeletionPending(sub)) {
+            throw new IllegalStateException("deletion pending: erasure in progress for this account");
+        }
         String effectiveVersion = (version != null && !version.isBlank()) ? version : consentVersion;
         String now = Instant.now(clock).toString();
         writeConsent(sub, true, effectiveVersion, purpose, now);
@@ -85,6 +94,58 @@ public class ConsentStoreService {
         String now = Instant.now(clock).toString();
         writeConsent(sub, false, null, null, now);
         putAudit(sub, AuditEventType.ACCOUNT_CREATED, null, null, null, now, "signup");
+    }
+
+    /**
+     * PreAuthentication login gate (spec s11, adapted): a record with {@code consentGiven=false} and
+     * no stored version is PENDING (never consented, seeded at signup) and allows login; the same
+     * flag with a stored version is WITHDRAWN (consent was given, then pulled) and denies. A record
+     * with {@code consentGiven=true} allows only when its version matches CONSENT_POLICY_VERSION;
+     * otherwise it is stale and denies, auditing CONSENT_RECONSENT_REQUIRED. Fails open on a read
+     * error: the login path favors availability, unlike the watchlist gate, which fails closed.
+     */
+    public LoginGate gateLogin(String sub, String seq) {
+        ConsentRecord record;
+        try {
+            record = read(sub);
+        } catch (RuntimeException e) {
+            log.error("Consent read failed during login gate; allowing login (fail-open). sub={}", sub, e);
+            return LoginGate.ALLOWED;
+        }
+        if (!record.consentGiven()) {
+            return record.version() == null ? LoginGate.ALLOWED : LoginGate.WITHDRAWN;
+        }
+        // Exact ordinal comparison, not case-folding, so no Locale is involved here (unlike
+        // equalsIgnoreCase/toUpperCase, which are Locale-sensitive) - already safe as written.
+        if (consentVersion.equals(record.version())) {
+            return LoginGate.ALLOWED;
+        }
+        try {
+            putAudit(
+                    sub,
+                    AuditEventType.CONSENT_RECONSENT_REQUIRED,
+                    record.version(),
+                    record.purpose(),
+                    null,
+                    Instant.now(clock).toString(),
+                    seq);
+        } catch (RuntimeException e) {
+            log.error("CONSENT_RECONSENT_REQUIRED audit write failed; denial stands. sub={}", sub, e);
+        }
+        return LoginGate.RECONSENT_REQUIRED;
+    }
+
+    /** Reads {@code USER#{sub}/PROFILE}; no try/catch, matching this class's other reads (grant/withdraw
+     * already propagate DynamoDB errors uncaught; only {@link #gateLogin} deliberately fails open). */
+    private boolean isDeletionPending(String sub) {
+        GetItemResponse response = dynamoDb.getItem(GetItemRequest.builder()
+                .tableName(platformTable)
+                .key(Map.of("PK", s("USER#" + sub), "SK", s("PROFILE")))
+                .consistentRead(true)
+                .build());
+        return response.hasItem()
+                && response.item().containsKey("deletionPending")
+                && Boolean.TRUE.equals(response.item().get("deletionPending").bool());
     }
 
     private void writeConsent(String sub, boolean given, String version, String purpose, String updatedAt) {
