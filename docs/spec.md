@@ -95,7 +95,7 @@ Attributes `GSI1PK`/`GSI1SK` back GSI1. TTL attribute: `ttl` (epoch seconds).
 
 | Entity | PK | SK | Notes |
 |---|---|---|---|
-| Market data point | `TICKER#{ticker}` | `TS#{iso8601}` | Hot returns; TTL ~48h. Latest read via `Limit=1, ScanIndexForward=false` |
+| Market data point | `TICKER#{ticker}` | `TS#{iso8601}` | Hot returns; TTL ~24h. Latest read via `Limit=1, ScanIndexForward=false` |
 | Anomaly/baseline state | `TICKER#{ticker}` | `BASELINE` | Running mean/variance/count for z-score; updated each ingest |
 | User watchlist item | `USER#{sub}` | `WATCH#{ticker}` | One item per tracked ticker; query by `USER#{sub}` prefix |
 | User profile / consent | `USER#{sub}` | `PROFILE` | Mirror of consent state + `deletion_pending` flag; lets write paths cheaply skip pending users |
@@ -146,7 +146,7 @@ timeout-bound) and SQS fan-out (simpler but weaker orchestration/visibility).
 
 ### Fetch and store
 - Provider-abstracted fetch (section 8), null-safe parse.
-- Dual write: DynamoDB hot point (TTL ~48h) and S3 cold lake, date-partitioned
+- Dual write: DynamoDB hot point (TTL ~24h) and S3 cold lake, date-partitioned
   `yyyy/MM/dd/{ticker}/HH-mm-ss.json` for Athena.
 - Idempotency: DynamoDB conditional put on `attribute_not_exists` of the composite key.
 - Update the per-ticker baseline (running mean/variance) in the same write path.
@@ -190,6 +190,15 @@ price-movement correlation rather than static sector tags.
 
 Why compute from hot data in a scheduled Lambda: keeps grouping off the per-insight critical
 path, avoids Athena latency and per-query cost, and is self-contained.
+
+> **Implementation status (shipped 2026-07-15).** Reality now matches this section. A
+> `financial-correlations-schedule-dev` EventBridge rule (`cron(0/15 3-9 ? * MON-FRI *)`, the same
+> market-hours envelope and source discriminator as the ingest rules, plus the in-code NSE-holiday
+> guard) drives a correlation Lambda in `insight-function`. It reads recent returns from the hot
+> DynamoDB data, computes the pairwise Pearson matrix, and forms groups by union-find over pairs with
+> `|rho| >= 0.6`. Groups persist as `GROUP#{groupId}/META` items (groupId is a stable SHA-256-derived
+> 8-byte id) with a `GROUPSET` distinct-index mirror and per-ticker `TICKER#{t}/GROUP` reverse lookups.
+> See LEARNING-GUIDE section 8.6 for the math and the crash-safe write order.
 
 ---
 
@@ -263,6 +272,15 @@ produces a usable insight without fabricating LLM output or failing the user sil
 - `GET /user/my-data` (right to access) and `DELETE /user/my-data` (right to erasure) per
   section 11. All require a valid JWT and operate on the caller's own `sub` only.
 
+> **Implementation status (read path expanded 2026-07-15).** The served read routes now match the
+> spirit of this section and add three surfaces the closure pass shipped: `GET /insights` returns the
+> caller's watchlist feed (per-ticker plus cross-ticker group insights, group insights deduped across
+> members via GSI1); `GET /market-data/{ticker}/daily?days=N` serves the durable DAY# rollups for the
+> weekly comparison charts; and `GET /stories/{ticker}` returns a generated narrative built from the
+> stored insights and price history (rule-based today, Bedrock when the account payment block clears).
+> None of these read routes invokes Bedrock. Cross-ticker group insights are generated on the write
+> path and served here, closing the "insight unit is the group, not the ticker" spec goal.
+
 ---
 
 ## 11. Identity, Auth, Tenancy, and Data Governance (DPDP)
@@ -271,23 +289,33 @@ The platform handles personal data of Indian users, so it treats the Digital Per
 Protection Act 2023 (DPDP) as a first-class design constraint. Cognito is the identity provider
 and the anchor for consent, purpose limitation, and data-subject rights.
 
-> **Implementation status (sub-projects A-C, built 2026-06).** This section is the target design.
-> What actually shipped differs deliberately, simpler where the slice does not need the full
-> machinery (the divergence is tracked in [`STATUS.md`](./STATUS.md)):
+> **Implementation status (DPDP-full closed 2026-07-15).** This section is the target design. The
+> closure-pass branch reconciled the earlier DPDP drift: the erasure workflow, the preAuthentication
+> gate, the re-consent flow, and the hashed audit scheme now all match this section. Endpoint naming
+> and two deliberate design choices (dual audit scheme, PENDING-allows-login) remain the only
+> divergences, both documented in ADRs and tracked in [`STATUS.md`](./STATUS.md):
 > - **Endpoints:** consent is `GET/POST/DELETE /user/consent`; right-to-access is `GET /user/export`;
 >   right-to-erasure is `DELETE /user/account` (not the single `/user/my-data` resource described
 >   below). Export and erasure also support an admin-on-behalf path (`?subjectSub=`, admins only).
-> - **Erasure** is a synchronous Lambda (`dsr-function`), not a Step Functions workflow: it deletes
->   the subject's `USER#{sub}` platform-table items (CONSENT + watchlist + WATCHSET mirrors) and the
->   Cognito user, retains the audit trail, and logs `ACCOUNT_ERASED` before the deletes. No
->   `deletion_pending` flag, no S3 tagged-object pass (the lake holds no personal data), and no SES
->   confirmation email yet.
-> - **Consent** gates the per-user watchlist (fail-closed), not login: there is no `preAuthentication`
->   gate and no `consent_version` re-consent flow yet. The authoritative consent record lives in
->   DynamoDB (`USER#{sub}/CONSENT`), read fresh per request, not in the JWT claim.
-> - **Audit table** keys events `PK=USER#{sub}`, `SK=EVENT#{iso8601}#{seq}` carrying the raw `sub`
->   (not the hashed `AUDIT#{type}#{date}` scheme below); it is append-only, enforced at IAM
->   (`PutItem` only), `RETAIN` in every env, PITR on, no TTL.
+> - **Erasure** is now a Step Functions workflow (the `ErasureStateMachine` on QueryStack, driven by
+>   `dsr-function`): mark `deletion_pending`, delete the subject's `USER#{sub}` items (CONSENT +
+>   watchlist + WATCHSET mirrors), an S3 tagged-object safeguard pass (a no-op today, the lake holds
+>   no personal data), delete the Cognito user, send an SES confirmation email, then write the erasure
+>   audit. The `StartExecution` name is `sha256(subjectSub#requestedAt)` so a duplicate `DELETE`
+>   returns an idempotent 202. SES runs in sandbox, so a confirmation to an unverified recipient fails
+>   and the workflow records `emailSent=false` honestly.
+> - **Consent** now gates login as well as the watchlist. The `preAuthentication` trigger denies a
+>   WITHDRAWN or stale-version login (writing a `CONSENT_RECONSENT_REQUIRED` audit event) and forces
+>   re-consent when `CONSENT_POLICY_VERSION` moves; it allows a PENDING (never-consented) login so
+>   onboarding can reach the consent screen (see ADR 0002). The authoritative consent record lives in
+>   DynamoDB (`USER#{sub}/CONSENT`), read fresh per request, not in the JWT claim. The watchlist gate
+>   stays fail-closed.
+> - **Audit table** now runs a dual scheme (ADR 0003): the per-user operational records
+>   (`PK=USER#{sub}`, `SK=EVENT#{iso8601}#{seq}`, raw `sub`) that power `/user/export`, plus hashed
+>   compliance records (`PK=AUDIT#{ERASURE|ACCESS}#{yyyy-MM-dd}`, `SK={occurredAt}#{correlationId}`,
+>   `subjectHash`/`actorHash`, no raw PII) written at the erasure and export boundaries. Both are
+>   append-only, enforced at IAM (`PutItem` only), `RETAIN` in every env, PITR on, no TTL, and both
+>   survive an erasure they document.
 
 ### Identity and tenancy
 - Cognito User Pools. Per-user watchlists keyed by `sub`. API Gateway uses a Cognito JWT
@@ -321,7 +349,7 @@ JWT and enforced at the authorizer:
 On registration, before any data endpoint is reachable, the user sees a consent screen stating
 what is collected, why, retention, and sharing. On accept, PostConfirmation writes the consent
 attributes. PreAuthentication re-checks them on every login. Bumping `consent_version` (e.g.
-`v1.0` to `v2.0`) forces re-consent on the next login.
+`v1` to `v2`) forces re-consent on the next login.
 
 ### Right to access
 `GET /user/my-data` returns everything stored about the caller: Cognito attributes
@@ -463,14 +491,16 @@ load test with recorded p50/p95/p99, CI/CD gates, the three write-ups.
 | Min interval per group | 15 min | Anti-spam on insighting |
 | Correlation threshold | 0.6 | Group membership |
 | Correlation refresh | 15 min | Scheduled Lambda |
-| Hot history TTL | ~48h | DynamoDB; full history in S3 |
+| Hot history TTL | 24h | DynamoDB; full history in S3 |
 | Max tickers per user | 25 | API-enforced cap |
 | Max users | 20 | Test-window cap |
 | Bedrock daily spend cap | ~USD 5/day | Circuit breaker trip |
 | Ingest cadence (dev/prod) | 5 min / 1 min market hours | EventBridge |
+| NSE market session | Mon-Fri 09:00-15:35 IST | Weekday-gated by cron, holiday-gated in code |
+| NSE trading-holiday calendar | 16 static dates (NSE-2026) | `MarketHours.TRADING_HOLIDAYS_2026`, mirrored in `frontend/src/lib/market-hours.ts`; source NSE/CMTR/71775 + the Jan 15 ad-hoc modification |
 | MFA | Required (TOTP, SMS fallback) | Cognito |
 | Password policy | 12-char min + complexity | Cognito |
-| Consent version | v1.0 | Bump forces re-consent |
+| Consent policy version | v1 | `CONSENT_POLICY_VERSION` env; bump forces re-consent on next login (a deliberate operational act, ADR 0002) |
 | Audit table retention | Permanent (no TTL, deletion-protected) | Compliance proof |
 | Erasure completion target | within 72h of request | DPDP responsiveness |
 
