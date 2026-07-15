@@ -20,8 +20,29 @@ final class OrderedMap {
     static <K, V> Map<K, V> of(Map.Entry<K, V>... entries) {
         var map = new LinkedHashMap<K, V>();
         for (var entry : entries) {
-            map.put(entry.getKey(), entry.getValue());
+            putUnique(map, entry);
         }
         return map;
+    }
+
+    /**
+     * Same as {@link #of(Map.Entry[])}, seeded with {@code base}'s entries first (in {@code base}'s
+     * own iteration order) before appending {@code additionalEntries}. Lets a shared base map -
+     * itself built by {@link #of(Map.Entry[])} - be reused across several derived maps without
+     * re-typing its entries at every call site.
+     */
+    @SafeVarargs
+    static <K, V> Map<K, V> of(Map<K, V> base, Map.Entry<K, V>... additionalEntries) {
+        var map = new LinkedHashMap<>(base);
+        for (var entry : additionalEntries) {
+            putUnique(map, entry);
+        }
+        return map;
+    }
+
+    private static <K, V> void putUnique(Map<K, V> map, Map.Entry<K, V> entry) {
+        if (map.putIfAbsent(entry.getKey(), entry.getValue()) != null) {
+            throw new IllegalArgumentException("duplicate key: " + entry.getKey());
+        }
     }
 }

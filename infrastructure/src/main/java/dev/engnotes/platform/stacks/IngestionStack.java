@@ -1,6 +1,5 @@
 package dev.engnotes.platform.stacks;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import software.amazon.awscdk.*;
@@ -118,31 +117,27 @@ public class IngestionStack extends Stack {
 
         // == Common Lambda environment ==
         // Keys must NOT start with AWS_ - Lambda reserves that prefix and rejects the deploy.
-        Map<String, String> commonEnvVars = Map.of(
-                "PLATFORM_TABLE",
-                data.getPlatformTable().getTableName(),
-                "DATA_LAKE_BUCKET",
-                data.getDataLakeBucket().getBucketName(),
-                "ENVIRONMENT",
-                env,
-                "POWERTOOLS_SERVICE_NAME",
-                "financial-intelligence-platform",
-                "LOG_LEVEL",
-                env.equals("prod") ? "INFO" : "DEBUG");
+        Map<String, String> commonEnvVars = OrderedMap.of(
+                Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                Map.entry("DATA_LAKE_BUCKET", data.getDataLakeBucket().getBucketName()),
+                Map.entry("ENVIRONMENT", env),
+                Map.entry("POWERTOOLS_SERVICE_NAME", "financial-intelligence-platform"),
+                Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG"));
 
         // == Fetch Market Data Lambda ==
         // SnapStart removes Spring Boot cold start (3-8s -> <200ms) on published versions.
-        Map<String, String> fetchEnv = new HashMap<>(commonEnvVars);
-        fetchEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "fetchMarketData");
         // FunctionInvoker locates the @SpringBootApplication via MAIN_CLASS (the shaded uber-JAR has
-        // no Boot Start-Class manifest entry).
-        fetchEnv.put("MAIN_CLASS", "dev.engnotes.ingestion.IngestionHandler");
-        fetchEnv.put("MARKET_DATA_API_SECRET", "financial-platform/market-data-api-key");
-        // Anomaly-gate tunables (spec section 6), set to the AnomalyDetectionService code defaults so
-        // they are operable without a redeploy. ANOMALY_MIN_SAMPLES gates the z-score until the
-        // baseline has enough history; ANOMALY_Z_THRESHOLD is the standard-deviation trip point.
-        fetchEnv.put("ANOMALY_Z_THRESHOLD", "3.0");
-        fetchEnv.put("ANOMALY_MIN_SAMPLES", "5");
+        // no Boot Start-Class manifest entry). Anomaly-gate tunables (spec section 6), set to the
+        // AnomalyDetectionService code defaults so they are operable without a redeploy.
+        // ANOMALY_MIN_SAMPLES gates the z-score until the baseline has enough history;
+        // ANOMALY_Z_THRESHOLD is the standard-deviation trip point.
+        Map<String, String> fetchEnv = OrderedMap.of(
+                commonEnvVars,
+                Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "fetchMarketData"),
+                Map.entry("MAIN_CLASS", "dev.engnotes.ingestion.IngestionHandler"),
+                Map.entry("MARKET_DATA_API_SECRET", "financial-platform/market-data-api-key"),
+                Map.entry("ANOMALY_Z_THRESHOLD", "3.0"),
+                Map.entry("ANOMALY_MIN_SAMPLES", "5"));
 
         Function fetchMarketDataFn = Function.Builder.create(this, "FetchMarketDataFn")
                 .functionName("financial-fetch-market-data-" + env)
@@ -174,27 +169,27 @@ public class IngestionStack extends Stack {
         // == Generate Insight Lambda ==
         // Higher memory: Bedrock response parsing benefits from it.
         // Invoked only when the anomaly gate routes here (see the Choice state below).
-        Map<String, String> insightEnv = new HashMap<>(commonEnvVars);
-        insightEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "generateInsight");
-        insightEnv.put("MAIN_CLASS", "dev.engnotes.insight.InsightHandler");
-        // Claude is INFERENCE_PROFILE-only in ap-south-1; invoke the global profile id,
-        // not the bare foundation-model id (the latter returns ValidationException on demand).
-        insightEnv.put("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-6");
-        insightEnv.put("BEDROCK_MAX_TOKENS", "1024");
-        // Cost tracking + daily-spend circuit breaker (spec section 9). Claude Sonnet list pricing
-        // (USD per 1K tokens); the breaker opens once a day's spend reaches the cap and routes to
-        // the rule-based fallback. Cost records share the insight table (already granted to the role).
-        insightEnv.put("COST_DAILY_CAP_USD", "5.0");
-        insightEnv.put("BEDROCK_INPUT_PRICE_PER_1K", "0.003");
-        insightEnv.put("BEDROCK_OUTPUT_PRICE_PER_1K", "0.015");
-        // Rule-based fallback tunables (spec section 9), set to the RuleBasedInsightGenerator code
-        // defaults so the static-threshold signal and its (deliberately lower) confidence are
-        // operable without a redeploy.
-        insightEnv.put("RULE_BULLISH_THRESHOLD_PERCENT", "1.0");
-        insightEnv.put("RULE_FALLBACK_CONFIDENCE", "0.4");
-        // Cross-ticker group insight anti-spam window (Task 7), set to the InsightGenerationService
-        // code default so it is operable without a redeploy.
-        insightEnv.put("MIN_GROUP_INSIGHT_INTERVAL_MINUTES", "15");
+        // Claude is INFERENCE_PROFILE-only in ap-south-1; invoke the global profile id, not the bare
+        // foundation-model id (the latter returns ValidationException on demand). Cost tracking +
+        // daily-spend circuit breaker (spec section 9): Claude Sonnet list pricing (USD per 1K
+        // tokens); the breaker opens once a day's spend reaches the cap and routes to the rule-based
+        // fallback. Cost records share the insight table (already granted to the role). Rule-based
+        // fallback tunables (spec section 9), set to the RuleBasedInsightGenerator code defaults so
+        // the static-threshold signal and its (deliberately lower) confidence are operable without a
+        // redeploy. Cross-ticker group insight anti-spam window (Task 7), set to the
+        // InsightGenerationService code default so it is operable without a redeploy.
+        Map<String, String> insightEnv = OrderedMap.of(
+                commonEnvVars,
+                Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "generateInsight"),
+                Map.entry("MAIN_CLASS", "dev.engnotes.insight.InsightHandler"),
+                Map.entry("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-6"),
+                Map.entry("BEDROCK_MAX_TOKENS", "1024"),
+                Map.entry("COST_DAILY_CAP_USD", "5.0"),
+                Map.entry("BEDROCK_INPUT_PRICE_PER_1K", "0.003"),
+                Map.entry("BEDROCK_OUTPUT_PRICE_PER_1K", "0.015"),
+                Map.entry("RULE_BULLISH_THRESHOLD_PERCENT", "1.0"),
+                Map.entry("RULE_FALLBACK_CONFIDENCE", "0.4"),
+                Map.entry("MIN_GROUP_INSIGHT_INTERVAL_MINUTES", "15"));
 
         Function generateInsightFn = Function.Builder.create(this, "GenerateInsightFn")
                 .functionName("financial-generate-insight-" + env)
@@ -243,12 +238,13 @@ public class IngestionStack extends Stack {
         data.getPlatformTable().grantReadWriteData(correlationsRole);
         data.getEncryptionKey().grantEncryptDecrypt(correlationsRole);
 
-        Map<String, String> correlationsEnv = new HashMap<>(commonEnvVars);
-        correlationsEnv.put("SPRING_CLOUD_FUNCTION_DEFINITION", "computeCorrelations");
-        correlationsEnv.put("MAIN_CLASS", "dev.engnotes.insight.InsightHandler");
         // Threshold clustering tunable (spec section 7), set to the CorrelationService code default so
         // it is operable without a redeploy.
-        correlationsEnv.put("CORRELATION_THRESHOLD", "0.6");
+        Map<String, String> correlationsEnv = OrderedMap.of(
+                commonEnvVars,
+                Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "computeCorrelations"),
+                Map.entry("MAIN_CLASS", "dev.engnotes.insight.InsightHandler"),
+                Map.entry("CORRELATION_THRESHOLD", "0.6"));
 
         Function computeCorrelationsFn = Function.Builder.create(this, "ComputeCorrelationsFn")
                 .functionName("financial-correlations-" + env)
