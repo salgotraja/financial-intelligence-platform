@@ -95,7 +95,7 @@ Attributes `GSI1PK`/`GSI1SK` back GSI1. TTL attribute: `ttl` (epoch seconds).
 
 | Entity | PK | SK | Notes |
 |---|---|---|---|
-| Market data point | `TICKER#{ticker}` | `TS#{iso8601}` | Hot returns; TTL ~48h. Latest read via `Limit=1, ScanIndexForward=false` |
+| Market data point | `TICKER#{ticker}` | `TS#{iso8601}` | Hot returns; TTL ~24h. Latest read via `Limit=1, ScanIndexForward=false` |
 | Anomaly/baseline state | `TICKER#{ticker}` | `BASELINE` | Running mean/variance/count for z-score; updated each ingest |
 | User watchlist item | `USER#{sub}` | `WATCH#{ticker}` | One item per tracked ticker; query by `USER#{sub}` prefix |
 | User profile / consent | `USER#{sub}` | `PROFILE` | Mirror of consent state + `deletion_pending` flag; lets write paths cheaply skip pending users |
@@ -146,7 +146,7 @@ timeout-bound) and SQS fan-out (simpler but weaker orchestration/visibility).
 
 ### Fetch and store
 - Provider-abstracted fetch (section 8), null-safe parse.
-- Dual write: DynamoDB hot point (TTL ~48h) and S3 cold lake, date-partitioned
+- Dual write: DynamoDB hot point (TTL ~24h) and S3 cold lake, date-partitioned
   `yyyy/MM/dd/{ticker}/HH-mm-ss.json` for Athena.
 - Idempotency: DynamoDB conditional put on `attribute_not_exists` of the composite key.
 - Update the per-ticker baseline (running mean/variance) in the same write path.
