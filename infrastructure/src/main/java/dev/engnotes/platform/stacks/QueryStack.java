@@ -86,17 +86,12 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "serveInsight",
-                        "MAIN_CLASS",
-                        "dev.engnotes.query.QueryHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveInsight"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -119,17 +114,12 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "serveMarketData",
-                        "MAIN_CLASS",
-                        "dev.engnotes.query.QueryHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveMarketData"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -156,17 +146,12 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "serveDailyMarketData",
-                        "MAIN_CLASS",
-                        "dev.engnotes.query.QueryHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveDailyMarketData"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -192,17 +177,12 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "serveStory",
-                        "MAIN_CLASS",
-                        "dev.engnotes.query.QueryHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveStory"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -230,17 +210,12 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "serveInsightFeed",
-                        "MAIN_CLASS",
-                        "dev.engnotes.query.QueryHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveInsightFeed"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -273,19 +248,13 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "DEFAULT_OWNER_SUB",
-                        "dev-user",
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "watchlist",
-                        "MAIN_CLASS",
-                        "dev.engnotes.watchlist.WatchlistHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("DEFAULT_OWNER_SUB", "dev-user"),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "watchlist"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.watchlist.WatchlistHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -320,23 +289,15 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "AUDIT_TABLE",
-                        data.getAuditTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "CONSENT_POLICY_VERSION",
-                        "v1",
-                        "DEFAULT_OWNER_SUB",
-                        "dev-user",
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "consent",
-                        "MAIN_CLASS",
-                        "dev.engnotes.consent.ConsentHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("AUDIT_TABLE", data.getAuditTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("CONSENT_POLICY_VERSION", "v1"),
+                        Map.entry("DEFAULT_OWNER_SUB", "dev-user"),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "consent"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.consent.ConsentHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -375,21 +336,14 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(30))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "AUDIT_TABLE",
-                        data.getAuditTable().getTableName(),
-                        "USER_POOL_ID",
-                        security.getUserPoolId(),
-                        "ENVIRONMENT",
-                        env,
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "dsr",
-                        "MAIN_CLASS",
-                        "dev.engnotes.dsr.DsrHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("AUDIT_TABLE", data.getAuditTable().getTableName()),
+                        Map.entry("USER_POOL_ID", security.getUserPoolId()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "dsr"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.dsr.DsrHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .vpc(network.getVpc())
                 .build();
 
@@ -420,19 +374,13 @@ public class QueryStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "COGNITO_REGION",
-                        this.getRegion(),
-                        "COGNITO_USER_POOL_ID",
-                        security.getUserPoolId(),
-                        "COGNITO_CLIENT_ID",
-                        security.getUserPoolClientId(),
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "authorize",
-                        "MAIN_CLASS",
-                        "dev.engnotes.authorizer.AuthorizerHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("COGNITO_REGION", this.getRegion()),
+                        Map.entry("COGNITO_USER_POOL_ID", security.getUserPoolId()),
+                        Map.entry("COGNITO_CLIENT_ID", security.getUserPoolClientId()),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "authorize"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.authorizer.AuthorizerHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .build();
 
         LogGroup.Builder.create(this, "AuthorizerFnLogs")
@@ -523,13 +471,13 @@ public class QueryStack extends Stack {
                 .comment("Set the deletion-pending gate and capture the subject's email before Cognito deletion")
                 .payloadResponseOnly(true)
                 .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(Map.of(
-                        "operation", "MARK_PENDING",
-                        "subjectSub.$", "$.subjectSub",
-                        "callerSub.$", "$.callerSub",
-                        "sourceIp.$", "$.sourceIp",
-                        "correlationId.$", "$.correlationId",
-                        "requestedAt.$", "$.requestedAt")))
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "MARK_PENDING"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"))))
                 .build();
         markDeletionPending.addRetry(erasureRetry);
 
@@ -538,14 +486,14 @@ public class QueryStack extends Stack {
                 .comment("Delete the CONSENT record and every WATCH#/WATCHSET mirror")
                 .payloadResponseOnly(true)
                 .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(Map.of(
-                        "operation", "DELETE_USER_ITEMS",
-                        "subjectSub.$", "$.subjectSub",
-                        "callerSub.$", "$.callerSub",
-                        "sourceIp.$", "$.sourceIp",
-                        "correlationId.$", "$.correlationId",
-                        "requestedAt.$", "$.requestedAt",
-                        "email.$", "$.email")))
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "DELETE_USER_ITEMS"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("email.$", "$.email"))))
                 .build();
         deleteUserItems.addRetry(erasureRetry);
 
@@ -554,14 +502,14 @@ public class QueryStack extends Stack {
                 .comment("Documented no-op: the data lake holds no subject-linked keys")
                 .payloadResponseOnly(true)
                 .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(Map.of(
-                        "operation", "S3_SAFEGUARD",
-                        "subjectSub.$", "$.subjectSub",
-                        "callerSub.$", "$.callerSub",
-                        "sourceIp.$", "$.sourceIp",
-                        "correlationId.$", "$.correlationId",
-                        "requestedAt.$", "$.requestedAt",
-                        "email.$", "$.email")))
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "S3_SAFEGUARD"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("email.$", "$.email"))))
                 .build();
         s3SafeguardDelete.addRetry(erasureRetry);
 
@@ -570,14 +518,14 @@ public class QueryStack extends Stack {
                 .comment("Delete the Cognito identity - the final, irreversible erasure step")
                 .payloadResponseOnly(true)
                 .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(Map.of(
-                        "operation", "DELETE_COGNITO_USER",
-                        "subjectSub.$", "$.subjectSub",
-                        "callerSub.$", "$.callerSub",
-                        "sourceIp.$", "$.sourceIp",
-                        "correlationId.$", "$.correlationId",
-                        "requestedAt.$", "$.requestedAt",
-                        "email.$", "$.email")))
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "DELETE_COGNITO_USER"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("email.$", "$.email"))))
                 .build();
         deleteCognitoUser.addRetry(erasureRetry);
 
@@ -586,14 +534,14 @@ public class QueryStack extends Stack {
                 .comment("Clear the deletion-pending gate and write the ACCOUNT_ERASED audit record")
                 .payloadResponseOnly(true)
                 .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(Map.of(
-                        "operation", "WRITE_ERASURE_AUDIT",
-                        "subjectSub.$", "$.subjectSub",
-                        "callerSub.$", "$.callerSub",
-                        "sourceIp.$", "$.sourceIp",
-                        "correlationId.$", "$.correlationId",
-                        "requestedAt.$", "$.requestedAt",
-                        "emailSent.$", "$.emailSent")))
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "WRITE_ERASURE_AUDIT"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("emailSent.$", "$.emailSent"))))
                 .build();
         writeErasureAudit.addRetry(erasureRetry);
 
@@ -602,14 +550,14 @@ public class QueryStack extends Stack {
                 .comment("Email the subject a factual erasure confirmation")
                 .payloadResponseOnly(true)
                 .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(Map.of(
-                        "operation", "SEND_CONFIRMATION_EMAIL",
-                        "subjectSub.$", "$.subjectSub",
-                        "callerSub.$", "$.callerSub",
-                        "sourceIp.$", "$.sourceIp",
-                        "correlationId.$", "$.correlationId",
-                        "requestedAt.$", "$.requestedAt",
-                        "email.$", "$.email")))
+                .payload(TaskInput.fromObject(OrderedMap.of(
+                        Map.entry("operation", "SEND_CONFIRMATION_EMAIL"),
+                        Map.entry("subjectSub.$", "$.subjectSub"),
+                        Map.entry("callerSub.$", "$.callerSub"),
+                        Map.entry("sourceIp.$", "$.sourceIp"),
+                        Map.entry("correlationId.$", "$.correlationId"),
+                        Map.entry("requestedAt.$", "$.requestedAt"),
+                        Map.entry("email.$", "$.email"))))
                 .build();
         sendConfirmationEmail.addRetry(erasureRetry);
 
@@ -937,8 +885,9 @@ public class QueryStack extends Stack {
                         MethodOptions.builder()
                                 .authorizer(apiAuthorizer)
                                 .authorizationType(AuthorizationType.CUSTOM)
-                                .requestParameters(Map.of(
-                                        "method.request.path.ticker", true, "method.request.querystring.days", false))
+                                .requestParameters(OrderedMap.of(
+                                        Map.entry("method.request.path.ticker", true),
+                                        Map.entry("method.request.querystring.days", false)))
                                 .methodResponses(standardMethodResponses())
                                 .build());
 
@@ -1147,11 +1096,9 @@ public class QueryStack extends Stack {
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
-                        .requestParameters(Map.of(
-                                "method.request.querystring.subjectSub",
-                                false,
-                                "method.request.header.Authorization",
-                                true))
+                        .requestParameters(OrderedMap.of(
+                                Map.entry("method.request.querystring.subjectSub", false),
+                                Map.entry("method.request.header.Authorization", true)))
                         .methodResponses(standardMethodResponses())
                         .build());
 
@@ -1255,17 +1202,19 @@ public class QueryStack extends Stack {
         // yields 0 (never breaches); otherwise it yields the true error-rate percentage.
         var serverErrorRate = MathExpression.Builder.create()
                 .expression("IF(errors >= 5, 100 * errors / total, 0)")
-                .usingMetrics(Map.of(
-                        "errors",
-                        api.metricServerError(MetricOptions.builder()
-                                .statistic("Sum")
-                                .period(Duration.minutes(5))
-                                .build()),
-                        "total",
-                        api.metricCount(MetricOptions.builder()
-                                .statistic("Sum")
-                                .period(Duration.minutes(5))
-                                .build())))
+                .usingMetrics(OrderedMap.of(
+                        Map.entry(
+                                "errors",
+                                api.metricServerError(MetricOptions.builder()
+                                        .statistic("Sum")
+                                        .period(Duration.minutes(5))
+                                        .build())),
+                        Map.entry(
+                                "total",
+                                api.metricCount(MetricOptions.builder()
+                                        .statistic("Sum")
+                                        .period(Duration.minutes(5))
+                                        .build()))))
                 .period(Duration.minutes(5))
                 .build();
 
@@ -1290,16 +1239,16 @@ public class QueryStack extends Stack {
                 .dashboardName("financial-platform-" + env)
                 .build();
 
-        var fns = Map.of(
-                "query", queryFn,
-                "marketdata", marketDataFn,
-                "marketdatadaily", dailyMarketDataFn,
-                "insightsfeed", insightsFeedFn,
-                "stories", storiesFn,
-                "watchlist", watchlistFn,
-                "consent", consentFn,
-                "dsr", dsrFn,
-                "authorizer", authorizerFn);
+        var fns = OrderedMap.of(
+                Map.entry("query", queryFn),
+                Map.entry("marketdata", marketDataFn),
+                Map.entry("marketdatadaily", dailyMarketDataFn),
+                Map.entry("insightsfeed", insightsFeedFn),
+                Map.entry("stories", storiesFn),
+                Map.entry("watchlist", watchlistFn),
+                Map.entry("consent", consentFn),
+                Map.entry("dsr", dsrFn),
+                Map.entry("authorizer", authorizerFn));
 
         dashboard.addWidgets(
                 GraphWidget.Builder.create()

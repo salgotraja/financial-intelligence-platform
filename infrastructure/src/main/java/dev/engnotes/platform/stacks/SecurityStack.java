@@ -60,15 +60,19 @@ public class SecurityStack extends Stack {
                                 .mutable(true)
                                 .build())
                         .build())
-                .customAttributes(java.util.Map.of(
-                        "consent_given",
-                                StringAttribute.Builder.create().mutable(true).build(),
-                        "consent_timestamp",
-                                StringAttribute.Builder.create().mutable(true).build(),
-                        "consent_version",
-                                StringAttribute.Builder.create().mutable(true).build(),
-                        "processing_purpose",
-                                StringAttribute.Builder.create().mutable(true).build()))
+                .customAttributes(OrderedMap.of(
+                        Map.entry(
+                                "consent_given",
+                                StringAttribute.Builder.create().mutable(true).build()),
+                        Map.entry(
+                                "consent_timestamp",
+                                StringAttribute.Builder.create().mutable(true).build()),
+                        Map.entry(
+                                "consent_version",
+                                StringAttribute.Builder.create().mutable(true).build()),
+                        Map.entry(
+                                "processing_purpose",
+                                StringAttribute.Builder.create().mutable(true).build())))
                 .passwordPolicy(PasswordPolicy.builder()
                         .minLength(12)
                         .requireLowercase(true)
@@ -115,21 +119,14 @@ public class SecurityStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "AUDIT_TABLE",
-                        data.getAuditTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "CONSENT_POLICY_VERSION",
-                        "v1",
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "postConfirmation",
-                        "MAIN_CLASS",
-                        "dev.engnotes.consent.ConsentHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("AUDIT_TABLE", data.getAuditTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("CONSENT_POLICY_VERSION", "v1"),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "postConfirmation"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.consent.ConsentHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .build();
 
         LogGroup.Builder.create(this, "PostConfirmationFnLogs")
@@ -167,21 +164,14 @@ public class SecurityStack extends Stack {
                 .timeout(Duration.seconds(10))
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
-                .environment(Map.of(
-                        "PLATFORM_TABLE",
-                        data.getPlatformTable().getTableName(),
-                        "AUDIT_TABLE",
-                        data.getAuditTable().getTableName(),
-                        "ENVIRONMENT",
-                        env,
-                        "CONSENT_POLICY_VERSION",
-                        "v1",
-                        "SPRING_CLOUD_FUNCTION_DEFINITION",
-                        "preAuthentication",
-                        "MAIN_CLASS",
-                        "dev.engnotes.consent.ConsentHandler",
-                        "LOG_LEVEL",
-                        env.equals("prod") ? "INFO" : "DEBUG"))
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("AUDIT_TABLE", data.getAuditTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("CONSENT_POLICY_VERSION", "v1"),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "preAuthentication"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.consent.ConsentHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
                 .build();
 
         LogGroup.Builder.create(this, "PreAuthenticationFnLogs")

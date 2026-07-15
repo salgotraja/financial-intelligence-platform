@@ -581,6 +581,22 @@ class QueryStackTest {
         assertTrue(definition.contains("\"operation\":\"WRITE_ERASURE_AUDIT\""));
     }
 
+    // Pins the Parameters key order to a fixed sequence (OrderedMap, not Map.of): Map.of's
+    // per-JVM-run salted iteration order made two `cdk synth` runs of identical source emit this
+    // same Parameters map with different key orders, replacing the Deployment/state machine on
+    // every deploy even with no real change (found in live validation). A substring match on the
+    // exact serialized order is a cheap way to catch a regression back to an unordered map.
+    @Test
+    void erasureTaskParametersHaveAFixedKeyOrder() {
+        String definition = erasureDefinitionString();
+
+        assertTrue(
+                definition.contains("\"Parameters\":{\"operation\":\"MARK_PENDING\",\"subjectSub.$\":\"$.subjectSub\","
+                        + "\"callerSub.$\":\"$.callerSub\",\"sourceIp.$\":\"$.sourceIp\","
+                        + "\"correlationId.$\":\"$.correlationId\",\"requestedAt.$\":\"$.requestedAt\"}"),
+                "expected a fixed Parameters key order for MarkDeletionPending: " + definition);
+    }
+
     @Test
     void everyErasureStateRetriesTwiceWithDoublingBackoff() {
         String definition = erasureDefinitionString();

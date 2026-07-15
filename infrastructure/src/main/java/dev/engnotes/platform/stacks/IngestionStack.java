@@ -386,10 +386,10 @@ public class IngestionStack extends Stack {
         CallAwsService readWatchset = CallAwsService.Builder.create(this, "ReadWatchset")
                 .service("dynamodb")
                 .action("query")
-                .parameters(Map.of(
-                        "TableName", data.getPlatformTable().getTableName(),
-                        "KeyConditionExpression", "PK = :pk",
-                        "ExpressionAttributeValues", Map.of(":pk", Map.of("S", "WATCHSET"))))
+                .parameters(OrderedMap.of(
+                        Map.entry("TableName", data.getPlatformTable().getTableName()),
+                        Map.entry("KeyConditionExpression", "PK = :pk"),
+                        Map.entry("ExpressionAttributeValues", Map.of(":pk", Map.of("S", "WATCHSET")))))
                 .iamResources(List.of(data.getPlatformTable().getTableArn()))
                 .resultPath("$.watchset")
                 .build();
@@ -408,15 +408,13 @@ public class IngestionStack extends Stack {
                 // "Rate Exceeded" 500s (observed live 2026-07-12). Keep pipeline bursts well
                 // under half the pool until the requested quota increase (->1000) is granted.
                 .maxConcurrency(2)
-                .itemSelector(Map.of(
-                        "ticker.$",
-                        "$$.Map.Item.Value.ticker.S",
-                        "requestedAt.$",
-                        "$$.Execution.StartTime",
-                        "correlationId.$",
-                        "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)",
-                        "source.$",
-                        "$$.Execution.Input.source"))
+                .itemSelector(OrderedMap.of(
+                        Map.entry("ticker.$", "$$.Map.Item.Value.ticker.S"),
+                        Map.entry("requestedAt.$", "$$.Execution.StartTime"),
+                        Map.entry(
+                                "correlationId.$",
+                                "States.Format('{}#{}', $$.Execution.Name, $$.Map.Item.Value.ticker.S)"),
+                        Map.entry("source.$", "$$.Execution.Input.source")))
                 .toleratedFailurePercentage(100)
                 .build();
         // executionType on ProcessorConfig is the working path in this CDK version; the synth-time
@@ -524,10 +522,10 @@ public class IngestionStack extends Stack {
                         "PutRequest",
                         Map.of(
                                 "Item",
-                                Map.of(
-                                        "PK", Map.of("S", "WATCHSET"),
-                                        "SK", Map.of("S", "TICKER#" + t),
-                                        "ticker", Map.of("S", t)))))
+                                OrderedMap.of(
+                                        Map.entry("PK", Map.of("S", "WATCHSET")),
+                                        Map.entry("SK", Map.of("S", "TICKER#" + t)),
+                                        Map.entry("ticker", Map.of("S", t))))))
                 .toList();
         AwsCustomResource.Builder.create(this, "WatchsetSeed")
                 .onUpdate(AwsSdkCall.builder()
