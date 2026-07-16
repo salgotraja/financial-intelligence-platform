@@ -276,7 +276,7 @@ produces a usable insight without fabricating LLM output or failing the user sil
 > caller's watchlist feed (per-ticker plus cross-ticker group insights, group insights deduped across
 > members via GSI1); `GET /market-data/{ticker}/daily?days=N` serves the durable DAY# rollups for the
 > weekly comparison charts; and `GET /stories/{ticker}` returns a generated narrative built from the
-> stored insights and price history (rule-based today, Bedrock when the account payment block clears).
+> stored insights and price history (rule-based or Bedrock, indicated by the `source` field).
 > None of these read routes invokes Bedrock. Cross-ticker group insights are generated on the write
 > path and served here, closing the "insight unit is the group, not the ticker" spec goal.
 
