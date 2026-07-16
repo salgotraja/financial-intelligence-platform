@@ -41,9 +41,13 @@ die()  { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 run()  { if [[ "${DRY_RUN:-0}" == "1" ]]; then printf '+ %s\n' "$*" >&2; else "$@"; fi; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"; }
 
+# preflight [extra-cmd...] — base tool check; callers append what they alone need (run-all: k6).
+# cdk is satisfied by npx too ($CDK falls back to `npx -y aws-cdk`); builds use the in-repo mvnw.
 preflight() {
   [[ "$ENV" == "dev" ]] || die "this tooling is dev-only (ENV=$ENV); refusing to run"
-  for c in aws cdk k6 jq mvn openssl curl; do need_cmd "$c"; done
+  for c in aws jq openssl curl "$@"; do need_cmd "$c"; done
+  command -v cdk >/dev/null 2>&1 || command -v npx >/dev/null 2>&1 \
+    || die "missing required command: cdk (or npx, which the scripts use as the aws-cdk fallback)"
   [[ -n "${JAVA_HOME:-}" ]] || die "JAVA_HOME unset (expected Java 25, e.g. ~/.sdkman/candidates/java/25.0.2-tem)"
   if [[ "${DRY_RUN:-0}" != "1" ]]; then
     aws sts get-caller-identity >/dev/null 2>&1 || die "AWS credentials not configured / expired"
