@@ -10,25 +10,28 @@ run "$REPO_ROOT/mvnw" -q -f "$REPO_ROOT/pom.xml" -DskipTests package
 
 # CDK LogGroup constructs default to RETAIN, so a prior teardown leaves orphan log groups
 # (/aws/lambda|apigateway|states/financial-*-dev) that block the next create with AlreadyExists.
-# Delete orphans before deploy, preserving any owned by the live Data/Security stacks.
+# Delete orphans before deploy, preserving any owned by ANY live platform stack: a retried deploy
+# after a partial failure has more live stacks than just Data/Security, and their CFN-owned log
+# groups must survive (deleting one breaks the next stack update with "LogGroup ... was not found").
 log "Pre-cleaning orphan 'financial' log groups (retained by prior teardowns)..."
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
-  keep_lgs=""
-  for s in "$STACK_DATA" "$STACK_SECURITY"; do
-    if aws cloudformation describe-stacks --stack-name "$s" >/dev/null 2>&1; then
-      keep_lgs+=" $(aws cloudformation list-stack-resources --stack-name "$s" \
-        --query "StackResourceSummaries[?ResourceType=='AWS::Logs::LogGroup'].PhysicalResourceId" --output text 2>/dev/null)"
-    fi
+  keep_lgs=" "
+  for s in $(aws cloudformation list-stacks \
+      --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE UPDATE_FAILED CREATE_IN_PROGRESS UPDATE_IN_PROGRESS \
+      --query "StackSummaries[?starts_with(StackName,'FinancialPlatform-')].StackName" --output text | tr '\t' ' '); do
+    # tr: `--output text` tab-separates values; the case match below is space-delimited
+    keep_lgs+="$(aws cloudformation list-stack-resources --stack-name "$s" \
+      --query "StackResourceSummaries[?ResourceType=='AWS::Logs::LogGroup'].PhysicalResourceId" --output text 2>/dev/null | tr '\t\n' '  ') "
   done
   for lg in $(aws logs describe-log-groups \
       --query "logGroups[?contains(logGroupName,'financial')].logGroupName" --output text 2>/dev/null); do
-    case " $keep_lgs " in
-      *" $lg "*) : ;;                                        # owned by a live kept stack -> preserve
+    case "$keep_lgs" in
+      *" $lg "*) : ;;                                        # owned by a live stack -> preserve
       *) log "  deleting orphan $lg"; aws logs delete-log-group --log-group-name "$lg" || true ;;
     esac
   done
 else
-  log "(dry-run) would delete orphan 'financial' log groups not owned by Data/Security"
+  log "(dry-run) would delete orphan 'financial' log groups not owned by any live platform stack"
 fi
 
 log "Deploying all 6 stacks (env=$ENV, alertEmail=${ALERT_EMAIL:-<stack default>})..."
