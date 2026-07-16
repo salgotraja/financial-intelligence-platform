@@ -1,6 +1,6 @@
 # Real-Time Financial Intelligence Platform: Specification
 
-Status: authoritative spec. Supersedes `requirement.md` (kept as the original roadmap).
+Status: authoritative spec. Supersedes the original roadmap document.
 Derived from a structured interview. Every decision below was chosen deliberately; the
 "Why" notes capture the tradeoff so future changes are made with eyes open.
 
@@ -80,7 +80,7 @@ ap-south-1 via a cross-region inference profile (section 9).
 | Frontend | Next.js (SSR) | Watchlist management, charts, live insight feed over WebSocket, consent screen |
 
 CDK is Java (per project conventions), not TypeScript. The "CDK in TypeScript" line in
-`requirement.md` is superseded.
+the original roadmap is superseded.
 
 ---
 
@@ -198,7 +198,6 @@ path, avoids Athena latency and per-query cost, and is self-contained.
 > DynamoDB data, computes the pairwise Pearson matrix, and forms groups by union-find over pairs with
 > `|rho| >= 0.6`. Groups persist as `GROUP#{groupId}/META` items (groupId is a stable SHA-256-derived
 > 8-byte id) with a `GROUPSET` distinct-index mirror and per-ticker `TICKER#{t}/GROUP` reverse lookups.
-> See LEARNING-GUIDE section 8.6 for the math and the crash-safe write order.
 
 ---
 
@@ -293,7 +292,7 @@ and the anchor for consent, purpose limitation, and data-subject rights.
 > closure-pass branch reconciled the earlier DPDP drift: the erasure workflow, the preAuthentication
 > gate, the re-consent flow, and the hashed audit scheme now all match this section. Endpoint naming
 > and two deliberate design choices (dual audit scheme, PENDING-allows-login) remain the only
-> divergences, both documented in ADRs and tracked in [`STATUS.md`](./STATUS.md):
+> divergences:
 > - **Endpoints:** consent is `GET/POST/DELETE /user/consent`; right-to-access is `GET /user/export`;
 >   right-to-erasure is `DELETE /user/account` (not the single `/user/my-data` resource described
 >   below). Export and erasure also support an admin-on-behalf path (`?subjectSub=`, admins only).
@@ -307,10 +306,10 @@ and the anchor for consent, purpose limitation, and data-subject rights.
 > - **Consent** now gates login as well as the watchlist. The `preAuthentication` trigger denies a
 >   WITHDRAWN or stale-version login (writing a `CONSENT_RECONSENT_REQUIRED` audit event) and forces
 >   re-consent when `CONSENT_POLICY_VERSION` moves; it allows a PENDING (never-consented) login so
->   onboarding can reach the consent screen (see ADR 0002). The authoritative consent record lives in
+>   onboarding can reach the consent screen. The authoritative consent record lives in
 >   DynamoDB (`USER#{sub}/CONSENT`), read fresh per request, not in the JWT claim. The watchlist gate
 >   stays fail-closed.
-> - **Audit table** now runs a dual scheme (ADR 0003): the per-user operational records
+> - **Audit table** now runs a dual scheme: the per-user operational records
 >   (`PK=USER#{sub}`, `SK=EVENT#{iso8601}#{seq}`, raw `sub`) that power `/user/export`, plus hashed
 >   compliance records (`PK=AUDIT#{ERASURE|ACCESS}#{yyyy-MM-dd}`, `SK={occurredAt}#{correlationId}`,
 >   `subjectHash`/`actorHash`, no raw PII) written at the erasure and export boundaries. Both are
@@ -500,7 +499,7 @@ load test with recorded p50/p95/p99, CI/CD gates, the three write-ups.
 | NSE trading-holiday calendar | 16 static dates (NSE-2026) | `MarketHours.TRADING_HOLIDAYS_2026`, mirrored in `frontend/src/lib/market-hours.ts`; source NSE/CMTR/71775 + the Jan 15 ad-hoc modification |
 | MFA | Required (TOTP, SMS fallback) | Cognito |
 | Password policy | 12-char min + complexity | Cognito |
-| Consent policy version | v1 | `CONSENT_POLICY_VERSION` env; bump forces re-consent on next login (a deliberate operational act, ADR 0002) |
+| Consent policy version | v1 | `CONSENT_POLICY_VERSION` env; bump forces re-consent on next login (a deliberate operational act) |
 | Audit table retention | Permanent (no TTL, deletion-protected) | Compliance proof |
 | Erasure completion target | within 72h of request | DPDP responsiveness |
 
@@ -523,7 +522,7 @@ load test with recorded p50/p95/p99, CI/CD gates, the three write-ups.
 
 ---
 
-## 18. Decisions Resolved by This Spec (vs `requirement.md`)
+## 18. Decisions Resolved by This Spec (vs the original roadmap)
 
 - Goal reframed from breadth-first portfolio to depth-first production slice.
 - Insight unit is cross-ticker, correlation-derived, anomaly-gated (not per-ticker, not
