@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { WatchlistDashboard } from './watchlist-dashboard'
+import { KNOWN_TICKERS } from '@/lib/tickers'
 import { useAuthStore } from '@/stores/auth-store'
 
 vi.mock('@/lib/api', () => ({
@@ -138,6 +139,63 @@ describe('WatchlistDashboard', () => {
       expect(
         screen.getByRole('button', { name: 'Remove WIPRO.NS' }),
       ).toBeInTheDocument(),
+    )
+  })
+
+  it('offers the known-ticker datalist on the Add input while still accepting free text', async () => {
+    useAuthStore.setState({ status: 'signed-in', groups: ['premium'] })
+
+    render(<WatchlistDashboard />)
+    await waitFor(() =>
+      expect(screen.getByText('RELIANCE.NS')).toBeInTheDocument(),
+    )
+
+    const input = screen.getByPlaceholderText('RELIANCE.NS')
+    expect(input).toHaveAttribute('list', 'known-tickers')
+    for (const ticker of KNOWN_TICKERS) {
+      expect(
+        document.querySelector(`#known-tickers option[value="${ticker}"]`),
+      ).not.toBeNull()
+    }
+  })
+
+  it('hides the movers row until a second ticker has change data, then shows it', async () => {
+    useAuthStore.setState({ status: 'signed-in', groups: ['premium'] })
+    const { getMarketData } = await import('@/lib/api')
+    const point = (changePercent: number) => ({
+      timestamp: '2026-07-13T12:00:00Z',
+      price: 100,
+      previousClose: 98,
+      change: changePercent,
+      changePercent,
+      volume: 1,
+      high52Week: null,
+      low52Week: null,
+    })
+    vi.mocked(getMarketData).mockImplementation(async (t: string) => {
+      const changePercent =
+        t === 'RELIANCE.NS' ? 2 : t === 'TCS.NS' ? 5 : null
+      return {
+        ticker: t,
+        points: changePercent === null ? [] : [point(changePercent)],
+        daySeries: [],
+        previousClose: changePercent === null ? null : 98,
+        day: changePercent === null ? null : '2026-07-13',
+        found: changePercent !== null,
+      }
+    })
+
+    render(<WatchlistDashboard />)
+    await waitFor(() =>
+      expect(screen.getByText('RELIANCE.NS')).toBeInTheDocument(),
+    )
+    expect(screen.queryByText('Top mover')).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByPlaceholderText('RELIANCE.NS'), 'tcs.ns')
+    await userEvent.click(screen.getByRole('button', { name: /add/i }))
+
+    await waitFor(() =>
+      expect(screen.getByText('Top mover')).toBeInTheDocument(),
     )
   })
 

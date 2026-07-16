@@ -7,6 +7,15 @@ describe('computeMovers', () => {
     expect(computeMovers([{ ticker: 'A', changePercent: null }])).toBeNull()
   })
 
+  it('returns null when only one ticker has change data (no gainer/loser distinction over a singleton)', () => {
+    expect(
+      computeMovers([
+        { ticker: 'A', changePercent: 2 },
+        { ticker: 'B', changePercent: null },
+      ]),
+    ).toBeNull()
+  })
+
   it('picks the highest gainer and lowest loser', () => {
     const movers = computeMovers([
       { ticker: 'A', changePercent: 1.2 },
@@ -17,12 +26,12 @@ describe('computeMovers', () => {
     expect(movers!.loser).toEqual({ ticker: 'B', changePercent: -3.1 })
   })
 
-  it('uses the same ticker for both when only one has data', () => {
+  it('picks a gainer and loser once two tickers have data', () => {
     const movers = computeMovers([
-      { ticker: 'A', changePercent: 2 },
-      { ticker: 'B', changePercent: null },
+      { ticker: 'A', changePercent: 1.2 },
+      { ticker: 'B', changePercent: -3.1 },
     ])
-    expect(movers!.gainer.ticker).toBe('A')
-    expect(movers!.loser.ticker).toBe('A')
+    expect(movers!.gainer).toEqual({ ticker: 'A', changePercent: 1.2 })
+    expect(movers!.loser).toEqual({ ticker: 'B', changePercent: -3.1 })
   })
 })

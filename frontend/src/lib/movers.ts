@@ -20,7 +20,9 @@ export const computeMovers = (inputs: MoverInput[]): WatchlistMovers | null => {
   const withData = inputs.filter(
     (i): i is Mover => typeof i.changePercent === 'number',
   )
-  if (withData.length === 0) return null
+  // A single ticker has no "top mover" vs "weakest" distinction: max === min
+  // over a singleton would render the same ticker in both tiles.
+  if (withData.length < 2) return null
 
   let gainer = withData[0]
   let loser = withData[0]

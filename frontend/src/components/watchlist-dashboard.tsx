@@ -9,6 +9,7 @@ import { canManageWatchlist } from '@/lib/auth'
 import { isMarketOpen } from '@/lib/market-hours'
 import { computeWatchlistMood, type MoodInput } from '@/lib/mood'
 import { computeMovers } from '@/lib/movers'
+import { KNOWN_TICKERS } from '@/lib/tickers'
 import { useAuthStore } from '@/stores/auth-store'
 import { useAsyncData } from '@/hooks/use-async-data'
 import { useWatchlistDashboard } from '@/hooks/use-watchlist-dashboard'
@@ -124,7 +125,13 @@ export const WatchlistDashboard = () => {
             onChange={(e) => setDraft(e.target.value)}
             placeholder="RELIANCE.NS"
             className="w-40 font-mono"
+            list="known-tickers"
           />
+          <datalist id="known-tickers">
+            {KNOWN_TICKERS.map((ticker) => (
+              <option key={ticker} value={ticker} />
+            ))}
+          </datalist>
           <Button type="submit">Add</Button>
         </form>
       </div>
