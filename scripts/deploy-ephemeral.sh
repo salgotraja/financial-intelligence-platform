@@ -34,8 +34,10 @@ fi
 log "Deploying all 6 stacks (env=$ENV, alertEmail=${ALERT_EMAIL:-<stack default>})..."
 run bash -c "cd '$REPO_ROOT/infrastructure' && $CDK deploy --all --context env=$ENV${ALERT_EMAIL:+ --context alertEmail=$ALERT_EMAIL} --require-approval never"
 
-log "Disabling ingest schedule rule to neutralize Bedrock/ingest spend..."
+log "Disabling all scheduled rules to neutralize Bedrock/ingest spend..."
 run aws events disable-rule --name "$SCHEDULE_RULE"
+run aws events disable-rule --name "financial-market-data-close-schedule-$ENV"
+run aws events disable-rule --name "financial-correlations-schedule-$ENV"
 
 log "Capturing stack exports..."
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
