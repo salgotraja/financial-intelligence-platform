@@ -1,10 +1,17 @@
 package dev.engnotes.watchlist.validation;
 
 import dev.engnotes.watchlist.exception.WatchlistException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.regex.Pattern;
 
 /**
  * Strict allowlist validation for a ticker at the watchlist trust boundary (spec section 12).
+ *
+ * <p>API Gateway forwards the raw path segment via {@code $input.params('ticker')}, so an index
+ * symbol arrives percent-encoded (e.g. {@code %5ENSEI}). Decode first, then apply the strict
+ * allowlist, mirroring query-function's {@code Tickers.validated}, so {@code ^}-prefixed indices
+ * resolve to the same {@code TICKER#^NSEI} key ingestion writes.
  *
  * <p>The ticker is interpolated into DynamoDB keys (the user's watchlist item and the WATCHSET
  * union entry). Validating it against a tight allowlist before it reaches those sinks closes the
@@ -23,11 +30,23 @@ public final class TickerValidator {
 
     private TickerValidator() {}
 
-    /** Returns the ticker unchanged if it matches the allowlist; throws otherwise. */
+    /** Decodes the ticker, then returns it if it matches the allowlist; throws otherwise. */
     public static String validate(String ticker) {
-        if (ticker == null || !ALLOWED.matcher(ticker).matches()) {
+        String decoded = decode(ticker);
+        if (decoded == null || !ALLOWED.matcher(decoded).matches()) {
             throw new WatchlistException("Ticker failed allowlist validation (expected " + ALLOWED.pattern() + ")");
         }
-        return ticker;
+        return decoded;
+    }
+
+    private static String decode(String ticker) {
+        if (ticker == null) {
+            return null;
+        }
+        try {
+            return URLDecoder.decode(ticker, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return null; // malformed percent-encoding -> rejected by the allowlist check
+        }
     }
 }
