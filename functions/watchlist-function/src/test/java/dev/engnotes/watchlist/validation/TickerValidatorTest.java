@@ -37,4 +37,29 @@ class TickerValidatorTest {
     void rejectsTooLong() {
         assertThatThrownBy(() -> TickerValidator.validate("ABCDEFGHIJKLMNOP")).isInstanceOf(WatchlistException.class);
     }
+
+    @Test
+    void decodesEncodedCaretIndexTickerBeforeValidating() {
+        // Browsers percent-encode ^ in URL path segments: POST /watchlist/%5ENSEI must resolve to ^NSEI.
+        assertThat(TickerValidator.validate("%5ENSEI")).isEqualTo("^NSEI");
+    }
+
+    @Test
+    void passesThroughAlreadyPlainTickerUnchanged() {
+        assertThat(TickerValidator.validate("RELIANCE.NS")).isEqualTo("RELIANCE.NS");
+    }
+
+    @Test
+    void rejectsMalformedPercentEncoding() {
+        // %2G is not a valid hex escape: URLDecoder throws, decode() returns null, allowlist rejects.
+        assertThatThrownBy(() -> TickerValidator.validate("RELIANCE%2GNS")).isInstanceOf(WatchlistException.class);
+    }
+
+    @Test
+    void rejectionMessageMatchesQueryStackClientErrorPattern() {
+        // QueryStack's CLIENT_ERROR_PATTERN maps this to HTTP 400 by matching "allowlist validation".
+        assertThatThrownBy(() -> TickerValidator.validate("RELIANCE%2FNS"))
+                .isInstanceOf(WatchlistException.class)
+                .hasMessageContaining("allowlist validation");
+    }
 }

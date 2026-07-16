@@ -73,9 +73,8 @@ financial-intelligence-platform/
 ```
 
 The DPDP Security/compliance work from `docs/spec.md` is built: Cognito groups + MFA, consent
-triggers and gating, an append-only audit table, and right-to-access / right-to-erasure endpoints
-(see `docs/STATUS.md` for what is built versus the target). The current stacks are Data, Network,
-Security, Ingestion, and Query.
+triggers and gating, an append-only audit table, and right-to-access / right-to-erasure endpoints.
+The current stacks are Data, Network, Security, Ingestion, and Query.
 
 ## Getting Started
 

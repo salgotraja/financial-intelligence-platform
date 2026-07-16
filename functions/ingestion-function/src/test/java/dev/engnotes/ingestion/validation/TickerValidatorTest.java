@@ -27,12 +27,34 @@ class TickerValidatorTest {
                 "RELIANCE.NS#frag", // fragment injection
                 "RELIANCE@evil.com", // host injection
                 "RELIANCE/NS", // slash
-                "RELIANCE%2eNS", // percent-encoding
                 "<script>", // markup
                 "RELIANCE\n.NS" // newline / log-forging
             })
     void rejectsMalformedOrInjectionTickers(String ticker) {
         assertThatThrownBy(() -> TickerValidator.validate(ticker)).isInstanceOf(MarketDataException.class);
+    }
+
+    @Test
+    void decodesEncodedCaretIndexTickerBeforeValidating() {
+        // Browsers percent-encode ^ in URL path segments: POST /ingest/%5ENSEI must resolve to ^NSEI.
+        assertThat(TickerValidator.validate("%5ENSEI")).isEqualTo("^NSEI");
+    }
+
+    @Test
+    void passesThroughAlreadyPlainTickerUnchanged() {
+        assertThat(TickerValidator.validate("RELIANCE.NS")).isEqualTo("RELIANCE.NS");
+    }
+
+    @Test
+    void rejectsMalformedPercentEncoding() {
+        // %2G is not a valid hex escape: URLDecoder throws, decode() returns null, allowlist rejects.
+        assertThatThrownBy(() -> TickerValidator.validate("RELIANCE%2GNS")).isInstanceOf(MarketDataException.class);
+    }
+
+    @Test
+    void rejectsEncodedTickerThatFailsAllowlistAfterDecoding() {
+        // %2e decodes to a legitimate '.', but the decoded slash still fails the allowlist.
+        assertThatThrownBy(() -> TickerValidator.validate("RELIANCE%2FNS")).isInstanceOf(MarketDataException.class);
     }
 
     @Test

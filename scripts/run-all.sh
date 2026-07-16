@@ -6,7 +6,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
 here="$(dirname "$0")"
-preflight
+preflight k6
 
 export TEST_USER_PASSWORD="$(openssl rand -base64 18)Aa1!"   # ephemeral, never persisted to git
 
