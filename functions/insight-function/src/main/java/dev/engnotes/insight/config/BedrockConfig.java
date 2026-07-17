@@ -1,10 +1,12 @@
 package dev.engnotes.insight.config;
 
+import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import software.amazon.awssdk.awscore.client.builder.AwsClientBuilder;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.retry.RetryPolicy;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
@@ -31,10 +33,20 @@ public class BedrockConfig {
     @Value("${aws.region:ap-south-1}")
     private String region;
 
+    @Value("${aws.endpoint-url:}")
+    private String endpointUrl;
+
+    private <B extends AwsClientBuilder<B, ?>> B withEndpoint(B builder) {
+        builder.region(Region.of(region));
+        if (!endpointUrl.isBlank()) {
+            builder.endpointOverride(URI.create(endpointUrl));
+        }
+        return builder;
+    }
+
     @Bean
     public BedrockRuntimeClient bedrockRuntimeClient() {
-        return BedrockRuntimeClient.builder()
-                .region(Region.of(region))
+        return withEndpoint(BedrockRuntimeClient.builder())
                 .httpClient(UrlConnectionHttpClient.create())
                 .overrideConfiguration(ClientOverrideConfiguration.builder()
                         .apiCallTimeout(Duration.ofSeconds(50))
@@ -45,8 +57,7 @@ public class BedrockConfig {
 
     @Bean
     public DynamoDbClient dynamoDbClient() {
-        return DynamoDbClient.builder()
-                .region(Region.of(region))
+        return withEndpoint(DynamoDbClient.builder())
                 .httpClient(UrlConnectionHttpClient.create())
                 .build();
     }
