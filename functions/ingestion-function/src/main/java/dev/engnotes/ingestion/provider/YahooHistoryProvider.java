@@ -23,9 +23,11 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * Historical daily bars from the Yahoo Finance v8 chart API (range=1y, interval=1d) — the same
  * endpoint the live quote provider calls, with the OHLC arrays parsed instead of ignored. Used
- * only by the watchlist-add backfill, never by the live ingest path. Yahoo-only, no failover:
- * the backfill is idempotent and rerunnable, so a failed call is retried by the stream mapping
- * or the sweep script rather than a second provider.
+ * only by the watchlist-add backfill, never by the live ingest path. Yahoo-only, no failover: the
+ * backfill is idempotent and rerunnable, so a failed ticker is recovered by rerunning the sweep
+ * script rather than a second provider. The stream mapping's bounded retries apply only to
+ * batch-level crashes; the per-ticker fetch failure this class raises is caught and logged by the
+ * backfill bean, so it never triggers a mapping retry.
  */
 @Component
 public class YahooHistoryProvider {

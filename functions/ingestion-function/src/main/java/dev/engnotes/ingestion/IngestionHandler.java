@@ -132,13 +132,17 @@ public class IngestionHandler {
                 } catch (RuntimeException e) {
                     log.error(
                             "History backfill failed for one ticker, continuing. ticker={} error={}",
-                            ticker,
+                            sanitizeForLog(ticker),
                             e.toString());
                 }
             }
             log.info("Backfill batch complete. processed={} written={} skipped={}", processed, written, skipped);
             return Map.of("processed", processed, "written", written, "skipped", skipped);
         };
+    }
+
+    private static String sanitizeForLog(String ticker) {
+        return ticker.replaceAll("[^A-Z0-9.^-]", "_");
     }
 
     private static List<?> records(Map<String, Object> event) {

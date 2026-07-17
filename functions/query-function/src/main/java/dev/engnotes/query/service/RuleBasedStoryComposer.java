@@ -197,9 +197,16 @@ public class RuleBasedStoryComposer implements StoryComposer {
         return (pct.signum() > 0 ? "up " : "down ") + display(pct.abs()) + "%";
     }
 
-    // 52-week band position in thirds; silent when the band could not be established.
+    // 52-week band position in thirds; silent when the band could not be established. A
+    // DERIVED_1Y band is only as good as the 1Y horizon it was derived from: when that horizon is
+    // partial, the "52-week" framing would overstate thin history, so the sentence stays silent.
+    // HIGH_LOW_52W bands come from genuine 52-week data and are unaffected by this gate.
     private static Optional<String> bandSentence(DeepAnalysisResponse analysis) {
         if (analysis == null || !analysis.found() || analysis.band52w() == null) {
+            return Optional.empty();
+        }
+        if ("DERIVED_1Y".equals(analysis.band52w().source())
+                && fullHorizon(analysis, "1Y").isEmpty()) {
             return Optional.empty();
         }
         BigDecimal position = analysis.band52w().bandPositionPercent();

@@ -94,7 +94,7 @@ class StoriesIT extends AbstractLocalStackIT {
         assertThat(response.story()).contains("INFY.NS");
         assertThat(response.story()).contains("up"); // trend sentence: closes rose over the window
         assertThat(response.story()).contains("BULLISH"); // insight sentence
-        assertThat(response.story()).contains("52-week range");
+        assertThat(response.story()).doesNotContain("52-week range");
         assertThat(response.story()).doesNotContain("Over the past quarter");
     }
 

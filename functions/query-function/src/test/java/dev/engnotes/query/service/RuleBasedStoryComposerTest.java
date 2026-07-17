@@ -185,6 +185,23 @@ class RuleBasedStoryComposerTest {
     }
 
     @Test
+    void derived1YBandWithPartialYearHorizonAddsNoBandSentence() {
+        HorizonStats partialYear = new HorizonStats(
+                "1Y", 90, true, new BigDecimal("28.30"), null, null, null, null, null, null, 50, 40, null, null);
+        Band52w derivedBand =
+                new Band52w(new BigDecimal("130"), new BigDecimal("90"), new BigDecimal("75.00"), "DERIVED_1Y");
+        var withBand =
+                new DeepAnalysisResponse(TICKER, "2026-07-17T10:00:00Z", List.of(partialYear), derivedBand, true);
+        var withoutBand = new DeepAnalysisResponse(TICKER, "2026-07-17T10:00:00Z", List.of(partialYear), null, true);
+
+        Composition composition = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), withBand);
+        Composition baseline = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), withoutBand);
+
+        assertThat(composition.story()).doesNotContain("52-week range");
+        assertThat(composition.story()).isEqualTo(baseline.story());
+    }
+
+    @Test
     void partialHorizonsAndMissingBandAddNoSentences() {
         HorizonStats partialQuarter = new HorizonStats(
                 "3M", 6, true, new BigDecimal("6.00"), null, null, null, null, null, null, 3, 2, null, null);

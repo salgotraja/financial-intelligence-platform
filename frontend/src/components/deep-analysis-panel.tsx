@@ -63,10 +63,14 @@ const HorizonColumn = ({ horizon }: { horizon: HorizonStats }) => {
         {horizon.maxDrawdownPercent === null ? '–' : `-${horizon.maxDrawdownPercent.toFixed(2)}%`}
       </Stat>
       <Stat label="best day">
-        <span className="text-up">{signed(horizon.bestDay?.changePercent ?? null)}</span>
+        <span className={directionClass(horizon.bestDay?.changePercent ?? null)}>
+          {signed(horizon.bestDay?.changePercent ?? null)}
+        </span>
       </Stat>
       <Stat label="worst day">
-        <span className="text-down">{signed(horizon.worstDay?.changePercent ?? null)}</span>
+        <span className={directionClass(horizon.worstDay?.changePercent ?? null)}>
+          {signed(horizon.worstDay?.changePercent ?? null)}
+        </span>
       </Stat>
       <Stat label="up / down days">
         {horizon.upDays} / {horizon.downDays}
