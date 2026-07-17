@@ -20,3 +20,12 @@ jobs:
 
       - name: Run LocalStack integration tests
         run: ./mvnw -B clean verify -Pintegration-tests
+
+      - name: Upload coverage reports
+        if: always()   # publish coverage even when the gate fails, for diagnosis
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-coverage
+          path: functions/*/target/site/jacoco/
+          retention-days: 14
+          if-no-files-found: error

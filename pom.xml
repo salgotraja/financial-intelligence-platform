@@ -50,8 +50,8 @@
 
         <!-- JaCoCo 0.8.15: first line with official Java 25 (bytecode 69) support is 0.8.14. -->
         <jacoco.version>0.8.15</jacoco.version>
-        <!-- Coverage gate is soft while the IT backfill lands; flipped to true in the final task. -->
-        <jacoco.check.haltOnFailure>false</jacoco.check.haltOnFailure>
+        <!-- Coverage gate: every function module must hold >= 80% merged unit+IT line coverage. -->
+        <jacoco.check.haltOnFailure>true</jacoco.check.haltOnFailure>
         <!-- Populated by the JaCoCo agents only under -Pintegration-tests; empty otherwise so the
              plain build runs uninstrumented. -->
         <jacocoUnitAgent></jacocoUnitAgent>
