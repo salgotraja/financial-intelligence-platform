@@ -47,6 +47,15 @@
         <aws-lambda-events.version>3.16.1</aws-lambda-events.version>
         <java-jwt.version>4.5.2</java-jwt.version>
         <jwks-rsa.version>0.24.1</jwks-rsa.version>
+
+        <!-- JaCoCo 0.8.15: first line with official Java 25 (bytecode 69) support is 0.8.14. -->
+        <jacoco.version>0.8.15</jacoco.version>
+        <!-- Coverage gate is soft while the IT backfill lands; flipped to true in the final task. -->
+        <jacoco.check.haltOnFailure>false</jacoco.check.haltOnFailure>
+        <!-- Populated by the JaCoCo agents only under -Pintegration-tests; empty otherwise so the
+             plain build runs uninstrumented. -->
+        <jacocoUnitAgent></jacocoUnitAgent>
+        <jacocoItAgent></jacocoItAgent>
     </properties>
 
     <!--
@@ -194,7 +203,9 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <configuration>
-                        <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
+                        <!-- @{...} is Surefire late-replacement: the JaCoCo agent property composes
+                             here instead of being overwritten (empty outside -Pintegration-tests). -->
+                        <argLine>@{jacocoUnitAgent} -XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
                     </configuration>
                 </plugin>
                 <!-- Failsafe runs *IT integration tests in the integration-test/verify phases.
@@ -204,8 +215,95 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-failsafe-plugin</artifactId>
                     <configuration>
-                        <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
+                        <argLine>@{jacocoItAgent} -XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
                     </configuration>
+                </plugin>
+                <!-- JaCoCo merged unit+IT coverage. All executions run only in modules that declare
+                     the plugin, and those declarations live inside each function module's
+                     integration-tests profile, so the plain build is never instrumented. -->
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>${jacoco.version}</version>
+                    <configuration>
+                        <excludes>
+                            <!-- AWS client wiring is exercised only against real endpoints. -->
+                            <exclude>**/config/**</exclude>
+                        </excludes>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>jacoco-unit-agent</id>
+                            <goals>
+                                <goal>prepare-agent</goal>
+                            </goals>
+                            <configuration>
+                                <destFile>${project.build.directory}/jacoco-unit.exec</destFile>
+                                <propertyName>jacocoUnitAgent</propertyName>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>jacoco-it-agent</id>
+                            <goals>
+                                <goal>prepare-agent-integration</goal>
+                            </goals>
+                            <configuration>
+                                <destFile>${project.build.directory}/jacoco-it.exec</destFile>
+                                <propertyName>jacocoItAgent</propertyName>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>jacoco-merge</id>
+                            <phase>post-integration-test</phase>
+                            <goals>
+                                <goal>merge</goal>
+                            </goals>
+                            <configuration>
+                                <fileSets>
+                                    <fileSet>
+                                        <directory>${project.build.directory}</directory>
+                                        <includes>
+                                            <include>jacoco-unit.exec</include>
+                                            <include>jacoco-it.exec</include>
+                                        </includes>
+                                    </fileSet>
+                                </fileSets>
+                                <destFile>${project.build.directory}/jacoco-merged.exec</destFile>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>jacoco-merged-report</id>
+                            <phase>post-integration-test</phase>
+                            <goals>
+                                <goal>report</goal>
+                            </goals>
+                            <configuration>
+                                <dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>jacoco-check</id>
+                            <goals>
+                                <goal>check</goal>
+                            </goals>
+                            <configuration>
+                                <dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+                                <haltOnFailure>${jacoco.check.haltOnFailure}</haltOnFailure>
+                                <rules>
+                                    <rule>
+                                        <element>BUNDLE</element>
+                                        <limits>
+                                            <limit>
+                                                <counter>LINE</counter>
+                                                <value>COVEREDRATIO</value>
+                                                <minimum>0.80</minimum>
+                                            </limit>
+                                        </limits>
+                                    </rule>
+                                </rules>
+                            </configuration>
+                        </execution>
+                    </executions>
                 </plugin>
             </plugins>
         </pluginManagement>

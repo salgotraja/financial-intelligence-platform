@@ -79,4 +79,19 @@
         </plugins>
     </build>
 
+    <profiles>
+        <!-- Merged unit+IT coverage (report + 80% line gate); config in root pluginManagement. -->
+        <profile>
+            <id>integration-tests</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
 </project>
