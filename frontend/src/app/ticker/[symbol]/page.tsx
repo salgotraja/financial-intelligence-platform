@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { AuthGate } from '@/components/auth-gate'
 import { DailyRangeChart } from '@/components/daily-range-chart'
+import { DeepAnalysisPanel } from '@/components/deep-analysis-panel'
 import { IngestButton } from '@/components/ingest-button'
 import { InsightPanel } from '@/components/insight-panel'
 import { LiveDot } from '@/components/live-dot'
@@ -145,6 +146,7 @@ const TickerView = ({ symbol }: { symbol: string }) => {
       </Card>
       {shownInsight && <InsightPanel insight={shownInsight} live={liveInsight !== null} />}
       <StoryPanel symbol={symbol} enabled={status === 'signed-in'} />
+      <DeepAnalysisPanel symbol={symbol} enabled={status === 'signed-in'} />
     </main>
   )
 }
