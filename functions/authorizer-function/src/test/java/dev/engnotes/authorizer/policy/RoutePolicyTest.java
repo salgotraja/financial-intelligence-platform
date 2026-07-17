@@ -19,6 +19,7 @@ class RoutePolicyTest {
                         "GET insights/*",
                         "GET market-data/*",
                         "GET stories/*",
+                        "GET analysis/*",
                         "GET user/consent",
                         "POST user/consent",
                         "DELETE user/consent",
@@ -36,6 +37,7 @@ class RoutePolicyTest {
                         "GET insights/*",
                         "GET market-data/*",
                         "GET stories/*",
+                        "GET analysis/*",
                         "GET watchlist",
                         "POST watchlist/*",
                         "DELETE watchlist/*",
@@ -50,7 +52,7 @@ class RoutePolicyTest {
     @Test
     void adminsGetEverything() {
         List<RoutePolicy.Rule> rules = RoutePolicy.allowedRules(Set.of("admins"));
-        assertThat(rules).hasSize(13);
+        assertThat(rules).hasSize(14);
     }
 
     @Test
