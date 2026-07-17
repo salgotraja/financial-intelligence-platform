@@ -100,11 +100,11 @@ class DailyMarketDataQueryTest {
     }
 
     @Test
-    void capsDaysAt90AndFloorsAt1() {
-        assertThat(DailyMarketDataQuery.parseDays("500")).isEqualTo(90);
+    void capsDaysAt260AndFloorsAt1() {
+        assertThat(DailyMarketDataQuery.parseDays("500")).isEqualTo(260);
         assertThat(DailyMarketDataQuery.parseDays("0")).isEqualTo(1);
         assertThat(DailyMarketDataQuery.parseDays("-5")).isEqualTo(1);
-        assertThat(DailyMarketDataQuery.parseDays("90")).isEqualTo(90);
+        assertThat(DailyMarketDataQuery.parseDays("260")).isEqualTo(260);
         assertThat(DailyMarketDataQuery.parseDays("1")).isEqualTo(1);
     }
 

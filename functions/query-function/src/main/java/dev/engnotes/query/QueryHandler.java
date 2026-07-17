@@ -2,6 +2,7 @@ package dev.engnotes.query;
 
 import dev.engnotes.query.model.DailyMarketDataRequest;
 import dev.engnotes.query.model.DailyMarketDataResponse;
+import dev.engnotes.query.model.DeepAnalysisResponse;
 import dev.engnotes.query.model.InsightFeedRequest;
 import dev.engnotes.query.model.InsightFeedResponse;
 import dev.engnotes.query.model.MarketDataResponse;
@@ -9,6 +10,7 @@ import dev.engnotes.query.model.QueryRequest;
 import dev.engnotes.query.model.QueryResponse;
 import dev.engnotes.query.model.StoryResponse;
 import dev.engnotes.query.service.DailyMarketDataQuery;
+import dev.engnotes.query.service.DeepAnalysisService;
 import dev.engnotes.query.service.InsightFeedQuery;
 import dev.engnotes.query.service.InsightQuery;
 import dev.engnotes.query.service.MarketDataQuery;
@@ -85,7 +87,7 @@ public class QueryHandler {
         };
     }
 
-    /** Returns daily OHLCV rollups for the requested ticker (newest first, capped at 90 days). */
+    /** Returns daily OHLCV rollups for the requested ticker (newest first, capped at 260 days). */
     @Bean
     public Function<DailyMarketDataRequest, DailyMarketDataResponse> serveDailyMarketData(
             DailyMarketDataQuery dailyMarketDataQuery) {
@@ -128,6 +130,28 @@ public class QueryHandler {
                     ticker,
                     response.inputs().days(),
                     response.inputs().insightCount(),
+                    correlationId);
+
+            return response;
+        };
+    }
+
+    /** Returns the deterministic multi-horizon deep analysis for the requested ticker. */
+    @Bean
+    public Function<QueryRequest, DeepAnalysisResponse> serveDeepAnalysis(DeepAnalysisService deepAnalysisService) {
+        return request -> {
+            String ticker = request.ticker();
+            String correlationId = request.correlationId();
+
+            log.info("Serving deep analysis. ticker={} correlationId={}", ticker, correlationId);
+
+            DeepAnalysisResponse response = deepAnalysisService.analyze(ticker);
+
+            log.info(
+                    "Deep analysis complete. ticker={} found={} horizons={} correlationId={}",
+                    ticker,
+                    response.found(),
+                    response.horizons().size(),
                     correlationId);
 
             return response;

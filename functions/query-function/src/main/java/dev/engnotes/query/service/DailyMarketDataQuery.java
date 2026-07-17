@@ -37,7 +37,7 @@ public class DailyMarketDataQuery {
 
     static final int DEFAULT_DAYS = 30;
     static final int MIN_DAYS = 1;
-    static final int MAX_DAYS = 90;
+    static final int MAX_DAYS = 260;
 
     private final DynamoDbClient dynamoDb;
     private final String platformTable;
@@ -48,8 +48,7 @@ public class DailyMarketDataQuery {
         this.platformTable = platformTable;
     }
 
-    // Invariant: 90 DAY# items fit one DynamoDB Query page at current item sizes; item growth past
-    // ~11KB average would silently truncate results below the requested days.
+    // Invariant: 260 DAY# items fit one DynamoDB Query page at the projected item size below.
     public DailyMarketDataResponse findDailyPoints(String rawTicker, String rawDays) {
         String ticker = Tickers.validated(rawTicker);
         int days = parseDays(rawDays);
@@ -62,6 +61,16 @@ public class DailyMarketDataQuery {
                         ":sk", AttributeValue.builder().s("DAY#").build()))
                 .scanIndexForward(false) // newest trading day first
                 .limit(days)
+                // Everything toDailyPoint reads, and nothing else — crucially NOT `series`, whose
+                // intraday points dominate item size. 260 projected rows are a few hundred bytes
+                // each and fit one query page, preserving the single-page invariant at the new cap.
+                .projectionExpression("#day, SK, #open, #high, #low, #close, previousClose, volume")
+                .expressionAttributeNames(Map.of(
+                        "#day", "day",
+                        "#open", "open",
+                        "#high", "high",
+                        "#low", "low",
+                        "#close", "close"))
                 .build();
 
         List<Map<String, AttributeValue>> items = dynamoDb.query(request).items();
