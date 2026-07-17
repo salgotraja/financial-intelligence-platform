@@ -31,6 +31,11 @@ describe('fetchDaysForRange', () => {
     expect(fetchDaysForRange('1W')).toBe(10)
     expect(fetchDaysForRange('1M')).toBe(30)
   })
+
+  it('requests 90 days for 3M and 260 days for 1Y', () => {
+    expect(fetchDaysForRange('3M')).toBe(90)
+    expect(fetchDaysForRange('1Y')).toBe(260)
+  })
 })
 
 describe('dailySeriesForRange', () => {
@@ -62,6 +67,14 @@ describe('dailySeriesForRange', () => {
 
   it('returns an empty series for no data', () => {
     expect(dailySeriesForRange([], '1W')).toEqual([])
+  })
+
+  it('slices to the last 66 trading days for 3M when sufficient data exists', () => {
+    const ninetyDays = Array.from({ length: 90 }, (_, i) => day(`2026-${String(90 - i).padStart(3, '0')}`, 100 + i))
+    const series = dailySeriesForRange(ninetyDays, '3M')
+    expect(series).toHaveLength(66)
+    expect(series[0]).toEqual({ time: '2026-025', price: 165 })
+    expect(series.at(-1)).toEqual({ time: '2026-090', price: 100 })
   })
 })
 

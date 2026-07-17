@@ -62,6 +62,22 @@ describe('DailyRangeChart', () => {
     await waitFor(() => expect(getDailyMarketData).toHaveBeenCalledWith('X', 30))
   })
 
+  it('requests 90 days for 3M', async () => {
+    getDailyMarketData.mockResolvedValue({ ticker: 'X', found: true, days: [] })
+
+    render(<DailyRangeChart symbol="X" range="3M" enabled PriceChart={StubPriceChart} />)
+
+    await waitFor(() => expect(getDailyMarketData).toHaveBeenCalledWith('X', 90))
+  })
+
+  it('requests 260 days for 1Y', async () => {
+    getDailyMarketData.mockResolvedValue({ ticker: 'X', found: true, days: [] })
+
+    render(<DailyRangeChart symbol="X" range="1Y" enabled PriceChart={StubPriceChart} />)
+
+    await waitFor(() => expect(getDailyMarketData).toHaveBeenCalledWith('X', 260))
+  })
+
   it('passes an empty series (empty-state territory) when fewer than 2 daily points exist', async () => {
     getDailyMarketData.mockResolvedValue({
       ticker: 'X',
