@@ -1,5 +1,6 @@
 package dev.engnotes.query.service;
 
+import dev.engnotes.query.model.DeepAnalysisResponse;
 import dev.engnotes.query.model.FeedInsight;
 import dev.engnotes.query.model.MarketDataPoint;
 import dev.engnotes.query.model.StoryInputs;
@@ -34,6 +35,7 @@ public class StoryQuery {
     private final InsightFeedQuery insightFeedQuery;
     private final MarketDataQuery marketDataQuery;
     private final StoryComposer storyComposer;
+    private final DeepAnalysisService deepAnalysisService;
     private final Clock clock;
 
     public StoryQuery(
@@ -41,11 +43,13 @@ public class StoryQuery {
             InsightFeedQuery insightFeedQuery,
             MarketDataQuery marketDataQuery,
             StoryComposer storyComposer,
+            DeepAnalysisService deepAnalysisService,
             Clock clock) {
         this.dailyMarketDataQuery = dailyMarketDataQuery;
         this.insightFeedQuery = insightFeedQuery;
         this.marketDataQuery = marketDataQuery;
         this.storyComposer = storyComposer;
+        this.deepAnalysisService = deepAnalysisService;
         this.clock = clock;
     }
 
@@ -56,8 +60,9 @@ public class StoryQuery {
         Optional<FeedInsight> insight = insightFeedQuery.latestForTicker(ticker);
         Optional<MarketDataPoint> latestPoint = marketDataQuery.findLatestPoint(ticker);
 
+        DeepAnalysisResponse analysis = deepAnalysisService.analyze(ticker);
         StoryComposer.Composition composition =
-                storyComposer.compose(ticker, dailyResponse.days(), insight, latestPoint);
+                storyComposer.compose(ticker, dailyResponse.days(), insight, latestPoint, analysis);
         StoryInputs inputs = new StoryInputs(dailyResponse.days().size(), insight.isPresent() ? 1 : 0);
 
         log.info(

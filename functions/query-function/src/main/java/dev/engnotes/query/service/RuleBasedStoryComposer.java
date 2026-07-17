@@ -1,7 +1,9 @@
 package dev.engnotes.query.service;
 
 import dev.engnotes.query.model.DailyPoint;
+import dev.engnotes.query.model.DeepAnalysisResponse;
 import dev.engnotes.query.model.FeedInsight;
+import dev.engnotes.query.model.HorizonStats;
 import dev.engnotes.query.model.MarketDataPoint;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -41,12 +43,15 @@ public class RuleBasedStoryComposer implements StoryComposer {
             String ticker,
             List<DailyPoint> days,
             Optional<FeedInsight> insight,
-            Optional<MarketDataPoint> latestPoint) {
+            Optional<MarketDataPoint> latestPoint,
+            DeepAnalysisResponse analysis) {
         List<String> sentences = new ArrayList<>();
         trendSentence(ticker, days).ifPresent(sentences::add);
         notableDaySentence(days).ifPresent(sentences::add);
         volumeSentence(days).ifPresent(sentences::add);
         insight.flatMap(RuleBasedStoryComposer::insightSentence).ifPresent(sentences::add);
+        horizonContextSentence(ticker, analysis).ifPresent(sentences::add);
+        bandSentence(analysis).ifPresent(sentences::add);
 
         if (sentences.isEmpty()) {
             return new Composition(
@@ -160,6 +165,49 @@ public class RuleBasedStoryComposer implements StoryComposer {
         }
         return Optional.of("The latest insight signals " + insight.signal() + ": " + rationale + " (" + driverCount
                 + " " + driverWord + ").");
+    }
+
+    // Quarter/year framing from the analysis pack. Only NON-partial horizons speak: a horizon
+    // computed over thin history would state a figure the window cannot support.
+    private static Optional<String> horizonContextSentence(String ticker, DeepAnalysisResponse analysis) {
+        if (analysis == null || !analysis.found()) {
+            return Optional.empty();
+        }
+        Optional<HorizonStats> quarter = fullHorizon(analysis, "3M");
+        Optional<HorizonStats> year = fullHorizon(analysis, "1Y");
+        if (quarter.isPresent() && year.isPresent()) {
+            return Optional.of("Over the past quarter " + ticker + " is " + direction(quarter.get())
+                    + "; over the year, " + direction(year.get()) + ".");
+        }
+        return quarter.map(h -> "Over the past quarter " + ticker + " is " + direction(h) + ".")
+                .or(() -> year.map(h -> "Over the past year " + ticker + " is " + direction(h) + "."));
+    }
+
+    private static Optional<HorizonStats> fullHorizon(DeepAnalysisResponse analysis, String key) {
+        return analysis.horizons().stream()
+                .filter(h -> key.equals(h.key()) && !h.partial() && h.returnPercent() != null)
+                .findFirst();
+    }
+
+    private static String direction(HorizonStats horizon) {
+        BigDecimal pct = horizon.returnPercent();
+        if (pct.signum() == 0) {
+            return "flat";
+        }
+        return (pct.signum() > 0 ? "up " : "down ") + display(pct.abs()) + "%";
+    }
+
+    // 52-week band position in thirds; silent when the band could not be established.
+    private static Optional<String> bandSentence(DeepAnalysisResponse analysis) {
+        if (analysis == null || !analysis.found() || analysis.band52w() == null) {
+            return Optional.empty();
+        }
+        BigDecimal position = analysis.band52w().bandPositionPercent();
+        if (position == null) {
+            return Optional.empty();
+        }
+        String third = position.doubleValue() >= 66.67 ? "upper" : position.doubleValue() <= 33.33 ? "lower" : "middle";
+        return Optional.of("It trades in the " + third + " third of its 52-week range.");
     }
 
     private static BigDecimal percentChange(BigDecimal current, BigDecimal base) {

@@ -1,6 +1,7 @@
 package dev.engnotes.query.service;
 
 import dev.engnotes.query.model.DailyPoint;
+import dev.engnotes.query.model.DeepAnalysisResponse;
 import dev.engnotes.query.model.FeedInsight;
 import dev.engnotes.query.model.MarketDataPoint;
 import java.util.List;
@@ -26,8 +27,14 @@ public interface StoryComposer {
      * @param days up to 7 daily rollups, newest first (may be empty)
      * @param insight the ticker's latest insight, group-aware, if one exists
      * @param latestPoint the ticker's latest stored price point, if one exists
+     * @param analysis the multi-horizon stats pack, or null/not-found when history is absent; the
+     *     composer must degrade to the existing four sentences
      * @return a deterministic multi-sentence story and its found flag
      */
     Composition compose(
-            String ticker, List<DailyPoint> days, Optional<FeedInsight> insight, Optional<MarketDataPoint> latestPoint);
+            String ticker,
+            List<DailyPoint> days,
+            Optional<FeedInsight> insight,
+            Optional<MarketDataPoint> latestPoint,
+            DeepAnalysisResponse analysis);
 }
