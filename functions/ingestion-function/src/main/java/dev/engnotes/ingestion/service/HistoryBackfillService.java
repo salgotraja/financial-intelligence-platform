@@ -56,6 +56,8 @@ public class HistoryBackfillService {
             putNumber(item, "high", bar.high());
             putNumber(item, "low", bar.low());
             putNumber(item, "close", bar.close());
+            // Intentionally omit previousClose: readers compute close-to-close returns; the
+            // notable-day story sentence skips rows without it.
             if (bar.volume() != null) {
                 item.put(
                         "volume",
