@@ -1,6 +1,7 @@
 package dev.engnotes.query.service;
 
 import dev.engnotes.query.model.Band52w;
+import dev.engnotes.query.model.DailyMarketDataResponse;
 import dev.engnotes.query.model.DailyPoint;
 import dev.engnotes.query.model.DayMove;
 import dev.engnotes.query.model.DeepAnalysisResponse;
@@ -52,14 +53,15 @@ public class DeepAnalysisService {
     }
 
     /**
-     * Fetches the latest TS# point itself with the canonical ticker (mirrors the fetch band52w
-     * used to do), then delegates. Used by the {@code serveDeepAnalysis} bean, which has no
-     * pre-fetched point to hand in.
+     * Fetches dailies once, then the latest TS# point itself with the canonical ticker (mirrors
+     * the fetch band52w used to do) - skipped when there's no history to analyze. Used by the
+     * {@code serveDeepAnalysis} bean, which has no pre-fetched point to hand in.
      */
     public DeepAnalysisResponse analyze(String rawTicker) {
         var daily = dailyMarketDataQuery.findDailyPoints(rawTicker, FETCH_DAYS);
-        Optional<MarketDataPoint> latestPoint = marketDataQuery.findLatestPoint(daily.ticker());
-        return analyze(daily.ticker(), latestPoint);
+        Optional<MarketDataPoint> latestPoint =
+                daily.found() ? marketDataQuery.findLatestPoint(daily.ticker()) : Optional.empty();
+        return analyze(daily, latestPoint);
     }
 
     /**
@@ -68,6 +70,10 @@ public class DeepAnalysisService {
      */
     public DeepAnalysisResponse analyze(String rawTicker, Optional<MarketDataPoint> latestPoint) {
         var daily = dailyMarketDataQuery.findDailyPoints(rawTicker, FETCH_DAYS);
+        return analyze(daily, latestPoint);
+    }
+
+    private DeepAnalysisResponse analyze(DailyMarketDataResponse daily, Optional<MarketDataPoint> latestPoint) {
         String ticker = daily.ticker();
         String generatedAt = Instant.now(clock).toString();
         if (!daily.found()) {
