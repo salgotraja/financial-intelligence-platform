@@ -90,11 +90,18 @@ const BandBar = ({ band }: { band: Band52w }) => {
         <span>52-week range</span>
         <span>{band.high ?? '–'}</span>
       </div>
-      <div className="relative h-1.5 rounded-full bg-muted">
+      <div
+        className="relative h-1.5 rounded-full bg-muted"
+        role="meter"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={position}
+        aria-label="52-week range position"
+      >
         <div
           className="absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-primary"
           style={{ left: `${position}%` }}
-          aria-label={`current price at ${position.toFixed(0)}% of the 52-week range`}
+          aria-hidden="true"
         />
       </div>
     </div>
