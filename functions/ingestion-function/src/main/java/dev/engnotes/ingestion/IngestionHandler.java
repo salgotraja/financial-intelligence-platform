@@ -9,6 +9,7 @@ import dev.engnotes.ingestion.service.MarketDataStoreService;
 import dev.engnotes.ingestion.service.MarketHours;
 import dev.engnotes.ingestion.validation.TickerValidator;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -109,8 +110,10 @@ public class IngestionHandler {
      * PK=WATCHSET, filtered by the event-source mapping in IngestionStack) and fills a year of
      * DAY# history for each newly watched ticker. Untyped map in/out, like the other stream and
      * Cognito consumers: the event shape is AWS's, not ours. Per-record failures are logged and
-     * skipped so one bad ticker cannot poison the batch (the mapping's bounded retries would
-     * otherwise re-run the whole batch forever).
+     * every ticker in the batch is still attempted, but if any ticker failed the bean rethrows
+     * after the loop so the mapping's bounded retries (IngestionStack retryAttempts(2)) actually
+     * retry the batch: the backfill is idempotent (conditional puts), so retrying an
+     * already-succeeded ticker is just a fetch-and-skip no-op.
      */
     @Bean
     public Function<Map<String, Object>, Map<String, Object>> backfillDailyHistory(
@@ -119,6 +122,7 @@ public class IngestionHandler {
             int processed = 0;
             int written = 0;
             int skipped = 0;
+            List<String> failedTickers = new ArrayList<>();
             for (Object recordObj : records(event)) {
                 String ticker = newImageTicker(recordObj);
                 if (ticker == null || ticker.isBlank()) {
@@ -134,7 +138,12 @@ public class IngestionHandler {
                             "History backfill failed for one ticker, continuing. ticker={} error={}",
                             sanitizeForLog(ticker),
                             e.toString());
+                    failedTickers.add(sanitizeForLog(ticker));
                 }
+            }
+            if (!failedTickers.isEmpty()) {
+                throw new RuntimeException(
+                        "Backfill batch had %d failed ticker(s): %s".formatted(failedTickers.size(), failedTickers));
             }
             log.info("Backfill batch complete. processed={} written={} skipped={}", processed, written, skipped);
             return Map.of("processed", processed, "written", written, "skipped", skipped);
