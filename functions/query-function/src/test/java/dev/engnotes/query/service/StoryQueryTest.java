@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -66,7 +67,7 @@ class StoryQueryTest {
         MarketDataPoint latest = new MarketDataPoint("2026-07-14T09:55:00Z", null, null, null, null, null, null, null);
         when(marketDataQuery.findLatestPoint("RELIANCE.NS")).thenReturn(Optional.of(latest));
         DeepAnalysisResponse analysis = DeepAnalysisResponse.notFound("RELIANCE.NS", FIXED_NOW.toString());
-        when(deepAnalysisService.analyze("RELIANCE.NS")).thenReturn(analysis);
+        when(deepAnalysisService.analyze("RELIANCE.NS", Optional.of(latest))).thenReturn(analysis);
         when(storyComposer.compose(
                         eq("RELIANCE.NS"), eq(days), eq(Optional.of(insight)), eq(Optional.of(latest)), eq(analysis)))
                 .thenReturn(new Composition("a composed story", true));
@@ -80,6 +81,7 @@ class StoryQueryTest {
         assertThat(response.inputs().days()).isEqualTo(1);
         assertThat(response.inputs().insightCount()).isEqualTo(1);
         assertThat(response.found()).isTrue();
+        verify(marketDataQuery, times(1)).findLatestPoint("RELIANCE.NS");
     }
 
     @Test
@@ -91,7 +93,7 @@ class StoryQueryTest {
                 .thenReturn(new DailyMarketDataResponse("^NSEI", List.of(), false));
         when(insightFeedQuery.latestForTicker("^NSEI")).thenReturn(Optional.empty());
         when(marketDataQuery.findLatestPoint("^NSEI")).thenReturn(Optional.empty());
-        when(deepAnalysisService.analyze("^NSEI"))
+        when(deepAnalysisService.analyze("^NSEI", Optional.empty()))
                 .thenReturn(DeepAnalysisResponse.notFound("^NSEI", FIXED_NOW.toString()));
         when(storyComposer.compose(eq("^NSEI"), anyList(), any(), any(), any()))
                 .thenReturn(new Composition("fallback", false));
@@ -101,6 +103,7 @@ class StoryQueryTest {
         assertThat(response.ticker()).isEqualTo("^NSEI");
         verify(insightFeedQuery).latestForTicker("^NSEI");
         verify(insightFeedQuery, never()).latestForTicker("%5ENSEI");
+        verify(marketDataQuery, times(1)).findLatestPoint("^NSEI");
     }
 
     @Test
@@ -109,7 +112,7 @@ class StoryQueryTest {
                 .thenReturn(DailyMarketDataResponse.notFound("NEWTICKER"));
         when(insightFeedQuery.latestForTicker("NEWTICKER")).thenReturn(Optional.empty());
         when(marketDataQuery.findLatestPoint("NEWTICKER")).thenReturn(Optional.empty());
-        when(deepAnalysisService.analyze("NEWTICKER"))
+        when(deepAnalysisService.analyze("NEWTICKER", Optional.empty()))
                 .thenReturn(DeepAnalysisResponse.notFound("NEWTICKER", FIXED_NOW.toString()));
         when(storyComposer.compose(eq("NEWTICKER"), eq(List.of()), eq(Optional.empty()), eq(Optional.empty()), any()))
                 .thenReturn(new Composition(
@@ -123,5 +126,6 @@ class StoryQueryTest {
         assertThat(response.story())
                 .isEqualTo("Not enough history yet for NEWTICKER; the story builds as market sessions accumulate.");
         assertThat(response.found()).isFalse();
+        verify(marketDataQuery, times(1)).findLatestPoint("NEWTICKER");
     }
 }

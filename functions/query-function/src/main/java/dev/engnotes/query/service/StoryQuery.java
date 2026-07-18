@@ -60,7 +60,7 @@ public class StoryQuery {
         Optional<FeedInsight> insight = insightFeedQuery.latestForTicker(ticker);
         Optional<MarketDataPoint> latestPoint = marketDataQuery.findLatestPoint(ticker);
 
-        DeepAnalysisResponse analysis = deepAnalysisService.analyze(ticker);
+        DeepAnalysisResponse analysis = deepAnalysisService.analyze(ticker, latestPoint);
         StoryComposer.Composition composition =
                 storyComposer.compose(ticker, dailyResponse.days(), insight, latestPoint, analysis);
         StoryInputs inputs = new StoryInputs(dailyResponse.days().size(), insight.isPresent() ? 1 : 0);
