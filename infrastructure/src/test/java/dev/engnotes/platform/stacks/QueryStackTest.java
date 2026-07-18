@@ -119,10 +119,11 @@ class QueryStackTest {
                 .filter(body -> body.contains("$input.params('ticker')"))
                 .toList();
         assertEquals(
-                7,
+                8,
                 tickerTemplates.size(),
-                "expected 7 ticker-interpolating request templates (insight GET, market-data GET,"
-                        + " market-data daily GET, stories GET, watchlist POST/DELETE, ingest POST)");
+                "expected 8 ticker-interpolating request templates (insight GET, market-data GET,"
+                        + " market-data daily GET, stories GET, analysis GET, watchlist POST/DELETE, ingest"
+                        + " POST)");
         for (var body : tickerTemplates) {
             var unescapedRemainder = body.replace("$util.escapeJavaScript($input.params('ticker'))", "");
             assertFalse(
@@ -324,6 +325,20 @@ class QueryStackTest {
                                         Match.objectLike(Map.of("SPRING_CLOUD_FUNCTION_DEFINITION", "serveStory")))))));
     }
 
+    @Test
+    void hasAnalysisLambdaServingServeDeepAnalysis() {
+        synth().hasResourceProperties(
+                        "AWS::Lambda::Function",
+                        Match.objectLike(Map.of(
+                                "FunctionName",
+                                "financial-analysis-dev",
+                                "Environment",
+                                Match.objectLike(Map.of(
+                                        "Variables",
+                                        Match.objectLike(
+                                                Map.of("SPRING_CLOUD_FUNCTION_DEFINITION", "serveDeepAnalysis")))))));
+    }
+
     // The OPTIONS preflight response carries Access-Control-Allow-Origin (CDK's
     // defaultCorsPreflightOptions handles that), but browsers also read the header off the actual
     // GET/POST/DELETE response. Non-proxy integrations never emit it unless every IntegrationResponse
@@ -444,9 +459,10 @@ class QueryStackTest {
                 .filter(p -> !requestTemplateBody(p).contains("\"days\""))
                 .toList();
         assertEquals(
-                3,
+                4,
                 methods.size(),
-                "expected /insights/{ticker}, /market-data/{ticker}, and /stories/{ticker} GET methods");
+                "expected /insights/{ticker}, /market-data/{ticker}, /stories/{ticker}, and"
+                        + " /analysis/{ticker} GET methods");
         for (var props : methods) {
             var integration = (Map<String, Object>) props.get("Integration");
             var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");

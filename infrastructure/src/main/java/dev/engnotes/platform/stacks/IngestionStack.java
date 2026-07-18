@@ -19,6 +19,7 @@ import software.amazon.awscdk.services.events.targets.SfnStateMachine;
 import software.amazon.awscdk.services.iam.*;
 import software.amazon.awscdk.services.lambda.*;
 import software.amazon.awscdk.services.lambda.Runtime;
+import software.amazon.awscdk.services.lambda.eventsources.DynamoEventSource;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.LogGroupProps;
 import software.amazon.awscdk.services.logs.RetentionDays;
@@ -290,6 +291,58 @@ public class IngestionStack extends Stack {
                         .retryAttempts(2)
                         .build()))
                 .build();
+
+        // Watchlist-add history backfill: a year of daily bars written as DAY# items the first
+        // time a ticker enters the WATCHSET. Triggered by the platform table's NEW_IMAGE stream,
+        // filtered to WATCHSET INSERTs so watch adds (rare) invoke it and market-data volume
+        // never does. This is the stream's SECOND consumer (the notifier is the first) — DynamoDB
+        // streams support at most two; a third needs a fan-out redesign.
+        Map<String, String> backfillEnv = OrderedMap.of(
+                commonEnvVars,
+                Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "backfillDailyHistory"),
+                Map.entry("MAIN_CLASS", "dev.engnotes.ingestion.IngestionHandler"));
+
+        Function historyBackfillFn = Function.Builder.create(this, "HistoryBackfillFn")
+                .functionName("financial-history-backfill-" + env)
+                .description("Backfills a year of daily rollups when a ticker joins the watchset")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker")
+                .code(Code.fromAsset("../functions/ingestion-function/target/ingestion-function.jar"))
+                .role(ingestionRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(60))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(backfillEnv)
+                .vpc(network.getVpc())
+                .build();
+
+        Alias historyBackfillAlias = Alias.Builder.create(this, "HistoryBackfillAlias")
+                .aliasName("live")
+                .version(historyBackfillFn.getCurrentVersion())
+                .build();
+
+        LogGroup.Builder.create(this, "HistoryBackfillLogs")
+                .logGroupName("/aws/lambda/" + historyBackfillFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
+        // Small batches (watch adds arrive one at a time) and bounded retries: a poison record
+        // must not block the shard. These retries only cover batch-level crashes (e.g. the bean
+        // throwing before per-ticker processing) — a per-ticker Yahoo fetch failure is caught and
+        // logged inside the bean, so it never triggers a mapping retry; the sweep script re-covers
+        // any missed ticker instead.
+        historyBackfillAlias.addEventSource(DynamoEventSource.Builder.create(data.getPlatformTable())
+                .startingPosition(StartingPosition.LATEST)
+                .batchSize(5)
+                .retryAttempts(2)
+                .filters(List.of(FilterCriteria.filter(OrderedMap.of(
+                        Map.entry("eventName", FilterRule.isEqual("INSERT")),
+                        Map.entry(
+                                "dynamodb",
+                                Map.of("Keys", Map.of("PK", Map.of("S", FilterRule.isEqual("WATCHSET")))))))))
+                .build());
 
         // == Step Functions Workflow ==
         // Retry: 3 attempts, 2s base, 2x backoff, full jitter (per requirement.md).

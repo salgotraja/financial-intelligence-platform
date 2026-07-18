@@ -10,12 +10,15 @@ import static org.mockito.Mockito.when;
 import dev.engnotes.ingestion.model.MarketDataRequest;
 import dev.engnotes.ingestion.model.MarketDataResponse;
 import dev.engnotes.ingestion.service.AnomalyDetectionService;
+import dev.engnotes.ingestion.service.HistoryBackfillService;
 import dev.engnotes.ingestion.service.MarketDataFetchService;
 import dev.engnotes.ingestion.service.MarketDataStoreService;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,6 +42,9 @@ class IngestionHandlerTest {
 
     @Mock
     private MarketDataStoreService storeService;
+
+    @Mock
+    private HistoryBackfillService backfillService;
 
     private final IngestionHandler handler = new IngestionHandler();
 
@@ -138,6 +144,56 @@ class IngestionHandlerTest {
         assertThat(result.anomaly()).isTrue();
         assertThat(result.anomalyReason()).isEqualTo("on-demand refresh");
         verify(storeService).store(any(MarketDataResponse.class), eq("corr-5"));
+    }
+
+    @Test
+    void backfillBeanProcessesStreamRecordsAndAggregates() {
+        when(backfillService.backfill("INFY.NS", "stream-backfill"))
+                .thenReturn(new HistoryBackfillService.BackfillResult("INFY.NS", 240, 5));
+        var bean = handler.backfillDailyHistory(backfillService);
+
+        Map<String, Object> event = Map.of(
+                "Records",
+                List.of(Map.of(
+                        "eventName",
+                        "INSERT",
+                        "dynamodb",
+                        Map.of(
+                                "NewImage",
+                                Map.of(
+                                        "PK", Map.of("S", "WATCHSET"),
+                                        "SK", Map.of("S", "TICKER#INFY.NS"),
+                                        "ticker", Map.of("S", "INFY.NS"))))));
+
+        Map<String, Object> summary = bean.apply(event);
+
+        assertThat(summary)
+                .containsEntry("processed", 1)
+                .containsEntry("written", 240)
+                .containsEntry("skipped", 5);
+    }
+
+    @Test
+    void backfillBeanSkipsMalformedRecordsAndSurvivesPerTickerFailures() {
+        when(backfillService.backfill("TCS.NS", "stream-backfill")).thenThrow(new RuntimeException("yahoo 429"));
+        var bean = handler.backfillDailyHistory(backfillService);
+
+        Map<String, Object> event = Map.of(
+                "Records",
+                List.of(
+                        Map.of("eventName", "INSERT"), // no dynamodb block: skipped silently
+                        Map.of(
+                                "eventName",
+                                "INSERT",
+                                "dynamodb",
+                                Map.of("NewImage", Map.of("ticker", Map.of("S", "TCS.NS"))))));
+
+        Map<String, Object> summary = bean.apply(event);
+
+        assertThat(summary)
+                .containsEntry("processed", 1)
+                .containsEntry("written", 0)
+                .containsEntry("skipped", 0);
     }
 
     private static MarketDataResponse.Builder base() {

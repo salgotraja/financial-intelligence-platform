@@ -2,8 +2,11 @@ package dev.engnotes.query.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.engnotes.query.model.Band52w;
 import dev.engnotes.query.model.DailyPoint;
+import dev.engnotes.query.model.DeepAnalysisResponse;
 import dev.engnotes.query.model.FeedInsight;
+import dev.engnotes.query.model.HorizonStats;
 import dev.engnotes.query.model.MarketDataPoint;
 import dev.engnotes.query.service.StoryComposer.Composition;
 import java.math.BigDecimal;
@@ -48,7 +51,7 @@ class RuleBasedStoryComposerTest {
     @Test
     void richFixtureProducesAllFourSentencesAndFoundTrue() {
         Composition composition =
-                composer.compose(TICKER, richWeek(), Optional.of(ungroupedInsight()), Optional.empty());
+                composer.compose(TICKER, richWeek(), Optional.of(ungroupedInsight()), Optional.empty(), null);
 
         assertThat(composition.story())
                 .isEqualTo("RELIANCE.NS is up 10.00% over the past 7 sessions."
@@ -64,7 +67,7 @@ class RuleBasedStoryComposerTest {
                 point("2026-07-14", "52", "50", 500_000L),
                 new DailyPoint("2026-07-13", null, null, null, new BigDecimal("50"), null, 400_000L));
 
-        Composition composition = composer.compose(TICKER, sparse, Optional.empty(), Optional.empty());
+        Composition composition = composer.compose(TICKER, sparse, Optional.empty(), Optional.empty(), null);
 
         assertThat(composition.story())
                 .isEqualTo("RELIANCE.NS is up 4.00% over the past 2 sessions."
@@ -75,7 +78,7 @@ class RuleBasedStoryComposerTest {
 
     @Test
     void noInsightOmitsTheInsightSentenceOnly() {
-        Composition composition = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty());
+        Composition composition = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), null);
 
         assertThat(composition.story())
                 .isEqualTo("RELIANCE.NS is up 10.00% over the past 7 sessions."
@@ -90,7 +93,7 @@ class RuleBasedStoryComposerTest {
         MarketDataPoint livePrice =
                 new MarketDataPoint("2026-07-14T10:00:00Z", new BigDecimal("110"), null, null, null, null, null, null);
 
-        Composition composition = composer.compose(TICKER, List.of(), Optional.empty(), Optional.of(livePrice));
+        Composition composition = composer.compose(TICKER, List.of(), Optional.empty(), Optional.of(livePrice), null);
 
         assertThat(composition.story())
                 .isEqualTo("Not enough history yet for RELIANCE.NS; the story builds as market sessions accumulate.");
@@ -102,8 +105,8 @@ class RuleBasedStoryComposerTest {
         List<DailyPoint> days = richWeek();
         Optional<FeedInsight> insight = Optional.of(ungroupedInsight());
 
-        Composition first = composer.compose(TICKER, days, insight, Optional.empty());
-        Composition second = composer.compose(TICKER, days, insight, Optional.empty());
+        Composition first = composer.compose(TICKER, days, insight, Optional.empty(), null);
+        Composition second = composer.compose(TICKER, days, insight, Optional.empty(), null);
 
         assertThat(first).isEqualTo(second);
     }
@@ -120,7 +123,7 @@ class RuleBasedStoryComposerTest {
                 List.of("sector rotation"),
                 "BEDROCK");
 
-        Composition composition = composer.compose(TICKER, List.of(), Optional.of(grouped), Optional.empty());
+        Composition composition = composer.compose(TICKER, List.of(), Optional.of(grouped), Optional.empty(), null);
 
         assertThat(composition.story())
                 .isEqualTo("A cross-ticker insight covering RELIANCE.NS, TCS.NS signals BEARISH:"
@@ -138,7 +141,7 @@ class RuleBasedStoryComposerTest {
                 point("2026-07-13", "99", "98", 1_000_000L),
                 point("2026-07-12", "98", "97", 1_000_000L));
 
-        Composition composition = composer.compose(TICKER, days, Optional.empty(), Optional.empty());
+        Composition composition = composer.compose(TICKER, days, Optional.empty(), Optional.empty(), null);
 
         assertThat(composition.story()).contains("Volume is running 20.00% above its 2-day average.");
     }
@@ -150,8 +153,63 @@ class RuleBasedStoryComposerTest {
                 point("2026-07-13", "99", "98", 1_000_000L),
                 point("2026-07-12", "98", "97", 1_000_000L));
 
-        Composition composition = composer.compose(TICKER, days, Optional.empty(), Optional.empty());
+        Composition composition = composer.compose(TICKER, days, Optional.empty(), Optional.empty(), null);
 
         assertThat(composition.story()).contains("Volume is running 20.00% below its 2-day average.");
+    }
+
+    private static DeepAnalysisResponse analysisWithQuarterYearAndBand() {
+        HorizonStats quarter = new HorizonStats(
+                "3M", 67, false, new BigDecimal("12.50"), null, null, null, null, null, null, 40, 26, null, null);
+        HorizonStats year = new HorizonStats(
+                "1Y", 251, false, new BigDecimal("28.30"), null, null, null, null, null, null, 150, 100, null, null);
+        HorizonStats week = new HorizonStats(
+                "1W", 6, false, new BigDecimal("1.10"), null, null, null, null, null, null, 3, 2, null, null);
+        HorizonStats month = new HorizonStats(
+                "1M", 23, false, new BigDecimal("4.00"), null, null, null, null, null, null, 12, 10, null, null);
+        Band52w band =
+                new Band52w(new BigDecimal("130"), new BigDecimal("90"), new BigDecimal("75.00"), "HIGH_LOW_52W");
+        return new DeepAnalysisResponse(
+                TICKER, "2026-07-17T10:00:00Z", List.of(week, month, quarter, year), band, true);
+    }
+
+    @Test
+    void analysisPackAddsQuarterYearAndBandSentences() {
+        Composition composition = composer.compose(
+                TICKER, richWeek(), Optional.empty(), Optional.empty(), analysisWithQuarterYearAndBand());
+
+        assertThat(composition.story())
+                .contains("Over the past quarter " + TICKER + " is up 12.50%; over the year, up 28.30%.")
+                .contains("It trades in the upper third of its 52-week range.");
+        assertThat(composition.found()).isTrue();
+    }
+
+    @Test
+    void derived1YBandWithPartialYearHorizonAddsNoBandSentence() {
+        HorizonStats partialYear = new HorizonStats(
+                "1Y", 90, true, new BigDecimal("28.30"), null, null, null, null, null, null, 50, 40, null, null);
+        Band52w derivedBand =
+                new Band52w(new BigDecimal("130"), new BigDecimal("90"), new BigDecimal("75.00"), "DERIVED_1Y");
+        var withBand =
+                new DeepAnalysisResponse(TICKER, "2026-07-17T10:00:00Z", List.of(partialYear), derivedBand, true);
+        var withoutBand = new DeepAnalysisResponse(TICKER, "2026-07-17T10:00:00Z", List.of(partialYear), null, true);
+
+        Composition composition = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), withBand);
+        Composition baseline = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), withoutBand);
+
+        assertThat(composition.story()).doesNotContain("52-week range");
+        assertThat(composition.story()).isEqualTo(baseline.story());
+    }
+
+    @Test
+    void partialHorizonsAndMissingBandAddNoSentences() {
+        HorizonStats partialQuarter = new HorizonStats(
+                "3M", 6, true, new BigDecimal("6.00"), null, null, null, null, null, null, 3, 2, null, null);
+        var analysis = new DeepAnalysisResponse(TICKER, "2026-07-17T10:00:00Z", List.of(partialQuarter), null, true);
+
+        Composition withPack = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), analysis);
+        Composition withoutPack = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), null);
+
+        assertThat(withPack.story()).isEqualTo(withoutPack.story()); // partial data adds nothing
     }
 }

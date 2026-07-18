@@ -140,4 +140,32 @@ class IngestionStackTest {
                     "expected only dynamodb/kms/xray actions on the correlations role, found: " + action);
         }
     }
+
+    @Test
+    void historyBackfillFunctionSelectsTheBackfillBean() {
+        synth().hasResourceProperties(
+                        "AWS::Lambda::Function",
+                        Match.objectLike(Map.of(
+                                "FunctionName",
+                                "financial-history-backfill-dev",
+                                "Environment",
+                                Map.of(
+                                        "Variables",
+                                        Match.objectLike(Map.of(
+                                                "SPRING_CLOUD_FUNCTION_DEFINITION", "backfillDailyHistory",
+                                                "MAIN_CLASS", "dev.engnotes.ingestion.IngestionHandler"))))));
+    }
+
+    @Test
+    void historyBackfillConsumesOnlyWatchsetInsertEventsFromTheTableStream() {
+        var pkIsWatchset = Map.of("S", List.of("WATCHSET"));
+        var expectedPattern =
+                Map.of("eventName", List.of("INSERT"), "dynamodb", Map.of("Keys", Map.of("PK", pkIsWatchset)));
+
+        synth().hasResourceProperties(
+                        "AWS::Lambda::EventSourceMapping",
+                        Match.objectLike(Map.of(
+                                "FilterCriteria",
+                                Map.of("Filters", List.of(Map.of("Pattern", Match.serializedJson(expectedPattern)))))));
+    }
 }

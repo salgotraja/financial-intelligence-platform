@@ -1,14 +1,14 @@
 import type { DailyPoint, SeriesPoint } from './api'
 
-export type DailyChartRange = '1W' | '1M'
+export type DailyChartRange = '1W' | '1M' | '3M' | '1Y'
 export type ChartRange = '1D' | DailyChartRange
 
 // Trading-day window shown on the chart (and used for the weekly chip), and the `days`
 // requested from GET /market-data/{ticker}/daily: the backend Limit already counts DAY#
 // rollups (trading days, not calendar days), so 10/30 is just headroom over the window,
 // and slicing the newest-first response to the window size yields exactly that many days.
-const RANGE_TRADING_DAYS: Record<DailyChartRange, number> = { '1W': 5, '1M': 22 }
-const RANGE_FETCH_DAYS: Record<DailyChartRange, number> = { '1W': 10, '1M': 30 }
+const RANGE_TRADING_DAYS: Record<DailyChartRange, number> = { '1W': 5, '1M': 22, '3M': 66, '1Y': 250 }
+const RANGE_FETCH_DAYS: Record<DailyChartRange, number> = { '1W': 10, '1M': 30, '3M': 90, '1Y': 260 }
 
 export const WEEKLY_CHIP_FETCH_DAYS = RANGE_FETCH_DAYS['1W']
 

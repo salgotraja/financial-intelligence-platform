@@ -3,11 +3,14 @@ package dev.engnotes.ingestion;
 import dev.engnotes.ingestion.model.MarketDataRequest;
 import dev.engnotes.ingestion.model.MarketDataResponse;
 import dev.engnotes.ingestion.service.AnomalyDetectionService;
+import dev.engnotes.ingestion.service.HistoryBackfillService;
 import dev.engnotes.ingestion.service.MarketDataFetchService;
 import dev.engnotes.ingestion.service.MarketDataStoreService;
 import dev.engnotes.ingestion.service.MarketHours;
 import dev.engnotes.ingestion.validation.TickerValidator;
 import java.time.Clock;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -99,5 +102,60 @@ public class IngestionHandler {
 
             return marketData;
         };
+    }
+
+    /**
+     * Watchlist-add backfill: consumes filtered platform-table stream batches (INSERTs with
+     * PK=WATCHSET, filtered by the event-source mapping in IngestionStack) and fills a year of
+     * DAY# history for each newly watched ticker. Untyped map in/out, like the other stream and
+     * Cognito consumers: the event shape is AWS's, not ours. Per-record failures are logged and
+     * skipped so one bad ticker cannot poison the batch (the mapping's bounded retries would
+     * otherwise re-run the whole batch forever).
+     */
+    @Bean
+    public Function<Map<String, Object>, Map<String, Object>> backfillDailyHistory(
+            HistoryBackfillService backfillService) {
+        return event -> {
+            int processed = 0;
+            int written = 0;
+            int skipped = 0;
+            for (Object recordObj : records(event)) {
+                String ticker = newImageTicker(recordObj);
+                if (ticker == null || ticker.isBlank()) {
+                    continue;
+                }
+                processed++;
+                try {
+                    var result = backfillService.backfill(TickerValidator.validate(ticker), "stream-backfill");
+                    written += result.written();
+                    skipped += result.skipped();
+                } catch (RuntimeException e) {
+                    log.error(
+                            "History backfill failed for one ticker, continuing. ticker={} error={}",
+                            sanitizeForLog(ticker),
+                            e.toString());
+                }
+            }
+            log.info("Backfill batch complete. processed={} written={} skipped={}", processed, written, skipped);
+            return Map.of("processed", processed, "written", written, "skipped", skipped);
+        };
+    }
+
+    private static String sanitizeForLog(String ticker) {
+        return ticker.replaceAll("[^A-Z0-9.^-]", "_");
+    }
+
+    private static List<?> records(Map<String, Object> event) {
+        return event.get("Records") instanceof List<?> records ? records : List.of();
+    }
+
+    private static String newImageTicker(Object recordObj) {
+        return recordObj instanceof Map<?, ?> streamRecord
+                        && streamRecord.get("dynamodb") instanceof Map<?, ?> dynamodb
+                        && dynamodb.get("NewImage") instanceof Map<?, ?> newImage
+                        && newImage.get("ticker") instanceof Map<?, ?> ticker
+                        && ticker.get("S") instanceof String value
+                ? value
+                : null;
     }
 }

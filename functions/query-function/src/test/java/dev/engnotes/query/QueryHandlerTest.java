@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import dev.engnotes.query.model.DailyMarketDataRequest;
 import dev.engnotes.query.model.DailyMarketDataResponse;
 import dev.engnotes.query.model.DailyPoint;
+import dev.engnotes.query.model.DeepAnalysisResponse;
 import dev.engnotes.query.model.InsightFeedRequest;
 import dev.engnotes.query.model.InsightFeedResponse;
 import dev.engnotes.query.model.MarketDataPoint;
@@ -15,6 +16,7 @@ import dev.engnotes.query.model.QueryResponse;
 import dev.engnotes.query.model.StoryInputs;
 import dev.engnotes.query.model.StoryResponse;
 import dev.engnotes.query.service.DailyMarketDataQuery;
+import dev.engnotes.query.service.DeepAnalysisService;
 import dev.engnotes.query.service.InsightFeedQuery;
 import dev.engnotes.query.service.InsightQuery;
 import dev.engnotes.query.service.MarketDataQuery;
@@ -42,6 +44,9 @@ class QueryHandlerTest {
 
     @Mock
     private StoryQuery storyQuery;
+
+    @Mock
+    private DeepAnalysisService deepAnalysisService;
 
     @Test
     void serveInsightDelegatesToInsightQuery() {
@@ -101,6 +106,18 @@ class QueryHandlerTest {
         when(storyQuery.story("RELIANCE.NS")).thenReturn(expected);
 
         var actual = new QueryHandler().serveStory(storyQuery).apply(new QueryRequest("RELIANCE.NS", "corr-5"));
+
+        assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveDeepAnalysisDelegatesToDeepAnalysisService() {
+        DeepAnalysisResponse expected = DeepAnalysisResponse.notFound("RELIANCE.NS", "2026-07-17T10:00:00Z");
+        when(deepAnalysisService.analyze("RELIANCE.NS")).thenReturn(expected);
+
+        DeepAnalysisResponse actual = new QueryHandler()
+                .serveDeepAnalysis(deepAnalysisService)
+                .apply(new QueryRequest("RELIANCE.NS", "corr-6"));
 
         assertThat(actual).isEqualTo(expected);
     }

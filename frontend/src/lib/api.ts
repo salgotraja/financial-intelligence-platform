@@ -82,6 +82,43 @@ export interface Story {
   found: boolean
 }
 
+export interface DayMove {
+  date: string
+  changePercent: number | null
+}
+
+export interface HorizonStats {
+  key: string
+  daysAvailable: number
+  partial: boolean
+  returnPercent: number | null
+  high: number | null
+  low: number | null
+  volatilityPercent: number | null
+  maxDrawdownPercent: number | null
+  bestDay: DayMove | null
+  worstDay: DayMove | null
+  upDays: number
+  downDays: number
+  avgVolume: number | null
+  volumeTrendPercent: number | null
+}
+
+export interface Band52w {
+  high: number | null
+  low: number | null
+  bandPositionPercent: number | null
+  source: string | null
+}
+
+export interface DeepAnalysis {
+  ticker: string
+  generatedAt: string | null
+  horizons: HorizonStats[]
+  band52w: Band52w | null
+  found: boolean
+}
+
 export interface WatchlistResult {
   status: string
   ticker: string | null
@@ -178,6 +215,9 @@ export const getDailyMarketData = (ticker: string, days?: number): Promise<Daily
 
 export const getStory = (ticker: string): Promise<Story> =>
   apiFetch<Story>(`/stories/${encodeURIComponent(ticker)}`)
+
+export const getDeepAnalysis = (ticker: string): Promise<DeepAnalysis> =>
+  apiFetch<DeepAnalysis>(`/analysis/${encodeURIComponent(ticker)}`)
 
 export const getWatchlist = (): Promise<WatchlistResult> =>
   apiFetch<WatchlistResult>('/watchlist')

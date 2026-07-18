@@ -192,6 +192,32 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        var analysisFn = Function.Builder.create(this, "AnalysisFn")
+                .functionName("financial-analysis-" + env)
+                .description("Serves the deterministic multi-horizon deep analysis")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/query-function/target/query-function.jar"))
+                .role(queryRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveDeepAnalysis"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
+                .vpc(network.getVpc())
+                .build();
+
+        LogGroup.Builder.create(this, "AnalysisFnLogs")
+                .logGroupName("/aws/lambda/" + analysisFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
         // Insight-feed Lambda: watchlist-scoped insight feed (GET /insights, no ticker). Third
         // function from the same query-function asset, sharing the read-only queryRole: it reads the
         // caller's watchlist plus GSI1 (group-insight mirror items written by insight-function on
@@ -444,6 +470,11 @@ public class QueryStack extends Stack {
         var storiesFnAlias = Alias.Builder.create(this, "StoriesFnAlias")
                 .aliasName("live")
                 .version(storiesFn.getCurrentVersion())
+                .build();
+
+        var analysisFnAlias = Alias.Builder.create(this, "AnalysisFnAlias")
+                .aliasName("live")
+                .version(analysisFn.getCurrentVersion())
                 .build();
 
         // == Erasure Step Functions workflow (spec s11, Task 11) ==
@@ -917,6 +948,31 @@ public class QueryStack extends Stack {
                                 .methodResponses(standardMethodResponses())
                                 .build());
 
+        // /analysis/{ticker} - protected (readers+), numbers-only deep analysis. Ticker-only
+        // cache key: the response is identical for every caller.
+        var analysisIntegration = LambdaIntegration.Builder.create(analysisFnAlias)
+                .proxy(false)
+                .requestTemplates(Map.of(
+                        "application/json",
+                        "{ \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\", "
+                                + "  \"correlationId\": \"$context.requestId\" }"))
+                .cacheKeyParameters(List.of("method.request.path.ticker"))
+                .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                .build();
+
+        api.getRoot()
+                .addResource("analysis")
+                .addResource("{ticker}")
+                .addMethod(
+                        "GET",
+                        analysisIntegration,
+                        MethodOptions.builder()
+                                .authorizer(apiAuthorizer)
+                                .authorizationType(AuthorizationType.CUSTOM)
+                                .requestParameters(Map.of("method.request.path.ticker", true))
+                                .methodResponses(standardMethodResponses())
+                                .build());
+
         // /health - Lambda-free health check (mock integration, public) for smoke tests and uptime monitors
         api.getRoot()
                 .addResource("health")
@@ -1245,6 +1301,7 @@ public class QueryStack extends Stack {
                 Map.entry("marketdatadaily", dailyMarketDataFn),
                 Map.entry("insightsfeed", insightsFeedFn),
                 Map.entry("stories", storiesFn),
+                Map.entry("analysis", analysisFn),
                 Map.entry("watchlist", watchlistFn),
                 Map.entry("consent", consentFn),
                 Map.entry("dsr", dsrFn),

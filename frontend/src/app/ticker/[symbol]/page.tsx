@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { AuthGate } from '@/components/auth-gate'
 import { DailyRangeChart } from '@/components/daily-range-chart'
+import { DeepAnalysisPanel } from '@/components/deep-analysis-panel'
 import { IngestButton } from '@/components/ingest-button'
 import { InsightPanel } from '@/components/insight-panel'
 import { LiveDot } from '@/components/live-dot'
@@ -24,12 +25,14 @@ const PriceChart = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-60 w-full" /> },
 )
 
-const CHART_RANGES: ChartRange[] = ['1D', '1W', '1M']
+const CHART_RANGES: ChartRange[] = ['1D', '1W', '1M', '3M', '1Y']
 
 const RANGE_TITLES: Record<ChartRange, string> = {
   '1D': 'Intraday (latest NSE session)',
   '1W': 'Past week',
   '1M': 'Past month',
+  '3M': 'Past quarter',
+  '1Y': 'Past year',
 }
 
 const RangeSwitcher = ({
@@ -145,6 +148,7 @@ const TickerView = ({ symbol }: { symbol: string }) => {
       </Card>
       {shownInsight && <InsightPanel insight={shownInsight} live={liveInsight !== null} />}
       <StoryPanel symbol={symbol} enabled={status === 'signed-in'} />
+      <DeepAnalysisPanel symbol={symbol} enabled={status === 'signed-in'} />
     </main>
   )
 }
