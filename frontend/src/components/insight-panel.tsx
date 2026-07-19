@@ -1,16 +1,9 @@
-import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { SignalBadge } from './signal-badge'
 import { formatTimestamp } from '@/lib/format'
 import type { Insight } from '@/lib/api'
 
-export const InsightPanel = ({
-  insight,
-  live,
-}: {
-  insight: Insight
-  live: boolean
-}) => {
+export const InsightPanel = ({ insight }: { insight: Insight }) => {
   if (!insight.found) {
     return (
       <Card className="border-border bg-card">
@@ -36,14 +29,6 @@ export const InsightPanel = ({
           confidence={insight.confidence}
           source={null}
         />
-        {live && (
-          <Badge
-            variant="outline"
-            className="border-primary/40 text-[10px] text-primary"
-          >
-            LIVE
-          </Badge>
-        )}
       </CardHeader>
       <CardContent className="space-y-2">
         <p className="text-sm leading-relaxed">{insight.insightText}</p>

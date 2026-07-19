@@ -17,7 +17,7 @@ import { ApiError, getInsight, getMarketData } from '@/lib/api'
 import type { ChartRange } from '@/lib/daily-range'
 import { isMarketOpen } from '@/lib/market-hours'
 import { useAsyncData } from '@/hooks/use-async-data'
-import { useInsightFeed } from '@/hooks/use-insight-feed'
+import { useInsightPoll } from '@/hooks/use-insight-poll'
 import { useAuthStore } from '@/stores/auth-store'
 
 const PriceChart = dynamic(
@@ -64,7 +64,7 @@ const RangeSwitcher = ({
 const TickerView = ({ symbol }: { symbol: string }) => {
   const router = useRouter()
   const status = useAuthStore((s) => s.status)
-  const { insights, connected } = useInsightFeed(useMemo(() => [symbol], [symbol]))
+  const insights = useInsightPoll(useMemo(() => [symbol], [symbol]))
   const [range, setRange] = useState<ChartRange>('1D')
 
   const { data, error, reload } = useAsyncData(
@@ -92,8 +92,8 @@ const TickerView = ({ symbol }: { symbol: string }) => {
       ? error.message
       : 'Request failed.'
 
-  const liveInsight = insights[symbol] ?? null
-  const shownInsight = liveInsight ?? data?.insight ?? null
+  const polledInsight = insights[symbol] ?? null
+  const shownInsight = polledInsight ?? data?.insight ?? null
   const latest = data?.marketData.points[0] ?? null
 
   return (
@@ -104,7 +104,7 @@ const TickerView = ({ symbol }: { symbol: string }) => {
           <StatDelta price={latest?.price ?? null} changePercent={latest?.changePercent ?? null} />
         </span>
         <span className="flex items-center gap-3">
-          <LiveDot open={isMarketOpen(new Date())} connected={connected} />
+          <LiveDot open={isMarketOpen(new Date())} />
           <IngestButton
             ticker={symbol}
             onAccepted={() => {
@@ -146,7 +146,7 @@ const TickerView = ({ symbol }: { symbol: string }) => {
           )}
         </CardContent>
       </Card>
-      {shownInsight && <InsightPanel insight={shownInsight} live={liveInsight !== null} />}
+      {shownInsight && <InsightPanel insight={shownInsight} />}
       <StoryPanel symbol={symbol} enabled={status === 'signed-in'} />
       <DeepAnalysisPanel symbol={symbol} enabled={status === 'signed-in'} />
     </main>

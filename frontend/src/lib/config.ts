@@ -5,7 +5,6 @@ const required = (name: string, value: string | undefined): string => {
 
 export const appConfig = {
   apiUrl: required('NEXT_PUBLIC_API_URL', process.env.NEXT_PUBLIC_API_URL),
-  wsUrl: required('NEXT_PUBLIC_WS_URL', process.env.NEXT_PUBLIC_WS_URL),
   userPoolId: required('NEXT_PUBLIC_USER_POOL_ID', process.env.NEXT_PUBLIC_USER_POOL_ID),
   userPoolClientId: required(
     'NEXT_PUBLIC_USER_POOL_CLIENT_ID',
