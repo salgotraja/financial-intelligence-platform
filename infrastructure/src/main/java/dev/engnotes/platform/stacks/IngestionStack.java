@@ -283,7 +283,7 @@ public class IngestionStack extends Stack {
         // Watchlist-add history backfill: a year of daily bars written as DAY# items the first
         // time a ticker enters the WATCHSET. Triggered by the platform table's NEW_IMAGE stream,
         // filtered to WATCHSET INSERTs so watch adds (rare) invoke it and market-data volume
-        // never does. This is the stream's ONLY consumer now that the notifier is gone — DynamoDB
+        // never does. This is the stream's ONLY consumer now that the notifier is gone: DynamoDB
         // streams support at most two, so a second slot is free.
         Map<String, String> backfillEnv = OrderedMap.of(
                 commonEnvVars,
