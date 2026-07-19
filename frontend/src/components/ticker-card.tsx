@@ -4,13 +4,12 @@ import Link from 'next/link'
 import { X } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Badge } from '@/components/ui/badge'
 import { Sparkline } from './sparkline'
 import { StatDelta } from './stat-delta'
 import { SignalBadge } from './signal-badge'
 import type { TickerEntry } from '@/hooks/use-watchlist-dashboard'
 import type { Insight } from '@/lib/api'
-import { intradaySessionPoints, isMarketOpen } from '@/lib/market-hours'
+import { intradaySessionPoints } from '@/lib/market-hours'
 
 export const TickerCard = ({
   ticker,
@@ -40,14 +39,6 @@ export const TickerCard = ({
           </Link>
         </CardTitle>
         <span className="z-10 flex items-center gap-2">
-          {liveInsight && isMarketOpen(now) && (
-            <Badge
-              variant="outline"
-              className="border-primary/40 text-[10px] text-primary"
-            >
-              LIVE
-            </Badge>
-          )}
           {onRemove && (
             <button
               aria-label={`Remove ${ticker}`}
