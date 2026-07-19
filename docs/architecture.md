@@ -102,10 +102,12 @@ PreAuthentication, which blocks access if consent is missing or the version is s
 re-consent). PreTokenGeneration injects the user's group claim (`readers` / `premium` /
 `admins`) into the JWT, which the API Gateway authorizer enforces per endpoint.
 
-Erasure flow: `DELETE /user/my-data` starts a Step Functions workflow that marks the profile
-`deletion_pending`, batch-deletes all `USER#{sub}` items (watchlist, connections, profile),
-runs the S3 user-tagged safeguard delete, deletes the Cognito user, emails confirmation, and
-writes a permanent erasure record (hashed sub, no PII) to the append-only audit table.
+Erasure flow: `DELETE /user/my-data` runs a synchronous cascade in the DSR Lambda (the Step
+Functions workflow was collapsed 2026-07-19) that acquires a `deletion_pending` lease via a
+DynamoDB conditional write, batch-deletes all `USER#{sub}` items (watchlist, connections,
+profile), runs the S3 user-tagged safeguard delete, deletes the Cognito user, emails
+confirmation, then clears the lease and writes a permanent erasure record (hashed sub, no PII)
+to the append-only audit table. The request returns 200 with the completed result.
 Right-to-access (`GET /user/my-data`) aggregates Cognito attributes plus all `USER#{sub}` items
 and logs an `access_event`.
 
