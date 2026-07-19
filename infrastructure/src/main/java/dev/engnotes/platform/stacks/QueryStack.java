@@ -48,13 +48,11 @@ public class QueryStack extends Stack {
             final String id,
             final StackProps props,
             final String env,
-            final NetworkStack network,
             final DataStack data,
             final IngestionStack ingestion,
             final SecurityStack security) {
         super(scope, id, props);
 
-        this.addDependency(network);
         this.addDependency(data);
         this.addDependency(ingestion);
         this.addDependency(security);
@@ -65,9 +63,7 @@ public class QueryStack extends Stack {
                 .roleName("financial-query-lambda-role-" + env)
                 .description("IAM role for financial query Lambda")
                 .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
-                .managedPolicies(List.of(
-                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
-                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
                 .build();
 
         // Read-only grants
@@ -92,7 +88,6 @@ public class QueryStack extends Stack {
                         Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveInsight"),
                         Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
                         Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
-                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "QueryFnLogs")
@@ -120,7 +115,6 @@ public class QueryStack extends Stack {
                         Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveMarketData"),
                         Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
                         Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
-                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "MarketDataFnLogs")
@@ -152,7 +146,6 @@ public class QueryStack extends Stack {
                         Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveDailyMarketData"),
                         Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
                         Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
-                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "DailyMarketDataFnLogs")
@@ -183,7 +176,6 @@ public class QueryStack extends Stack {
                         Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveStory"),
                         Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
                         Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
-                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "StoriesFnLogs")
@@ -209,7 +201,6 @@ public class QueryStack extends Stack {
                         Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveDeepAnalysis"),
                         Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
                         Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
-                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "AnalysisFnLogs")
@@ -242,7 +233,6 @@ public class QueryStack extends Stack {
                         Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "serveInsightFeed"),
                         Map.entry("MAIN_CLASS", "dev.engnotes.query.QueryHandler"),
                         Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
-                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "InsightsFeedFnLogs")
@@ -256,9 +246,7 @@ public class QueryStack extends Stack {
                 .roleName("financial-watchlist-lambda-role-" + env)
                 .description("IAM role for financial watchlist Lambda")
                 .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
-                .managedPolicies(List.of(
-                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
-                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
                 .build();
         data.getPlatformTable().grantReadWriteData(watchlistRole);
         data.getEncryptionKey().grantEncryptDecrypt(watchlistRole);
@@ -281,7 +269,6 @@ public class QueryStack extends Stack {
                         Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "watchlist"),
                         Map.entry("MAIN_CLASS", "dev.engnotes.watchlist.WatchlistHandler"),
                         Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
-                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "WatchlistFnLogs")
@@ -296,9 +283,7 @@ public class QueryStack extends Stack {
                 .roleName("financial-consent-lambda-role-" + env)
                 .description("IAM role for the consent management Lambda")
                 .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
-                .managedPolicies(List.of(
-                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
-                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
                 .build();
         data.getPlatformTable().grantReadWriteData(consentRole);
         data.getAuditTable().grant(consentRole, "dynamodb:PutItem");
@@ -324,7 +309,6 @@ public class QueryStack extends Stack {
                         Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "consent"),
                         Map.entry("MAIN_CLASS", "dev.engnotes.consent.ConsentHandler"),
                         Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
-                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "ConsentFnLogs")
@@ -342,9 +326,7 @@ public class QueryStack extends Stack {
                 .roleName("financial-dsr-lambda-role-" + env)
                 .description("IAM role for the DPDP data-subject-rights Lambda")
                 .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
-                .managedPolicies(List.of(
-                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
-                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
                 .build();
         data.getPlatformTable().grantReadWriteData(dsrRole);
         data.getAuditTable().grant(dsrRole, "dynamodb:PutItem", "dynamodb:Query");
@@ -370,7 +352,6 @@ public class QueryStack extends Stack {
                         Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "dsr"),
                         Map.entry("MAIN_CLASS", "dev.engnotes.dsr.DsrHandler"),
                         Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
-                .vpc(network.getVpc())
                 .build();
 
         LogGroup.Builder.create(this, "DsrFnLogs")
@@ -379,7 +360,7 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
-        // API authorizer Lambda (NOT in the VPC: it must reach the public Cognito JWKS endpoint).
+        // API authorizer Lambda: reaches the public Cognito JWKS endpoint natively (ADR 0004, no VPC).
         var authorizerRole = Role.Builder.create(this, "AuthorizerLambdaRole")
                 .roleName("financial-authorizer-lambda-role-" + env)
                 .description("IAM role for the API token authorizer Lambda")

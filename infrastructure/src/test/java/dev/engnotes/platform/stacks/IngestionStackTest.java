@@ -25,8 +25,7 @@ class IngestionStackTest {
                         .build())
                 .build();
         var data = new DataStack(app, "Data", props, "dev");
-        var network = new NetworkStack(app, "Network", props, "dev");
-        var ingestion = new IngestionStack(app, "Ingestion", props, "dev", network, data);
+        var ingestion = new IngestionStack(app, "Ingestion", props, "dev", data);
         return Template.fromStack(ingestion);
     }
 

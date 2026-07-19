@@ -20,7 +20,7 @@ remind_teardown() {
     log "#    API: ${API_URL:-<see CloudFormation Exports>}"
     log "#  Inspect in the console, then TEAR DOWN when done:"
     log "#      ./scripts/teardown.sh"
-    log "#  (NAT gateway ~\$1/day accrues until you do.)"
+    log "#  (idle SnapStart/WAF/cache cost accrues until you do.)"
     log "############################################################"
   fi
 }

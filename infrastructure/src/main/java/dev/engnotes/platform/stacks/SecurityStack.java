@@ -94,8 +94,8 @@ public class SecurityStack extends Stack {
         }
 
         // PostConfirmation trigger: seeds default-deny consent + ACCOUNT_CREATED audit at signup
-        // (spec sub-project B). Not in the VPC, so this persistent stack stays independent of the
-        // ephemeral NetworkStack; it reaches DynamoDB over the regional endpoint via its role.
+        // (spec sub-project B). ADR 0004: no VPC anywhere in the platform, so this persistent
+        // stack reaches DynamoDB over the regional endpoint via its role, same as every other Lambda.
         var postConfirmationRole = Role.Builder.create(this, "PostConfirmationLambdaRole")
                 .roleName("financial-postconfirmation-lambda-role-" + env)
                 .description("IAM role for the Cognito PostConfirmation consent-seeding Lambda")

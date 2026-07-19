@@ -29,9 +29,8 @@ class QueryStackTest {
                 .build();
         var data = new DataStack(app, "Data", props, "dev");
         var security = new SecurityStack(app, "Security", props, "dev", data);
-        var network = new NetworkStack(app, "Network", props, "dev");
-        var ingestion = new IngestionStack(app, "Ingestion", props, "dev", network, data);
-        var query = new QueryStack(app, "Query", props, "dev", network, data, ingestion, security);
+        var ingestion = new IngestionStack(app, "Ingestion", props, "dev", data);
+        var query = new QueryStack(app, "Query", props, "dev", data, ingestion, security);
         return Template.fromStack(query);
     }
 
@@ -45,9 +44,8 @@ class QueryStackTest {
                 .build();
         var data = new DataStack(app, "Data", props, "prod");
         var security = new SecurityStack(app, "Security", props, "prod", data);
-        var network = new NetworkStack(app, "Network", props, "prod");
-        var ingestion = new IngestionStack(app, "Ingestion", props, "prod", network, data);
-        var query = new QueryStack(app, "Query", props, "prod", network, data, ingestion, security);
+        var ingestion = new IngestionStack(app, "Ingestion", props, "prod", data);
+        var query = new QueryStack(app, "Query", props, "prod", data, ingestion, security);
         return Template.fromStack(query);
     }
 

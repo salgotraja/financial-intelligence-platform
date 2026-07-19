@@ -19,9 +19,9 @@ import software.constructs.Construct;
  *
  * <p>Holds everything that must survive across deploys: the KMS key, the single DynamoDB table, the
  * S3 data lake, and the SNS alert topic (so the email subscription is confirmed once, not on every
- * redeploy). It carries no NAT, endpoints, or compute, so it costs almost nothing at rest and is
- * meant to stay deployed while {@link NetworkStack}, {@link IngestionStack}, and {@link QueryStack}
- * are torn down between work sessions to avoid idle NAT/endpoint/provisioned-concurrency cost.
+ * redeploy). It carries no compute, so it costs almost nothing at rest and is meant to stay deployed
+ * while {@link IngestionStack} and {@link QueryStack} are torn down between work sessions to avoid
+ * idle provisioned-concurrency cost.
  *
  * <p>The KMS key encrypts the table, the bucket, and the topic, so all four live together here. In
  * dev the table/bucket/key are {@code DESTROY} (throwaway data, clean teardown); in prod they are

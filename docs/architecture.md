@@ -45,31 +45,32 @@ read p99 stays low and the path can use provisioned concurrency and API Gateway 
 ## Deployment View (AWS Resources)
 
 The deployment diagram maps the design onto the AWS resources actually provisioned, grouped by
-AWS Cloud, Region (ap-south-1), and VPC with private subnets. Lambdas run in private subnets and
-reach DynamoDB, S3, and Secrets Manager through VPC endpoints; managed services (Cognito, API
-Gateway, Step Functions, EventBridge, DynamoDB, S3, Bedrock, SNS, SQS, SES, KMS, CloudWatch,
-X-Ray) sit in the region around the VPC. Bedrock is invoked through a cross-region inference
-profile.
+AWS Cloud and Region (ap-south-1). All Lambdas run in the AWS-managed environment outside any
+VPC and reach the managed services (Cognito, API Gateway, Step Functions, EventBridge, DynamoDB,
+S3, Bedrock, SNS, SQS, SES, KMS, CloudWatch, X-Ray) over their public regional endpoints with
+TLS and SigV4-signed requests. Bedrock is invoked through a cross-region inference profile.
 
 ![Deployment architecture with AWS resources](./assets/financial_intelligence_platform_deployment.drawio.png)
 
 > Source: [`financial_intelligence_platform_deployment.drawio`](./assets/financial_intelligence_platform_deployment.drawio)
 > is the canonical editable diagram (official AWS icons). The PNG above and the
 > [SVG](./assets/financial_intelligence_platform_deployment.drawio.svg) are exports that embed the XML.
+> The earlier VPC-era deployment view is kept for reference as
+> [`financial_intelligence_platform_deployment_vpc_era.drawio.png`](./assets/financial_intelligence_platform_deployment_vpc_era.drawio.png).
 
-### VPC Endpoint Strategy
+### Network Posture
 
-Egress is split by destination to keep the private path off the metered NAT path. Lambdas reach
-AWS services (DynamoDB, S3, Secrets Manager, Bedrock Runtime, CloudWatch Logs, X-Ray) over VPC
-endpoints, which stay on the private AWS network and incur no NAT data-processing charge. Only
-the outbound calls to external market-data providers (Yahoo Finance, NSE/BSE) leave through the
-NAT Gateway over the public internet.
+All Lambdas run outside any VPC. Every dependency is a public-API AWS service reached over TLS
+with SigV4-signed requests, and the two functions that call the external market-data provider
+(Yahoo Finance) use the internet egress the managed Lambda environment provides natively. The
+security perimeter is per-function least-privilege IAM, KMS encryption at rest, and Cognito
+authorization at the API edge.
 
-![VPC endpoint strategy: private AWS path via VPC endpoints vs metered NAT egress for external APIs](./assets/vpc_endpoint_strategy_financial_platform.png)
-
-> Source: [`vpc_endpoint_strategy_financial_platform.drawio`](./assets/vpc_endpoint_strategy_financial_platform.drawio)
-> is the canonical editable diagram. The PNG above and the
-> [SVG](./assets/vpc_endpoint_strategy_financial_platform.svg) are exports that embed the XML.
+An earlier iteration ran the data-path Lambdas inside a 2-AZ VPC with a NAT gateway, free
+S3/DynamoDB gateway endpoints, and a Bedrock PrivateLink interface endpoint. It was removed once
+measured: the NAT dominated the platform's always-on cost while adding no inbound protection
+(Lambda functions expose no inbound network surface regardless of placement) and no real egress
+restriction (the private subnets' default route granted full outbound internet through the NAT).
 
 ## Stack Topology (CDK Java)
 
