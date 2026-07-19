@@ -53,16 +53,10 @@ public class IngestionStack extends Stack {
     private final Alarm dlqDepthAlarm;
 
     public IngestionStack(
-            final Construct scope,
-            final String id,
-            final StackProps props,
-            final String env,
-            final NetworkStack network,
-            final DataStack data) {
+            final Construct scope, final String id, final StackProps props, final String env, final DataStack data) {
         super(scope, id, props);
 
-        // Deploy the VPC (network) and the table/key (data) before this stack.
-        this.addDependency(network);
+        // Deploy the table/key (data) before this stack.
         this.addDependency(data);
 
         // == Dead Letter Queue ==
@@ -80,9 +74,7 @@ public class IngestionStack extends Stack {
         Role ingestionRole = Role.Builder.create(this, "IngestionLambdaRole")
                 .roleName("financial-ingestion-lambda-role-" + env)
                 .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
-                .managedPolicies(List.of(
-                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
-                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
                 .build();
 
         // DynamoDB read/write on the single platform table only.
@@ -152,7 +144,6 @@ public class IngestionStack extends Stack {
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
                 .environment(fetchEnv)
-                .vpc(network.getVpc())
                 .build();
 
         // SnapStart applies only to a published version, so invoke an alias - not $LATEST.
@@ -204,9 +195,9 @@ public class IngestionStack extends Stack {
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
                 .environment(insightEnv)
-                // Run in the VPC so Bedrock is reached over the PrivateLink interface
-                // endpoint (FoundationStack BedrockRuntimeEndpoint), not the public internet.
-                .vpc(network.getVpc())
+                // ADR 0004: no VPC. Bedrock is reached on its public regional endpoint over
+                // TLS, authenticated by SigV4 - the same posture as every other AWS SDK call
+                // this Lambda makes.
                 .build();
 
         Alias insightAlias = Alias.Builder.create(this, "GenerateInsightAlias")
@@ -232,9 +223,7 @@ public class IngestionStack extends Stack {
         Role correlationsRole = Role.Builder.create(this, "CorrelationsLambdaRole")
                 .roleName("financial-correlations-lambda-role-" + env)
                 .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
-                .managedPolicies(List.of(
-                        ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaVPCAccessExecutionRole"),
-                        ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName("AWSXRayDaemonWriteAccess")))
                 .build();
         data.getPlatformTable().grantReadWriteData(correlationsRole);
         data.getEncryptionKey().grantEncryptDecrypt(correlationsRole);
@@ -259,7 +248,6 @@ public class IngestionStack extends Stack {
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
                 .environment(correlationsEnv)
-                .vpc(network.getVpc())
                 .build();
 
         Alias correlationsAlias = Alias.Builder.create(this, "ComputeCorrelationsAlias")
@@ -314,7 +302,6 @@ public class IngestionStack extends Stack {
                 .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
                 .tracing(Tracing.ACTIVE)
                 .environment(backfillEnv)
-                .vpc(network.getVpc())
                 .build();
 
         Alias historyBackfillAlias = Alias.Builder.create(this, "HistoryBackfillAlias")
