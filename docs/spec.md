@@ -69,7 +69,7 @@ ap-south-1 via a cross-region inference profile (section 9).
 | Ingestion stack | CDK (Java) | EventBridge schedule, ingestion state machine (Distributed Map), fetch/store Lambda, DLQ |
 | Insight stack | CDK (Java) | Anomaly Lambda, correlation Lambda, Bedrock insight Lambda, insight store, cost circuit breaker |
 | API stack | CDK (Java) | REST API GW (watchlist, on-demand ingest, query, account/PII), Cognito group authorizers, WAF |
-| Security/compliance stack | CDK (Java) | Cognito groups + MFA + password policy, consent Lambda triggers, PII/account endpoints, erasure state machine, append-only audit table |
+| Security/compliance stack | CDK (Java) | Cognito groups + MFA + password policy, consent Lambda triggers, PII/account endpoints, erasure cascade, append-only audit table |
 | Watchlist function | Spring Cloud Function | CRUD on per-user watchlists |
 | Ingestion function | Spring Cloud Function | `fetchMarketData`: provider-abstracted fetch, dual-write DynamoDB + S3 |
 | Insight function | Spring Cloud Function | `generateInsight`: assemble context, call Bedrock, validate JSON, fallback, push |
@@ -297,13 +297,18 @@ and the anchor for consent, purpose limitation, and data-subject rights.
 > - **Endpoints:** consent is `GET/POST/DELETE /user/consent`; right-to-access is `GET /user/export`;
 >   right-to-erasure is `DELETE /user/account` (not the single `/user/my-data` resource described
 >   below). Export and erasure also support an admin-on-behalf path (`?subjectSub=`, admins only).
-> - **Erasure** is now a Step Functions workflow (the `ErasureStateMachine` on QueryStack, driven by
->   `dsr-function`): mark `deletion_pending`, delete the subject's `USER#{sub}` items (CONSENT +
->   watchlist + WATCHSET mirrors), an S3 tagged-object safeguard pass (a no-op today, the lake holds
->   no personal data), delete the Cognito user, send an SES confirmation email, then write the erasure
->   audit. The `StartExecution` name is `sha256(subjectSub#requestedAt)` so a duplicate `DELETE`
->   returns an idempotent 202. SES runs in sandbox, so a confirmation to an unverified recipient fails
->   and the workflow records `emailSent=false` honestly.
+> - **Erasure** runs as a synchronous cascade inside `dsr-function` (the Step Functions workflow was
+>   collapsed 2026-07-19; seven linear states invoking one Lambda bought nothing over a method call):
+>   acquire the `deletion_pending` lease, capture the subject's email, delete the subject's
+>   `USER#{sub}` items (CONSENT + watchlist + WATCHSET mirrors), an S3 tagged-object safeguard pass
+>   (a no-op today, the lake holds no personal data), delete the Cognito user, send an SES
+>   confirmation email, then clear the lease and write the erasure audit. `DELETE /user/account`
+>   returns 200 with the completed result. Idempotency is a DynamoDB conditional write on the
+>   `deletion_pending` flag (5-minute lease): a concurrent duplicate gets `inProgress` and no second
+>   cascade; a crashed cascade's stale lease is taken over by the next request, every step being
+>   idempotent and re-runnable. SES runs in sandbox, so a confirmation to an unverified recipient
+>   fails and the cascade records `emailSent=false` honestly; a missing address is also
+>   `emailSent=false`.
 > - **Consent** now gates login as well as the watchlist. The `preAuthentication` trigger denies a
 >   WITHDRAWN or stale-version login (writing a `CONSENT_RECONSENT_REQUIRED` audit event) and forces
 >   re-consent when `CONSENT_POLICY_VERSION` moves; it allows a PENDING (never-consented) login so
@@ -357,7 +362,8 @@ attributes. PreAuthentication re-checks them on every login. Bumping `consent_ve
 audit trail as an `access_event`.
 
 ### Right to erasure
-`DELETE /user/my-data` starts an erasure Step Functions workflow:
+`DELETE /user/my-data` runs the erasure cascade (synchronously in the DSR Lambda since
+2026-07-19; originally a Step Functions workflow):
 1. Mark `USER#{sub}` PROFILE as `deletion_pending` (the ingest and insight write paths skip
    pending users, so no new personal data is written mid-erasure).
 2. Delete all `USER#{sub}` items (watchlist, connections, profile) via a single prefix query
@@ -471,7 +477,7 @@ Lambda, read-path provisioned concurrency and API GW caching.
 
 Phase 3: Security and compliance hardening: KMS, WAF, IAM Access Analyzer,
 least-privilege review. DPDP: Cognito MFA + password policy + groups, consent triggers and
-versioning, right-to-access endpoint, right-to-erasure Step Functions workflow, and the
+versioning, right-to-access endpoint, right-to-erasure cascade, and the
 append-only audit table.
 
 Phase 4: Observability and cost: dashboards, X-Ray service map, custom metrics, SNS alerts,
@@ -541,7 +547,7 @@ load test with recorded p50/p95/p99, CI/CD gates, the three write-ups.
 - CDK language is Java, not TypeScript.
 - DPDP Act 2023 compliance is in scope: Cognito MFA + password policy, consent custom
   attributes with versioning and PreAuthentication gating, User Pool Groups for purpose
-  limitation, right-to-access (`GET /user/my-data`) and right-to-erasure (Step Functions
+  limitation, right-to-access (`GET /user/my-data`) and right-to-erasure (synchronous
   cascade) endpoints, and a separate append-only audit table.
 - Data localisation is satisfied by ap-south-1; the cross-region Bedrock profile carries no PII.
 - A Security/compliance stack plus consent-trigger, erasure, and account Lambdas are added to

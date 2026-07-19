@@ -60,14 +60,13 @@ public class DsrAuditService {
     }
 
     /**
-     * Writes the {@code WriteErasureAudit} state's {@code ACCOUNT_ERASED} record (spec s11, Task 11):
-     * the erasure workflow's request and completion timestamps plus whether the confirmation email
-     * sent, alongside the same actor/source-ip attribution as {@link #record}. The SK's timestamp
-     * component is {@code requestedAt}, not a fresh {@code now} - it is fixed once at workflow start and
-     * echoed unchanged through every retry of this state, so a retried {@code WriteErasureAudit} lands
-     * on the same {@code PK}/{@code SK} and the {@code PutItem} overwrites in place rather than
-     * duplicating (Task 12; append-only IAM grants plain {@code PutItem}, no condition expression, so an
-     * overwrite of the same key is allowed).
+     * Writes the erasure cascade's {@code ACCOUNT_ERASED} record (spec s11, Task 11): the cascade's
+     * request and completion timestamps plus whether the confirmation email sent, alongside the same
+     * actor/source-ip attribution as {@link #record}. The SK's timestamp component is
+     * {@code requestedAt}, not a fresh {@code now} - it is fixed once when the cascade starts and echoed
+     * unchanged through a retried request, so a retry lands on the same {@code PK}/{@code SK} and the
+     * {@code PutItem} overwrites in place rather than duplicating (Task 12; append-only IAM grants plain
+     * {@code PutItem}, no condition expression, so an overwrite of the same key is allowed).
      */
     public void recordErasureCompletion(
             String subjectSub,

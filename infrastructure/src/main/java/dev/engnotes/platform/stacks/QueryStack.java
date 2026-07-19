@@ -14,10 +14,7 @@ import software.amazon.awscdk.services.iam.ServicePrincipal;
 import software.amazon.awscdk.services.lambda.*;
 import software.amazon.awscdk.services.lambda.Runtime;
 import software.amazon.awscdk.services.logs.LogGroup;
-import software.amazon.awscdk.services.logs.LogGroupProps;
 import software.amazon.awscdk.services.logs.RetentionDays;
-import software.amazon.awscdk.services.stepfunctions.*;
-import software.amazon.awscdk.services.stepfunctions.tasks.*;
 import software.amazon.awscdk.services.wafv2.CfnWebACL;
 import software.amazon.awscdk.services.wafv2.CfnWebACLAssociation;
 import software.constructs.Construct;
@@ -458,198 +455,16 @@ public class QueryStack extends Stack {
                 .version(analysisFn.getCurrentVersion())
                 .build();
 
-        // == Erasure Step Functions workflow (spec s11, Task 11) ==
-        // Standard state machine driving the dsr Lambda's per-operation dispatch, in order:
-        // MarkDeletionPending -> DeleteUserItems -> S3SafeguardDelete -> DeleteCognitoUser ->
-        // SendConfirmationEmail -> WriteErasureAudit. Every LambdaInvoke uses payloadResponseOnly and
-        // targets the same live alias as the API routes (mirrors IngestionStack's retry/log patterns):
-        // the running JSON is fully replaced by each state's own output, so DsrHandler's workflow
-        // operations echo forward whatever later states still need (subjectSub, callerSub, sourceIp,
-        // correlationId, requestedAt, email, emailSent).
-        RetryProps erasureRetry = RetryProps.builder()
-                .errors(List.of(
-                        "Lambda.ServiceException",
-                        "Lambda.AWSLambdaException",
-                        "Lambda.SdkClientException",
-                        "Lambda.TooManyRequestsException",
-                        "States.TaskFailed"))
-                .interval(Duration.seconds(2))
-                .maxAttempts(2)
-                .backoffRate(2.0)
-                .build();
-
-        LambdaInvoke markDeletionPending = LambdaInvoke.Builder.create(this, "MarkDeletionPending")
-                .lambdaFunction(dsrFnAlias)
-                .comment("Set the deletion-pending gate and capture the subject's email before Cognito deletion")
-                .payloadResponseOnly(true)
-                .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(OrderedMap.of(
-                        Map.entry("operation", "MARK_PENDING"),
-                        Map.entry("subjectSub.$", "$.subjectSub"),
-                        Map.entry("callerSub.$", "$.callerSub"),
-                        Map.entry("sourceIp.$", "$.sourceIp"),
-                        Map.entry("correlationId.$", "$.correlationId"),
-                        Map.entry("requestedAt.$", "$.requestedAt"))))
-                .build();
-        markDeletionPending.addRetry(erasureRetry);
-
-        LambdaInvoke deleteUserItems = LambdaInvoke.Builder.create(this, "DeleteUserItems")
-                .lambdaFunction(dsrFnAlias)
-                .comment("Delete the CONSENT record and every WATCH#/WATCHSET mirror")
-                .payloadResponseOnly(true)
-                .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(OrderedMap.of(
-                        Map.entry("operation", "DELETE_USER_ITEMS"),
-                        Map.entry("subjectSub.$", "$.subjectSub"),
-                        Map.entry("callerSub.$", "$.callerSub"),
-                        Map.entry("sourceIp.$", "$.sourceIp"),
-                        Map.entry("correlationId.$", "$.correlationId"),
-                        Map.entry("requestedAt.$", "$.requestedAt"),
-                        Map.entry("email.$", "$.email"))))
-                .build();
-        deleteUserItems.addRetry(erasureRetry);
-
-        LambdaInvoke s3SafeguardDelete = LambdaInvoke.Builder.create(this, "S3SafeguardDelete")
-                .lambdaFunction(dsrFnAlias)
-                .comment("Documented no-op: the data lake holds no subject-linked keys")
-                .payloadResponseOnly(true)
-                .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(OrderedMap.of(
-                        Map.entry("operation", "S3_SAFEGUARD"),
-                        Map.entry("subjectSub.$", "$.subjectSub"),
-                        Map.entry("callerSub.$", "$.callerSub"),
-                        Map.entry("sourceIp.$", "$.sourceIp"),
-                        Map.entry("correlationId.$", "$.correlationId"),
-                        Map.entry("requestedAt.$", "$.requestedAt"),
-                        Map.entry("email.$", "$.email"))))
-                .build();
-        s3SafeguardDelete.addRetry(erasureRetry);
-
-        LambdaInvoke deleteCognitoUser = LambdaInvoke.Builder.create(this, "DeleteCognitoUser")
-                .lambdaFunction(dsrFnAlias)
-                .comment("Delete the Cognito identity - the final, irreversible erasure step")
-                .payloadResponseOnly(true)
-                .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(OrderedMap.of(
-                        Map.entry("operation", "DELETE_COGNITO_USER"),
-                        Map.entry("subjectSub.$", "$.subjectSub"),
-                        Map.entry("callerSub.$", "$.callerSub"),
-                        Map.entry("sourceIp.$", "$.sourceIp"),
-                        Map.entry("correlationId.$", "$.correlationId"),
-                        Map.entry("requestedAt.$", "$.requestedAt"),
-                        Map.entry("email.$", "$.email"))))
-                .build();
-        deleteCognitoUser.addRetry(erasureRetry);
-
-        LambdaInvoke writeErasureAudit = LambdaInvoke.Builder.create(this, "WriteErasureAudit")
-                .lambdaFunction(dsrFnAlias)
-                .comment("Clear the deletion-pending gate and write the ACCOUNT_ERASED audit record")
-                .payloadResponseOnly(true)
-                .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(OrderedMap.of(
-                        Map.entry("operation", "WRITE_ERASURE_AUDIT"),
-                        Map.entry("subjectSub.$", "$.subjectSub"),
-                        Map.entry("callerSub.$", "$.callerSub"),
-                        Map.entry("sourceIp.$", "$.sourceIp"),
-                        Map.entry("correlationId.$", "$.correlationId"),
-                        Map.entry("requestedAt.$", "$.requestedAt"),
-                        Map.entry("emailSent.$", "$.emailSent"))))
-                .build();
-        writeErasureAudit.addRetry(erasureRetry);
-
-        LambdaInvoke sendConfirmationEmail = LambdaInvoke.Builder.create(this, "SendConfirmationEmail")
-                .lambdaFunction(dsrFnAlias)
-                .comment("Email the subject a factual erasure confirmation")
-                .payloadResponseOnly(true)
-                .retryOnServiceExceptions(false)
-                .payload(TaskInput.fromObject(OrderedMap.of(
-                        Map.entry("operation", "SEND_CONFIRMATION_EMAIL"),
-                        Map.entry("subjectSub.$", "$.subjectSub"),
-                        Map.entry("callerSub.$", "$.callerSub"),
-                        Map.entry("sourceIp.$", "$.sourceIp"),
-                        Map.entry("correlationId.$", "$.correlationId"),
-                        Map.entry("requestedAt.$", "$.requestedAt"),
-                        Map.entry("email.$", "$.email"))))
-                .build();
-        sendConfirmationEmail.addRetry(erasureRetry);
-
-        // A failed send (including SES sandbox rejection of an unverified recipient) must not fail the
-        // erasure: catch to a Pass state that records emailSent=false and continues to the audit write.
-        // The catch's own resultPath keeps the error detail out of the way ($.errorInfo) rather than
-        // replacing the whole running JSON, so subjectSub/callerSub/etc. survive into WriteErasureAudit.
-        Pass emailFailed = Pass.Builder.create(this, "EmailFailed")
-                .comment("Confirmation email failed after retries; erasure still completes")
-                .resultPath("$.emailSent")
-                .result(Result.fromBoolean(false))
-                .build();
-        emailFailed.next(writeErasureAudit);
-        sendConfirmationEmail.addCatch(
-                emailFailed,
-                CatchProps.builder()
-                        .errors(List.of("States.ALL"))
-                        .resultPath("$.errorInfo")
-                        .build());
-
-        Succeed erasureCompleted = Succeed.Builder.create(this, "ErasureCompleted")
-                .comment("Erasure workflow completed")
-                .build();
-
-        Chain erasureChain = Chain.start(markDeletionPending)
-                .next(deleteUserItems)
-                .next(s3SafeguardDelete)
-                .next(deleteCognitoUser)
-                .next(sendConfirmationEmail)
-                .next(writeErasureAudit)
-                .next(erasureCompleted);
-
-        // The state machine name is fixed (not CDK-generated), so its ARN is fully deterministic from
-        // account/region/name alone (Step Functions ARN format never varies). Built as a literal string
-        // below, rather than read off erasureStateMachine.getStateMachineArn(), because the dsr Lambda
-        // both starts this execution AND is the Lambda every state invokes: a construct-reference grant
-        // in either direction closes a cycle (DsrLambdaRolePolicy -> state machine -> state machine
-        // role -> DsrFnAlias -> DsrFn -> DsrLambdaRolePolicy), which CloudFormation cannot deploy.
-        String erasureStateMachineName = "financial-erasure-" + env;
-        String erasureStateMachineArn = "arn:aws:states:" + this.getRegion() + ":" + this.getAccount()
-                + ":stateMachine:" + erasureStateMachineName;
-
-        var erasureStateMachine = StateMachine.Builder.create(this, "ErasureStateMachine")
-                .stateMachineName(erasureStateMachineName)
-                .definitionBody(DefinitionBody.fromChainable(erasureChain))
-                .tracingEnabled(true)
-                .stateMachineType(StateMachineType.STANDARD)
-                .logs(LogOptions.builder()
-                        .destination(new LogGroup(
-                                this,
-                                "ErasureStateMachineLogs",
-                                LogGroupProps.builder()
-                                        .logGroupName("/aws/states/financial-erasure-" + env)
-                                        .retention(RetentionDays.ONE_MONTH)
-                                        .removalPolicy(RemovalPolicy.DESTROY)
-                                        .build()))
-                        .level(LogLevel.ERROR)
-                        .includeExecutionData(true)
-                        .build())
-                .build();
-
-        // The dsr Lambda starts this execution itself (DELETE /user/account's ERASE case), so it needs
-        // StartExecution scoped to just this state machine - not the ingestion one - via the literal
-        // ARN above (see its comment: a construct-reference grant here would cycle back through
-        // DsrFnAlias). It also needs ses:SendEmail scoped to the shared alertEmail identity for
-        // SendConfirmationEmail (that grant is safe: DataStack has no reference back to QueryStack).
-        // A manual statement, not EmailIdentity.grantSendEmail(), since that convenience grant also
-        // adds ses:SendRawEmail (the SES v1 raw-MIME action); this Lambda only ever calls SES v2's
-        // SendEmail, so ses:SendEmail alone is the least-privilege grant.
-        dsrRole.addToPolicy(PolicyStatement.Builder.create()
-                .effect(Effect.ALLOW)
-                .actions(List.of("states:StartExecution"))
-                .resources(List.of(erasureStateMachineArn))
-                .build());
+        // The dsr Lambda sends the erasure confirmation email inline (workflow collapsed 2026-07-19),
+        // so it needs ses:SendEmail scoped to the shared alertEmail identity. A manual statement, not
+        // EmailIdentity.grantSendEmail(), since that convenience grant also adds ses:SendRawEmail (the
+        // SES v1 raw-MIME action); this Lambda only ever calls SES v2's SendEmail, so ses:SendEmail
+        // alone is the least-privilege grant.
         dsrRole.addToPolicy(PolicyStatement.Builder.create()
                 .effect(Effect.ALLOW)
                 .actions(List.of("ses:SendEmail"))
                 .resources(List.of(data.getSenderIdentity().getEmailIdentityArn()))
                 .build());
-        dsrFn.addEnvironment("STATE_MACHINE_ARN", erasureStateMachineArn);
         dsrFn.addEnvironment("ALERT_EMAIL", data.getAlertEmail());
 
         // API Gateway
@@ -1139,10 +954,8 @@ public class QueryStack extends Stack {
                         .methodResponses(standardMethodResponses())
                         .build());
 
-        // Starts the financial-erasure workflow instead of erasing synchronously (spec s11, Task 11);
-        // the dsr Lambda validates the subject and idempotency, then calls StartExecution itself, so
-        // the API Gateway integration is unchanged (still a plain Lambda invocation) except that its
-        // success status is 202, not 200 - see erasureAcceptedIntegrationResponses/acceptedMethodResponses.
+        // Runs the erasure cascade synchronously in the dsr Lambda (workflow collapsed 2026-07-19);
+        // success is 200 with the completed ErasureResult.
         var accountResource = userResource.addResource("account");
         accountResource.addMethod(
                 "DELETE",
@@ -1156,13 +969,13 @@ public class QueryStack extends Stack {
                                         + "  \"correlationId\": \"$context.requestId\","
                                         + "  \"callerSub\": \"$context.authorizer.sub\","
                                         + "  \"callerGroups\": \"$context.authorizer.groups\" }"))
-                        .integrationResponses(erasureAcceptedIntegrationResponses(allowOrigin))
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
                         .requestParameters(Map.of("method.request.querystring.subjectSub", false))
-                        .methodResponses(acceptedMethodResponses())
+                        .methodResponses(standardMethodResponses())
                         .build());
 
         // On-demand ingest (spec section 5): POST /ingest/{ticker} -> Step Functions StartExecution.
@@ -1490,49 +1303,6 @@ public class QueryStack extends Stack {
         return List.of(
                 MethodResponse.builder()
                         .statusCode("200")
-                        .responseParameters(Map.of(CORS_HEADER, true))
-                        .build(),
-                MethodResponse.builder()
-                        .statusCode("400")
-                        .responseParameters(Map.of(CORS_HEADER, true))
-                        .build(),
-                MethodResponse.builder()
-                        .statusCode("500")
-                        .responseParameters(Map.of(CORS_HEADER, true))
-                        .build());
-    }
-
-    // DELETE /user/account starts a workflow rather than completing synchronously, so its success
-    // status is 202 (Accepted), not 200 - both the genuinely-started and idempotent-no-op-pending
-    // cases return normally from the dsr Lambda (denied does too, the same 200-with-error-body
-    // convention EXPORT/ERASE already use elsewhere, just at 202 instead of 200 for this route). Error
-    // mapping (400/500 by selectionPattern) is identical to errorAwareIntegrationResponses.
-    private static List<IntegrationResponse> erasureAcceptedIntegrationResponses(String allowOrigin) {
-        return List.of(
-                IntegrationResponse.builder()
-                        .statusCode("202")
-                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
-                        .build(),
-                IntegrationResponse.builder()
-                        .statusCode("400")
-                        .selectionPattern(".*(" + CLIENT_ERROR_PATTERN + ").*")
-                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
-                        .responseTemplates(Map.of(
-                                "application/json",
-                                "{\"error\":\"$util.escapeJavaScript($input.path('$.errorMessage'))\"}"))
-                        .build(),
-                IntegrationResponse.builder()
-                        .statusCode("500")
-                        .selectionPattern("^((?!" + CLIENT_ERROR_PATTERN + ")(.|\\n))+$")
-                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
-                        .responseTemplates(Map.of("application/json", "{\"error\":\"internal error\"}"))
-                        .build());
-    }
-
-    private static List<MethodResponse> acceptedMethodResponses() {
-        return List.of(
-                MethodResponse.builder()
-                        .statusCode("202")
                         .responseParameters(Map.of(CORS_HEADER, true))
                         .build(),
                 MethodResponse.builder()

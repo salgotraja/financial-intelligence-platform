@@ -564,103 +564,24 @@ class QueryStackTest {
         }
     }
 
-    // == Erasure Step Functions workflow (spec s11, Task 11) ==
-
+    // The erasure Step Functions workflow was collapsed into the dsr Lambda (2026-07-19).
     @Test
-    void erasureStateMachineIsStandardTypeWithFixedName() {
-        synth().hasResourceProperties(
-                        "AWS::StepFunctions::StateMachine",
-                        Match.objectLike(
-                                Map.of("StateMachineName", "financial-erasure-dev", "StateMachineType", "STANDARD")));
-    }
-
-    @Test
-    void erasureStatesRunInTheSpecifiedOrderWithTheRightOperationEach() {
-        String definition = erasureDefinitionString();
-
-        // Next-pointer chain: MarkDeletionPending -> DeleteUserItems -> S3SafeguardDelete ->
-        // DeleteCognitoUser -> SendConfirmationEmail -> WriteErasureAudit -> ErasureCompleted.
-        assertTrue(definition.contains("\"MarkDeletionPending\":{\"Next\":\"DeleteUserItems\""));
-        assertTrue(definition.contains("\"DeleteUserItems\":{\"Next\":\"S3SafeguardDelete\""));
-        assertTrue(definition.contains("\"S3SafeguardDelete\":{\"Next\":\"DeleteCognitoUser\""));
-        assertTrue(definition.contains("\"DeleteCognitoUser\":{\"Next\":\"SendConfirmationEmail\""));
-        assertTrue(definition.contains("\"SendConfirmationEmail\":{\"Next\":\"WriteErasureAudit\""));
-        assertTrue(definition.contains("\"WriteErasureAudit\":{\"Next\":\"ErasureCompleted\""));
-
-        assertTrue(definition.contains("\"operation\":\"MARK_PENDING\""));
-        assertTrue(definition.contains("\"operation\":\"DELETE_USER_ITEMS\""));
-        assertTrue(definition.contains("\"operation\":\"S3_SAFEGUARD\""));
-        assertTrue(definition.contains("\"operation\":\"DELETE_COGNITO_USER\""));
-        assertTrue(definition.contains("\"operation\":\"SEND_CONFIRMATION_EMAIL\""));
-        assertTrue(definition.contains("\"operation\":\"WRITE_ERASURE_AUDIT\""));
-    }
-
-    // Pins the Parameters key order to a fixed sequence (OrderedMap, not Map.of): Map.of's
-    // per-JVM-run salted iteration order made two `cdk synth` runs of identical source emit this
-    // same Parameters map with different key orders, replacing the Deployment/state machine on
-    // every deploy even with no real change (found in live validation). A substring match on the
-    // exact serialized order is a cheap way to catch a regression back to an unordered map.
-    @Test
-    void erasureTaskParametersHaveAFixedKeyOrder() {
-        String definition = erasureDefinitionString();
-
-        assertTrue(
-                definition.contains("\"Parameters\":{\"operation\":\"MARK_PENDING\",\"subjectSub.$\":\"$.subjectSub\","
-                        + "\"callerSub.$\":\"$.callerSub\",\"sourceIp.$\":\"$.sourceIp\","
-                        + "\"correlationId.$\":\"$.correlationId\",\"requestedAt.$\":\"$.requestedAt\"}"),
-                "expected a fixed Parameters key order for MarkDeletionPending: " + definition);
-    }
-
-    @Test
-    void everyErasureStateRetriesTwiceWithDoublingBackoff() {
-        String definition = erasureDefinitionString();
-        String retryFragment = "\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2";
-
-        int count = 0;
-        int from = 0;
-        while ((from = definition.indexOf(retryFragment, from)) != -1) {
-            count++;
-            from += retryFragment.length();
-        }
-        assertEquals(6, count, "expected all 6 Task states to carry the 2-attempt, 2x-backoff retry");
-    }
-
-    @Test
-    void sendConfirmationEmailFailureCatchesToEmailFailedThenWriteErasureAudit() {
-        String definition = erasureDefinitionString();
-
-        assertTrue(
-                definition.contains(
-                        "\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.errorInfo\",\"Next\":\"EmailFailed\"}]"),
-                "expected SendConfirmationEmail to catch all errors into EmailFailed without losing"
-                        + " subjectSub/callerSub/etc (ResultPath must not be $)");
-        assertTrue(
-                definition.contains(
-                        "\"EmailFailed\":{\"Type\":\"Pass\",\"Comment\":\"Confirmation email failed after retries;"
-                                + " erasure still completes\",\"Result\":false,\"ResultPath\":\"$.emailSent\",\"Next\":\"WriteErasureAudit\"}"),
-                "expected EmailFailed to record emailSent=false and proceed to WriteErasureAudit,"
-                        + " so a failed email never fails the erasure");
+    void noStateMachineRemainsInQueryStack() {
+        assertTrue(synth().findResources("AWS::StepFunctions::StateMachine").isEmpty());
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void dsrRoleHasStartExecutionScopedToTheErasureStateMachineOnly() {
+    void dsrRoleHasNoStepFunctionsPermissions() {
         var template = synth();
         var statements = dsrLambdaRolePolicyStatements(template);
+        assertTrue(
+                statements.stream().noneMatch(s -> actionsOf(s).contains("states:StartExecution")),
+                "DsrLambdaRole must not retain states:StartExecution (the ingest route's own, unrelated"
+                        + " StartExecution grant on IngestApiRole is expected and out of scope here)");
 
-        var startExecutionStatements = statements.stream()
-                .filter(s -> actionsOf(s).contains("states:StartExecution"))
-                .toList();
-        assertEquals(
-                1,
-                startExecutionStatements.size(),
-                "expected exactly one states:StartExecution statement on DsrLambdaRole");
-        assertEquals(
-                "arn:aws:states:ap-south-1:123456789012:stateMachine:financial-erasure-dev",
-                startExecutionStatements.get(0).get("Resource"),
-                "expected StartExecution scoped to a literal ARN naming only the erasure state"
-                        + " machine (not a wildcard, not the ingestion state machine) - a construct-ref"
-                        + " grant here would close a dependency cycle back through DsrFnAlias");
+        String templateJson = template.toJSON().toString();
+        assertFalse(templateJson.contains("STATE_MACHINE_ARN"), "dsr Lambda must not retain the workflow env var");
     }
 
     @Test
@@ -682,40 +603,35 @@ class QueryStackTest {
         assertTrue(resource.toString().contains("identity/"), "expected an SES identity ARN resource: " + resource);
     }
 
+    // The DELETE /user/account method's success response is 200 (synchronous erasure), not 202.
+    // Pinned via the method responses of the account resource's DELETE method in the template.
     @Test
     @SuppressWarnings("unchecked")
-    void accountDeleteRouteReturns202OnAcceptedAndKeeps400500ForErrors() {
-        var method = synth().findResources("AWS::ApiGateway::Method").values().stream()
+    void deleteAccountReturns200NotAccepted() {
+        var template = synth();
+        var accountResourceId = template.findResources("AWS::ApiGateway::Resource").entrySet().stream()
+                .filter(e -> {
+                    var props = (Map<String, Object>) e.getValue().get("Properties");
+                    return "account".equals(props.get("PathPart"));
+                })
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("expected an account API Gateway resource"));
+
+        var method = template.findResources("AWS::ApiGateway::Method").values().stream()
                 .map(m -> (Map<String, Object>) m.get("Properties"))
                 .filter(p -> "DELETE".equals(p.get("HttpMethod")))
-                .filter(p -> requestTemplateBody(p).contains("\"operation\": \"ERASE\""))
+                .filter(p -> {
+                    var resourceRef = (Map<String, Object>) p.get("ResourceId");
+                    return resourceRef != null && accountResourceId.equals(resourceRef.get("Ref"));
+                })
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("expected the DELETE /user/account method to synth"));
-
-        var integration = (Map<String, Object>) method.get("Integration");
-        var integrationStatusCodes = ((List<Map<String, Object>>) integration.get("IntegrationResponses"))
-                .stream().map(r -> r.get("StatusCode")).toList();
-        assertEquals(List.of("202", "400", "500"), integrationStatusCodes);
+                .orElseThrow(() -> new AssertionError("expected the account resource's DELETE method to synth"));
 
         var methodStatusCodes = ((List<Map<String, Object>>) method.get("MethodResponses"))
                 .stream().map(r -> r.get("StatusCode")).toList();
-        assertEquals(List.of("202", "400", "500"), methodStatusCodes);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static String erasureDefinitionString() {
-        var props = synth().findResources("AWS::StepFunctions::StateMachine").values().stream()
-                .map(m -> (Map<String, Object>) m.get("Properties"))
-                .filter(p -> "financial-erasure-dev".equals(p.get("StateMachineName")))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("expected the erasure state machine to synth"));
-        var definitionString = (Map<String, Object>) props.get("DefinitionString");
-        var joinParts = (List<Object>) definitionString.get("Fn::Join");
-        return ((List<Object>) joinParts.get(1))
-                .stream()
-                        .filter(String.class::isInstance)
-                        .map(String.class::cast)
-                        .collect(Collectors.joining());
+        assertEquals(List.of("200", "400", "500"), methodStatusCodes);
+        assertFalse(methodStatusCodes.contains("202"), "DELETE /user/account must not return 202 anymore");
     }
 
     @SuppressWarnings("unchecked")

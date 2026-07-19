@@ -1,23 +1,26 @@
 package dev.engnotes.dsr.it;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dev.engnotes.dsr.model.DsrOperation;
 import dev.engnotes.dsr.model.DsrRequest;
 import dev.engnotes.dsr.model.DsrResponse;
-import dev.engnotes.dsr.model.ErasureStepResult;
+import dev.engnotes.dsr.model.ErasureResult;
 import dev.engnotes.dsr.model.UserDataExport;
 import dev.engnotes.dsr.service.CognitoUserService;
 import dev.engnotes.dsr.service.ErasureEmailService;
 import dev.engnotes.itsupport.AbstractLocalStackIT;
 import dev.engnotes.itsupport.PlatformSchema;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentMatchers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -28,25 +31,29 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 
 /**
- * Covers the erasure workflow's decomposed operations (spec s11, Task 11) by invoking the {@code dsr}
- * bean stepwise, in the same order the {@code financial-erasure} state machine would: MARK_PENDING,
- * DELETE_USER_ITEMS, S3_SAFEGUARD, DELETE_COGNITO_USER, SEND_CONFIRMATION_EMAIL, WRITE_ERASURE_AUDIT.
+ * Covers the DSR bean's EXPORT route and the collapsed ERASE cascade against real DynamoDB
+ * (LocalStack). The stepwise erasure-workflow tests that used to live here were deleted 2026-07-19
+ * (Task 3): they invoked the state machine's per-state operations, now removed, directly. Task 4
+ * rewrites ERASE coverage against the whole-cascade shape ({@link dev.engnotes.dsr.service.ErasureService}):
+ * one call in, one {@link ErasureResult} out, asserted on its externally visible effects (items gone,
+ * both audit records written) rather than on intermediate per-state records.
  *
- * <p>Not covered here (LocalStack Community has neither Step Functions nor SES nor Cognito):
- * the state machine itself (StartExecution, its own retry/Catch transitions, DELETE /user/account's
- * 202 response) - {@link dev.engnotes.dsr.service.ErasureWorkflowServiceTest} unit-tests StartExecution
- * against a mocked SfnClient instead, and the state machine's structure/retry/catch wiring is asserted
- * by the CDK tests in {@code infrastructure}'s QueryStackTest. Cognito and SES are mocked below, same
- * as the pre-existing EXPORT/ERASE coverage already mocked Cognito.
+ * <p>Cognito and SES are not in LocalStack Community, so {@link CognitoUserService} and
+ * {@link ErasureEmailService} are mocked, same mechanism the pre-collapse stepwise ITs used. Neither
+ * mock is stubbed here: the cascade's own null/false handling (no captured email, no Cognito user) is
+ * exactly what these tests exercise, since the seeded subjects have no matching Cognito identity.
+ *
+ * <p>Lease seeds below use real wall-clock {@code Instant.now()}: the Spring context wires the
+ * production {@code Clock.systemUTC()} bean ({@link dev.engnotes.dsr.config.AwsClientConfig#clock()}),
+ * and this IT does not override it, so the 5-minute staleness cutoff in
+ * {@link dev.engnotes.dsr.service.UserErasureService#acquireDeletionLease} is computed against real time.
  */
 @SpringBootTest
 class DsrBeanIT extends AbstractLocalStackIT {
 
-    // Cognito is LocalStack-Pro-only; mock the service so erasure completes without a real pool.
     @MockitoBean
     CognitoUserService cognitoUserService;
 
-    // SES is not in this LocalStack container's SERVICES list either; mock the send.
     @MockitoBean
     ErasureEmailService confirmationEmail;
 
@@ -82,26 +89,65 @@ class DsrBeanIT extends AbstractLocalStackIT {
                 .build());
     }
 
-    private boolean itemExists(String table, String pk, String sk) {
-        return dynamoDbClient
-                .getItem(GetItemRequest.builder()
-                        .tableName(table)
-                        .key(Map.of(
-                                "PK", AttributeValue.builder().s(pk).build(),
-                                "SK", AttributeValue.builder().s(sk).build()))
-                        .build())
-                .hasItem();
+    /** Seeds a deletion-pending lease directly on the platform table's {@code PROFILE} row. */
+    private void putProfileLease(String sub, String requestedAt) {
+        dynamoDbClient.putItem(PutItemRequest.builder()
+                .tableName(PlatformSchema.PLATFORM_TABLE)
+                .item(Map.of(
+                        "PK", AttributeValue.builder().s("USER#" + sub).build(),
+                        "SK", AttributeValue.builder().s("PROFILE").build(),
+                        "deletionPending", AttributeValue.builder().bool(true).build(),
+                        "requestedAt", AttributeValue.builder().s(requestedAt).build()))
+                .build());
     }
 
-    private Map<String, AttributeValue> getItem(String table, String pk, String sk) {
-        return dynamoDbClient
-                .getItem(GetItemRequest.builder()
-                        .tableName(table)
-                        .key(Map.of(
-                                "PK", AttributeValue.builder().s(pk).build(),
-                                "SK", AttributeValue.builder().s(sk).build()))
+    /** Reads a platform-table item by key, or {@code null} if absent. */
+    private Map<String, AttributeValue> getItem(String pk, String sk) {
+        var response = dynamoDbClient.getItem(GetItemRequest.builder()
+                .tableName(PlatformSchema.PLATFORM_TABLE)
+                .key(Map.of(
+                        "PK", AttributeValue.builder().s(pk).build(),
+                        "SK", AttributeValue.builder().s(sk).build()))
+                .build());
+        return response.hasItem() ? response.item() : null;
+    }
+
+    /** Asserts the per-user {@code ACCOUNT_ERASED} audit row exists, keyed by requestedAt#correlationId. */
+    private void assertAuditEventWritten(String pk, String eventType, String correlationId) {
+        var items = dynamoDbClient
+                .query(QueryRequest.builder()
+                        .tableName(PlatformSchema.AUDIT_TABLE)
+                        .keyConditionExpression("PK = :pk")
+                        .expressionAttributeValues(
+                                Map.of(":pk", AttributeValue.builder().s(pk).build()))
                         .build())
-                .item();
+                .items();
+        boolean found = items.stream()
+                .anyMatch(item -> item.get("SK").s().endsWith("#" + correlationId)
+                        && eventType.equals(item.get("eventType").s()));
+        assertThat(found)
+                .as("expected an %s audit row for %s under PK=%s", eventType, correlationId, pk)
+                .isTrue();
+    }
+
+    /** Asserts the hashed compliance row exists under today's {@code AUDIT#{type}#{date}} partition. */
+    private void assertComplianceRowWritten(String type, String correlationId) {
+        String date = LocalDate.now(ZoneOffset.UTC).toString();
+        var items = dynamoDbClient
+                .query(QueryRequest.builder()
+                        .tableName(PlatformSchema.AUDIT_TABLE)
+                        .keyConditionExpression("PK = :pk")
+                        .expressionAttributeValues(Map.of(
+                                ":pk",
+                                AttributeValue.builder()
+                                        .s("AUDIT#" + type + "#" + date)
+                                        .build()))
+                        .build())
+                .items();
+        boolean found = items.stream().anyMatch(item -> item.get("SK").s().endsWith("#" + correlationId));
+        assertThat(found)
+                .as("expected a %s compliance row for %s under date=%s", type, correlationId, date)
+                .isTrue();
     }
 
     @Test
@@ -128,7 +174,7 @@ class DsrBeanIT extends AbstractLocalStackIT {
                         .expressionAttributeValues(Map.of(
                                 ":pk",
                                 AttributeValue.builder()
-                                        .s("AUDIT#ACCESS#" + java.time.LocalDate.now(java.time.ZoneOffset.UTC))
+                                        .s("AUDIT#ACCESS#" + LocalDate.now(ZoneOffset.UTC))
                                         .build()))
                         .build())
                 .items();
@@ -141,164 +187,62 @@ class DsrBeanIT extends AbstractLocalStackIT {
     }
 
     @Test
-    void erasureWorkflowOperationsRunStepwiseAndCompleteWithAnAuditRecord() {
-        when(cognitoUserService.findEmailBySub(ArgumentMatchers.eq("subject-2")))
-                .thenReturn("subject2@example.com");
-        when(cognitoUserService.deleteBySub(ArgumentMatchers.eq("subject-2"))).thenReturn(true);
-        seedConsent("subject-2");
-        seedWatch("subject-2", "BBB.NS");
-        String requestedAt = "2026-07-14T09:00:00Z";
+    void eraseDeletesItemsMirrorsAndPendingAndWritesBothAuditRecords() {
+        seedConsent("sub-erase");
+        seedWatch("sub-erase", "TCS.NS");
 
-        var marked = (ErasureStepResult) dsr.apply(new DsrRequest(
-                DsrOperation.MARK_PENDING, null, null, "subject-2", null, "corr-mp", requestedAt, null, null));
-        assertThat(marked.email()).isEqualTo("subject2@example.com");
-        assertThat(itemExists(PlatformSchema.PLATFORM_TABLE, "USER#subject-2", "PROFILE"))
-                .isTrue();
+        DsrResponse response =
+                dsr.apply(new DsrRequest(DsrOperation.ERASE, "sub-erase", "users", null, "1.2.3.4", "corr-erase"));
 
-        var deleted = (ErasureStepResult) dsr.apply(new DsrRequest(
-                DsrOperation.DELETE_USER_ITEMS,
-                null,
-                null,
-                "subject-2",
-                null,
-                "corr-du",
-                requestedAt,
-                marked.email(),
-                null));
-        assertThat(deleted.itemsDeleted()).isEqualTo(3); // CONSENT + WATCH# + WATCHSET mirror
-        assertThat(itemExists(PlatformSchema.PLATFORM_TABLE, "USER#subject-2", "CONSENT"))
-                .isFalse();
-
-        dsr.apply(new DsrRequest(
-                DsrOperation.S3_SAFEGUARD,
-                null,
-                null,
-                "subject-2",
-                null,
-                "corr-s3",
-                requestedAt,
-                deleted.email(),
-                null));
-
-        var cognitoDeleted = (ErasureStepResult) dsr.apply(new DsrRequest(
-                DsrOperation.DELETE_COGNITO_USER,
-                null,
-                null,
-                "subject-2",
-                null,
-                "corr-dc",
-                requestedAt,
-                deleted.email(),
-                null));
-        assertThat(cognitoDeleted.cognitoUserDeleted()).isTrue();
-
-        var emailResult = (ErasureStepResult) dsr.apply(new DsrRequest(
-                DsrOperation.SEND_CONFIRMATION_EMAIL,
-                null,
-                null,
-                "subject-2",
-                null,
-                "corr-se",
-                requestedAt,
-                cognitoDeleted.email(),
-                null));
-        assertThat(emailResult.emailSent()).isTrue();
-        verify(confirmationEmail).sendConfirmation("subject2@example.com", "subject-2", requestedAt);
-
-        var audited = (ErasureStepResult) dsr.apply(new DsrRequest(
-                DsrOperation.WRITE_ERASURE_AUDIT,
-                "admin-caller",
-                null,
-                "subject-2",
-                "1.2.3.4",
-                "corr-wa",
-                requestedAt,
-                null,
-                emailResult.emailSent()));
-        assertThat(audited.completedAt()).isNotNull();
-        assertThat(itemExists(PlatformSchema.PLATFORM_TABLE, "USER#subject-2", "PROFILE"))
-                .isFalse();
-
-        var auditItems = dynamoDbClient
-                .query(QueryRequest.builder()
-                        .tableName(PlatformSchema.AUDIT_TABLE)
-                        .keyConditionExpression("PK = :pk")
-                        .expressionAttributeValues(Map.of(
-                                ":pk",
-                                AttributeValue.builder().s("USER#subject-2").build()))
-                        .build())
-                .items();
-        assertThat(auditItems).hasSize(1);
-        var event = auditItems.get(0);
-        assertThat(event.get("eventType").s()).isEqualTo("ACCOUNT_ERASED");
-        assertThat(event.get("actorSub").s()).isEqualTo("admin-caller");
-        assertThat(event.get("requestedAt").s()).isEqualTo(requestedAt);
-        assertThat(event.get("completedAt").s()).isEqualTo(audited.completedAt());
-        assertThat(event.get("emailSent").bool()).isTrue();
-
-        // Task 12: the hashed-subject ERASURE compliance record, date-partitioned off requestedAt
-        // (2026-07-14), keyed by exact PK/SK (not a partition Query) so it is unaffected by other
-        // tests' records sharing the same date partition. Carries no raw sub, no email, and the admin
-        // caller's sub hashed too.
-        var compliance = getItem(PlatformSchema.AUDIT_TABLE, "AUDIT#ERASURE#2026-07-14", requestedAt + "#corr-wa");
-        assertThat(compliance.get("eventType").s()).isEqualTo("ERASURE");
-        assertThat(compliance.get("emailSent").bool()).isTrue();
-        assertThat(compliance).doesNotContainKey("email").doesNotContainKey("sourceIp");
-        assertThat(compliance.toString()).doesNotContain("subject-2").doesNotContain("admin-caller");
+        ErasureResult result = (ErasureResult) response;
+        assertEquals("erased", result.status());
+        assertEquals(3, result.itemsDeleted()); // CONSENT + WATCH#TCS.NS + WATCHSET mirror
+        // platform table: CONSENT, WATCH#, WATCHSET mirror, and PROFILE (lease) all gone
+        assertNull(getItem("USER#sub-erase", "CONSENT"));
+        assertNull(getItem("USER#sub-erase", "WATCH#TCS.NS"));
+        assertNull(getItem("WATCHSET", "TICKER#TCS.NS"));
+        assertNull(getItem("USER#sub-erase", "PROFILE"));
+        // audit table: per-user ACCOUNT_ERASED row keyed by requestedAt#correlationId, plus the
+        // hashed compliance row under AUDIT#ERASURE#{date}
+        assertAuditEventWritten("USER#sub-erase", "ACCOUNT_ERASED", "corr-erase");
+        assertComplianceRowWritten("ERASURE", "corr-erase");
     }
 
-    // Simulates the state machine's Catch -> EmailFailed -> WriteErasureAudit path: SEND_CONFIRMATION_EMAIL
-    // must propagate the failure uncaught (proven here against the real dsr bean, not just a mock in
-    // DsrHandlerTest), and WriteErasureAudit given emailSent=false must still complete and record it.
     @Test
-    void emailFailurePropagatesButErasureStillCompletesWithEmailSentFalse() {
-        String requestedAt = "2026-07-14T09:00:00Z";
-        doThrow(new RuntimeException("SES sandbox rejection"))
-                .when(confirmationEmail)
-                .sendConfirmation("subject3@example.com", "subject-3", requestedAt);
+    void eraseRerunAfterCompletionIsIdempotent() {
+        seedConsent("sub-rerun");
+        dsr.apply(new DsrRequest(DsrOperation.ERASE, "sub-rerun", "users", null, null, "corr-a"));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> dsr.apply(new DsrRequest(
-                        DsrOperation.SEND_CONFIRMATION_EMAIL,
-                        null,
-                        null,
-                        "subject-3",
-                        null,
-                        "corr-se",
-                        requestedAt,
-                        "subject3@example.com",
-                        null)))
-                .isInstanceOf(RuntimeException.class);
+        DsrResponse second = dsr.apply(new DsrRequest(DsrOperation.ERASE, "sub-rerun", "users", null, null, "corr-b"));
 
-        // Distinct correlationId from the other erasure test ("corr-wa"): both tests share requestedAt
-        // "2026-07-14T09:00:00Z", and the hashed compliance record's SK is deterministic off
-        // requestedAt+correlationId, so a shared correlationId here would collide with (overwrite) the
-        // other test's record in the same AUDIT#ERASURE#2026-07-14 date partition.
-        var audited = (ErasureStepResult) dsr.apply(new DsrRequest(
-                DsrOperation.WRITE_ERASURE_AUDIT,
-                "subject-3",
-                null,
-                "subject-3",
-                null,
-                "corr-wa-3",
-                requestedAt,
-                null,
-                false));
-        assertThat(audited.emailSent()).isFalse();
+        ErasureResult result = (ErasureResult) second;
+        assertEquals("erased", result.status()); // lease was cleared by the first run, so re-acquire wins
+        assertEquals(1, result.itemsDeleted()); // only the unconditional CONSENT delete write remains
+    }
 
-        var auditItems = dynamoDbClient
-                .query(QueryRequest.builder()
-                        .tableName(PlatformSchema.AUDIT_TABLE)
-                        .keyConditionExpression("PK = :pk")
-                        .expressionAttributeValues(Map.of(
-                                ":pk",
-                                AttributeValue.builder().s("USER#subject-3").build()))
-                        .build())
-                .items();
-        assertThat(auditItems).hasSize(1);
-        assertThat(auditItems.get(0).get("emailSent").bool()).isFalse();
+    @Test
+    void concurrentDuplicateIsRefusedWhileLeaseHeld() {
+        // Seed a fresh lease directly (deletionPending=true, requestedAt=now) and call ERASE: the
+        // conditional put must lose and return inProgress without touching the seeded consent row.
+        seedConsent("sub-held");
+        putProfileLease("sub-held", Instant.now().toString());
 
-        var compliance = getItem(PlatformSchema.AUDIT_TABLE, "AUDIT#ERASURE#2026-07-14", requestedAt + "#corr-wa-3");
-        assertThat(compliance.get("emailSent").bool()).isFalse();
-        assertThat(compliance.toString()).doesNotContain("subject-3");
+        DsrResponse response = dsr.apply(new DsrRequest(DsrOperation.ERASE, "sub-held", "users", null, null, "corr-c"));
+
+        assertEquals("inProgress", ((ErasureResult) response).status());
+        assertNotNull(getItem("USER#sub-held", "CONSENT"));
+    }
+
+    @Test
+    void staleLeaseIsTakenOverAndCascadeCompletes() {
+        seedConsent("sub-stale");
+        putProfileLease("sub-stale", Instant.now().minus(Duration.ofMinutes(10)).toString());
+
+        DsrResponse response =
+                dsr.apply(new DsrRequest(DsrOperation.ERASE, "sub-stale", "users", null, null, "corr-d"));
+
+        assertEquals("erased", ((ErasureResult) response).status());
+        assertNull(getItem("USER#sub-stale", "CONSENT"));
+        assertNull(getItem("USER#sub-stale", "PROFILE"));
     }
 }
