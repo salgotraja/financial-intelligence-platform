@@ -52,12 +52,6 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
   save_state USER_POOL_ID "$pool_id"
   save_state CLIENT_ID "$client_id"
   log "API_URL=${api_url%/}  POOL=$pool_id  CLIENT=$client_id"
-
-  ws_url="$(aws cloudformation list-exports \
-    --query "Exports[?Name=='platform-websocket-endpoint-$ENV'].Value" --output text)"
-  [[ -n "$ws_url" && "$ws_url" != "None" ]] || die "platform-websocket-endpoint-$ENV export missing"
-  save_state WS_URL "$ws_url"
-  log "WS_URL=$ws_url"
 else
-  log "(dry-run) would capture platform-api-endpoint-$ENV / user-pool / client / websocket-endpoint exports"
+  log "(dry-run) would capture platform-api-endpoint-$ENV / user-pool / client exports"
 fi
