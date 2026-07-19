@@ -12,7 +12,8 @@ Cloud Function on Lambda, AWS CDK (Java) for infrastructure.
 
 ![Architecture](docs/assets/financial_intelligence_platform_architecture.drawio.png)
 
-Deployment view (AWS resources: VPC, private subnets, VPC endpoints, and the managed services):
+Deployment view (managed AWS services; all Lambdas run outside any VPC. The diagram still shows
+the earlier VPC grouping, refresh pending):
 
 ![Deployment architecture](docs/assets/financial_intelligence_platform_deployment.drawio.png)
 
@@ -55,7 +56,6 @@ financial-intelligence-platform/
 │       ├── FinancialPlatformApp.java
 │       └── stacks/
 │           ├── DataStack.java            # KMS, DynamoDB table + audit table, S3, SNS (persistent)
-│           ├── NetworkStack.java         # VPC, NAT, VPC endpoints (ephemeral)
 │           ├── SecurityStack.java        # Cognito pool, groups, MFA, postConfirmation trigger
 │           ├── IngestionStack.java       # EventBridge, Step Functions, Lambdas, DLQ
 │           └── QueryStack.java           # API Gateway, query/watchlist/consent/dsr Lambdas, authorizer, alarms
@@ -74,7 +74,7 @@ financial-intelligence-platform/
 
 The DPDP Security/compliance work from `docs/spec.md` is built: Cognito groups + MFA, consent
 triggers and gating, an append-only audit table, and right-to-access / right-to-erasure endpoints.
-The current stacks are Data, Network, Security, Ingestion, and Query.
+The current stacks are Data, Security, Ingestion, Query, and Realtime.
 
 ## Getting Started
 

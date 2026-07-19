@@ -2,7 +2,7 @@
 # FREE, OFFLINE query-path load test — no real AWS, no cost.
 # LocalStack DynamoDB + the query function running locally over HTTP + k6 against localhost.
 # It exercises the query logic, Jackson serialization, and the DynamoDB read path. It does NOT
-# cover auth / API Gateway / VPC / SnapStart (LocalStack Community can't; those are what the paid
+# cover auth / API Gateway / SnapStart (LocalStack Community can't; those are what the paid
 # real-AWS run in run-all.sh proves). Requires: docker, aws, jq, k6, Java 25.
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
