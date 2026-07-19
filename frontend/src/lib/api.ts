@@ -162,6 +162,9 @@ export interface ErasureResult {
   subjectSub: string | null
   itemsDeleted: number
   cognitoUserDeleted: boolean
+  emailSent: boolean
+  requestedAt: string | null
+  completedAt: string | null
 }
 
 export interface IngestAccepted {

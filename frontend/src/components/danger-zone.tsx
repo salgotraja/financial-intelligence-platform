@@ -41,6 +41,11 @@ export const DangerZone = () => {
   const onDelete = async () => {
     try {
       const result = await deleteAccount()
+      if (result.status === 'inProgress') {
+        setStatus('Deletion is already in progress. Try again in a few minutes.')
+        setOpen(false)
+        return
+      }
       if (result.status !== 'erased') {
         setStatus('Deletion was not permitted.')
         setOpen(false)
