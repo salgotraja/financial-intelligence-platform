@@ -25,8 +25,6 @@ import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
@@ -50,28 +48,6 @@ class UserErasureServiceTest {
     void setUp() {
         Clock clock = Clock.fixed(Instant.parse(INSTANT), ZoneOffset.UTC);
         erasure = new UserErasureService(dynamoDb, cognito, TABLE, clock);
-    }
-
-    @Test
-    void setDeletionPendingWritesProfileItemWithFlagAndTimestamp() {
-        erasure.setDeletionPending("user-1");
-
-        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
-        verify(dynamoDb).putItem(captor.capture());
-        PutItemRequest put = captor.getValue();
-        assertThat(put.tableName()).isEqualTo(TABLE);
-        assertThat(put.item().get("PK").s()).isEqualTo("USER#user-1");
-        assertThat(put.item().get("SK").s()).isEqualTo("PROFILE");
-        assertThat(put.item().get("deletionPending").bool()).isTrue();
-        assertThat(put.item().get("requestedAt").s()).isEqualTo(INSTANT);
-    }
-
-    @Test
-    void setDeletionPendingIsIdempotent() {
-        erasure.setDeletionPending("user-1");
-        erasure.setDeletionPending("user-1");
-
-        verify(dynamoDb, times(2)).putItem(any(PutItemRequest.class));
     }
 
     @Test
@@ -133,40 +109,6 @@ class UserErasureServiceTest {
 
         // CONSENT + 2 tickers * (WATCH# + WATCHSET) = 5 deletes
         assertThat(itemsDeleted).isEqualTo(5);
-    }
-
-    @Test
-    void isDeletionPendingReturnsTrueWhenFlagSet() {
-        when(dynamoDb.getItem(any(GetItemRequest.class)))
-                .thenReturn(GetItemResponse.builder()
-                        .item(Map.of(
-                                "PK", s("USER#user-1"),
-                                "SK", s("PROFILE"),
-                                "deletionPending",
-                                        AttributeValue.builder().bool(true).build()))
-                        .build());
-
-        assertThat(erasure.isDeletionPending("user-1")).isTrue();
-    }
-
-    @Test
-    void isDeletionPendingReturnsFalseWhenNoProfileItem() {
-        when(dynamoDb.getItem(any(GetItemRequest.class)))
-                .thenReturn(GetItemResponse.builder().build());
-
-        assertThat(erasure.isDeletionPending("user-1")).isFalse();
-    }
-
-    @Test
-    void isDeletionPendingReturnsFalseWhenFlagFalse() {
-        when(dynamoDb.getItem(any(GetItemRequest.class)))
-                .thenReturn(GetItemResponse.builder()
-                        .item(Map.of(
-                                "deletionPending",
-                                AttributeValue.builder().bool(false).build()))
-                        .build());
-
-        assertThat(erasure.isDeletionPending("user-1")).isFalse();
     }
 
     @Test

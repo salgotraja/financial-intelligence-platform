@@ -5,10 +5,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
-/**
- * SHA-256 hex digest shared by the hashed compliance audit records ({@link DsrAuditService}) and the
- * deterministic erasure execution name ({@link ErasureWorkflowService}).
- */
+/** SHA-256 hex digest backing the hashed compliance audit records ({@link DsrAuditService}). */
 final class Hashing {
 
     private Hashing() {}

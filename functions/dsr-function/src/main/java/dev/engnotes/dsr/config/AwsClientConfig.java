@@ -11,7 +11,6 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.sesv2.SesV2Client;
-import software.amazon.awssdk.services.sfn.SfnClient;
 
 /** AWS SDK v2 clients for the DSR path. aws.endpoint-url blank in prod, set in tests. */
 @Configuration
@@ -48,13 +47,6 @@ public class AwsClientConfig {
     @Bean
     public SesV2Client sesV2Client() {
         return withEndpoint(SesV2Client.builder())
-                .httpClient(UrlConnectionHttpClient.create())
-                .build();
-    }
-
-    @Bean
-    public SfnClient sfnClient() {
-        return withEndpoint(SfnClient.builder())
                 .httpClient(UrlConnectionHttpClient.create())
                 .build();
     }

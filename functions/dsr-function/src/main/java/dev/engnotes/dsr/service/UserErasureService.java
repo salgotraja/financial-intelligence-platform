@@ -17,7 +17,6 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.DeleteRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
@@ -30,25 +29,15 @@ import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
  * Idempotent and re-runnable: re-running an already-erased subject deletes the CONSENT key again
  * (no-op) and finds no Cognito user.
  *
- * <p>Spec s11 erasure step 1: {@link #setDeletionPending} writes {@code USER#{sub}/PROFILE}
- * ({@code deletionPending=true}, {@code requestedAt}) before any delete, so every gated write path
- * (watchlist add, consent grant) refuses for the duration of the
- * cascade. {@link #clearDeletionPending} deletes that item last. Both are public and independently
- * invokable (each a Step Functions state in Task 11) and idempotent: the put overwrites, the delete
- * of an absent key is a no-op.
+ * <p>{@link #deleteUserItems} is the DynamoDB-item cascade's shared core, invoked by
+ * {@link dev.engnotes.dsr.service.ErasureService#erase}. {@link #s3Safeguard} is a documented no-op:
+ * the data lake holds ticker/price time-series only, no subject-linked keys, and this module has no S3
+ * client or grant to act on regardless.
  *
- * <p>Task 11 decomposes the DynamoDB-item cascade itself into {@link #deleteUserItems}, the {@code
- * DELETE_USER_ITEMS} Step Functions state's shared core. {@link #isDeletionPending} backs the
- * workflow-start idempotency check (an already-pending subject is a no-op success, no second
- * execution). {@link #s3Safeguard} is a documented no-op: the data lake holds ticker/price time-series
- * only, no subject-linked keys, and this module has no S3 client or grant to act on regardless.
- *
- * <p>{@link #acquireDeletionLease} replaces the Step Functions deterministic-execution-name
- * idempotency (removed 2026-07-19) for the inline call-chain cascade: a conditional put that only a
- * fresh cascade can win, so a concurrent duplicate request is turned away and a crashed cascade's
- * stale lease is taken over on the next request. {@link #setDeletionPending} and {@link
- * #isDeletionPending} remain in place only until their remaining Step Functions-era callers
- * ({@link dev.engnotes.dsr.DsrHandler}, {@link ErasureWorkflowService}) are removed in a later task.
+ * <p>{@link #acquireDeletionLease} (Step Functions collapsed 2026-07-19) guards the inline call-chain
+ * cascade against concurrent duplicate requests: a conditional put that only a fresh cascade can win,
+ * so a concurrent duplicate request is turned away and a crashed cascade's stale lease is taken over on
+ * the next request. {@link #clearDeletionPending} clears that lease last.
  */
 @Service
 public class UserErasureService {
@@ -70,18 +59,6 @@ public class UserErasureService {
         this.cognito = cognito;
         this.platformTable = platformTable;
         this.clock = clock;
-    }
-
-    /** Marks the subject deletion-pending. Idempotent: a Put overwrites any existing flag. */
-    public void setDeletionPending(String subjectSub) {
-        Map<String, AttributeValue> item = new HashMap<>();
-        item.put("PK", AttributeValues.s("USER#" + subjectSub));
-        item.put("SK", AttributeValues.s("PROFILE"));
-        item.put("deletionPending", AttributeValue.builder().bool(true).build());
-        item.put("requestedAt", AttributeValues.s(Instant.now(clock).toString()));
-        dynamoDb.putItem(
-                PutItemRequest.builder().tableName(platformTable).item(item).build());
-        log.info("Set deletion-pending flag. subjectSub={}", subjectSub);
     }
 
     /**
@@ -156,17 +133,6 @@ public class UserErasureService {
 
         DynamoBatch.batchWriteAllWithRetry(dynamoDb, platformTable, writes);
         return writes.size();
-    }
-
-    /** True when the subject's PROFILE item carries {@code deletionPending=true}. */
-    public boolean isDeletionPending(String subjectSub) {
-        Map<String, AttributeValue> item = dynamoDb.getItem(GetItemRequest.builder()
-                        .tableName(platformTable)
-                        .key(Map.of("PK", AttributeValues.s("USER#" + subjectSub), "SK", AttributeValues.s("PROFILE")))
-                        .build())
-                .item();
-        AttributeValue flag = item == null ? null : item.get("deletionPending");
-        return flag != null && Boolean.TRUE.equals(flag.bool());
     }
 
     /**
