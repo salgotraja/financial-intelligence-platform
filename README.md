@@ -21,10 +21,10 @@ Two entry points and a CQRS split between generation (write) and serving (read):
 - Write path: EventBridge (or on-demand API) starts a Step Functions Distributed Map over the
   distinct union of users' watchlists, fetches and stores each ticker (DynamoDB hot + S3 lake),
   runs a z-score anomaly gate, resolves correlation grouping, then calls Bedrock (cross-region
-  inference profile, structured JSON with a rule-based fallback), stores the insight, and pushes
-  it over WebSocket.
+  inference profile, structured JSON with a rule-based fallback), and stores the insight.
 - Read path: API Gateway to the Query Lambda serves the latest cached insights and market data;
-  reads never invoke Bedrock, keeping p99 low.
+  reads never invoke Bedrock, keeping p99 low. The frontend polls the insight endpoint on a 60s
+  interval during market hours, matching the API Gateway response-cache TTL.
 - Identity and governance: Cognito multi-tenant auth with DPDP consent, purpose-limiting groups,
   right-to-access and right-to-erasure, and an append-only audit trail. See the
   [governance flow](docs/assets/financial_intelligence_platform_dpdp_governance.drawio.png) and
@@ -42,7 +42,7 @@ Two entry points and a CQRS split between generation (write) and serving (read):
 | Identity | Cognito (multi-tenant, DPDP) | Auth, consent, groups, erasure |
 | Hot storage | DynamoDB (single-table) | Sub-ms reads, TTL expiry |
 | Cold storage | S3 | Date-partitioned for Athena |
-| Delivery | API Gateway REST + WebSocket | Cached reads, live insight push |
+| Delivery | API Gateway REST | Cached reads, 60s market-hours polling |
 | Observability | CloudWatch + X-Ray | Traces, metrics, alarms |
 | CI/CD | GitHub Actions | Dev auto-deploy, prod manual gate |
 
@@ -73,7 +73,7 @@ financial-intelligence-platform/
 
 The DPDP Security/compliance work from `docs/spec.md` is built: Cognito groups + MFA, consent
 triggers and gating, an append-only audit table, and right-to-access / right-to-erasure endpoints.
-The current stacks are Data, Security, Ingestion, Query, and Realtime.
+The current stacks are Data, Security, Ingestion, and Query.
 
 ## Getting Started
 
