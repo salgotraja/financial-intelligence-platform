@@ -23,6 +23,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
@@ -166,6 +167,37 @@ class UserErasureServiceTest {
                         .build());
 
         assertThat(erasure.isDeletionPending("user-1")).isFalse();
+    }
+
+    @Test
+    void acquireDeletionLeaseWritesConditionalPutWithLeaseCutoff() {
+        boolean acquired = erasure.acquireDeletionLease("sub-1", "2026-06-28T00:00:00Z");
+
+        assertThat(acquired).isTrue();
+        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamoDb).putItem(captor.capture());
+        PutItemRequest put = captor.getValue();
+        assertThat(put.item().get("PK").s()).isEqualTo("USER#sub-1");
+        assertThat(put.item().get("SK").s()).isEqualTo("PROFILE");
+        assertThat(put.item().get("deletionPending").bool()).isTrue();
+        assertThat(put.item().get("requestedAt").s()).isEqualTo("2026-06-28T00:00:00Z");
+        assertThat(put.conditionExpression())
+                .isEqualTo("attribute_not_exists(deletionPending) OR deletionPending <> :pending OR requestedAt <"
+                        + " :staleCutoff");
+        assertThat(put.expressionAttributeValues().get(":pending").bool()).isTrue();
+        // cutoff is clock-now minus 5 minutes
+        assertThat(put.expressionAttributeValues().get(":staleCutoff").s()).isEqualTo("2026-06-27T23:55:00Z");
+    }
+
+    @Test
+    void acquireDeletionLeaseReturnsFalseWhenConditionFails() {
+        when(dynamoDb.putItem(any(PutItemRequest.class)))
+                .thenThrow(ConditionalCheckFailedException.builder()
+                        .message("in flight")
+                        .build());
+
+        assertThat(erasure.acquireDeletionLease("sub-1", "2026-06-28T00:00:00Z"))
+                .isFalse();
     }
 
     @Test

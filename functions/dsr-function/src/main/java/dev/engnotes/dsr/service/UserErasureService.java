@@ -1,6 +1,7 @@
 package dev.engnotes.dsr.service;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -13,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.DeleteRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
@@ -40,11 +42,19 @@ import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
  * workflow-start idempotency check (an already-pending subject is a no-op success, no second
  * execution). {@link #s3Safeguard} is a documented no-op: the data lake holds ticker/price time-series
  * only, no subject-linked keys, and this module has no S3 client or grant to act on regardless.
+ *
+ * <p>{@link #acquireDeletionLease} replaces the Step Functions deterministic-execution-name
+ * idempotency (removed 2026-07-19) for the inline call-chain cascade: a conditional put that only a
+ * fresh cascade can win, so a concurrent duplicate request is turned away and a crashed cascade's
+ * stale lease is taken over on the next request. {@link #setDeletionPending} and {@link
+ * #isDeletionPending} remain in place only until their remaining Step Functions-era callers
+ * ({@link dev.engnotes.dsr.DsrHandler}, {@link ErasureWorkflowService}) are removed in a later task.
  */
 @Service
 public class UserErasureService {
 
     private static final Logger log = LoggerFactory.getLogger(UserErasureService.class);
+    static final Duration DELETION_LEASE = Duration.ofMinutes(5);
 
     private final DynamoDbClient dynamoDb;
     private final CognitoUserService cognito;
@@ -72,6 +82,37 @@ public class UserErasureService {
         dynamoDb.putItem(
                 PutItemRequest.builder().tableName(platformTable).item(item).build());
         log.info("Set deletion-pending flag. subjectSub={}", subjectSub);
+    }
+
+    /**
+     * Acquires the deletion-pending lease: writes {@code USER#{sub}/PROFILE} with {@code
+     * deletionPending=true} on condition that no fresh cascade holds it (flag absent, false, or older
+     * than the 5-minute lease). The winner runs the cascade, a concurrent duplicate gets {@code false},
+     * and a crashed cascade's stale lease is taken over on the next request.
+     */
+    public boolean acquireDeletionLease(String subjectSub, String requestedAt) {
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put("PK", AttributeValues.s("USER#" + subjectSub));
+        item.put("SK", AttributeValues.s("PROFILE"));
+        item.put("deletionPending", AttributeValue.builder().bool(true).build());
+        item.put("requestedAt", AttributeValues.s(requestedAt));
+        String staleCutoff = Instant.now(clock).minus(DELETION_LEASE).toString();
+        try {
+            dynamoDb.putItem(PutItemRequest.builder()
+                    .tableName(platformTable)
+                    .item(item)
+                    .conditionExpression("attribute_not_exists(deletionPending) OR deletionPending <> :pending"
+                            + " OR requestedAt < :staleCutoff")
+                    .expressionAttributeValues(Map.of(
+                            ":pending", AttributeValue.builder().bool(true).build(),
+                            ":staleCutoff", AttributeValues.s(staleCutoff)))
+                    .build());
+            log.info("Acquired deletion lease. subjectSub={}", subjectSub);
+            return true;
+        } catch (ConditionalCheckFailedException e) {
+            log.info("Deletion lease held by an in-flight cascade; no-op. subjectSub={}", subjectSub);
+            return false;
+        }
     }
 
     /** Clears the deletion-pending flag. Idempotent: deleting an absent key is a no-op. */
