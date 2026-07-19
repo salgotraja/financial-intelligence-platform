@@ -1,6 +1,7 @@
 package dev.engnotes.query.service;
 
 import dev.engnotes.query.model.Band52w;
+import dev.engnotes.query.model.DailyMarketDataResponse;
 import dev.engnotes.query.model.DailyPoint;
 import dev.engnotes.query.model.DayMove;
 import dev.engnotes.query.model.DeepAnalysisResponse;
@@ -51,8 +52,28 @@ public class DeepAnalysisService {
         this.clock = clock;
     }
 
+    /**
+     * Fetches dailies once, then the latest TS# point itself with the canonical ticker (mirrors
+     * the fetch band52w used to do) - skipped when there's no history to analyze. Used by the
+     * {@code serveDeepAnalysis} bean, which has no pre-fetched point to hand in.
+     */
     public DeepAnalysisResponse analyze(String rawTicker) {
         var daily = dailyMarketDataQuery.findDailyPoints(rawTicker, FETCH_DAYS);
+        Optional<MarketDataPoint> latestPoint =
+                daily.found() ? marketDataQuery.findLatestPoint(daily.ticker()) : Optional.empty();
+        return analyze(daily, latestPoint);
+    }
+
+    /**
+     * Uses the supplied point in {@code band52w} instead of fetching it, so callers that already
+     * hold the latest point (e.g. {@code StoryQuery}) avoid a duplicate DynamoDB read.
+     */
+    public DeepAnalysisResponse analyze(String rawTicker, Optional<MarketDataPoint> latestPoint) {
+        var daily = dailyMarketDataQuery.findDailyPoints(rawTicker, FETCH_DAYS);
+        return analyze(daily, latestPoint);
+    }
+
+    private DeepAnalysisResponse analyze(DailyMarketDataResponse daily, Optional<MarketDataPoint> latestPoint) {
         String ticker = daily.ticker();
         String generatedAt = Instant.now(clock).toString();
         if (!daily.found()) {
@@ -68,7 +89,7 @@ public class DeepAnalysisService {
         for (Horizon horizon : HORIZONS) {
             horizons.add(computeHorizon(horizon, ascending));
         }
-        Band52w band = band52w(ticker, ascending);
+        Band52w band = band52w(latestPoint, ascending);
 
         log.info("Deep analysis computed. ticker={} rows={} band={}", ticker, ascending.size(), band.source());
         return new DeepAnalysisResponse(ticker, generatedAt, horizons, band, true);
@@ -171,8 +192,7 @@ public class DeepAnalysisService {
                 volumeTrend);
     }
 
-    private Band52w band52w(String ticker, List<DailyPoint> ascending) {
-        Optional<MarketDataPoint> latest = marketDataQuery.findLatestPoint(ticker);
+    private Band52w band52w(Optional<MarketDataPoint> latest, List<DailyPoint> ascending) {
         BigDecimal high;
         BigDecimal low;
         String source;

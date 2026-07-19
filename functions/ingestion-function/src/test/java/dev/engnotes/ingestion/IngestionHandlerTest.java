@@ -1,6 +1,7 @@
 package dev.engnotes.ingestion;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -174,7 +175,7 @@ class IngestionHandlerTest {
     }
 
     @Test
-    void backfillBeanSkipsMalformedRecordsAndSurvivesPerTickerFailures() {
+    void backfillBeanSkipsMalformedRecordsButRethrowsOnPerTickerFailure() {
         when(backfillService.backfill("TCS.NS", "stream-backfill")).thenThrow(new RuntimeException("yahoo 429"));
         var bean = handler.backfillDailyHistory(backfillService);
 
@@ -188,12 +189,42 @@ class IngestionHandlerTest {
                                 "dynamodb",
                                 Map.of("NewImage", Map.of("ticker", Map.of("S", "TCS.NS"))))));
 
-        Map<String, Object> summary = bean.apply(event);
+        assertThatThrownBy(() -> bean.apply(event))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("1")
+                .hasMessageContaining("TCS.NS");
+    }
 
-        assertThat(summary)
-                .containsEntry("processed", 1)
-                .containsEntry("written", 0)
-                .containsEntry("skipped", 0);
+    @Test
+    void backfillBeanAttemptsAllTickersThenRethrowsWithFailedTickerAfterSuccessfulWrite() {
+        when(backfillService.backfill("INFY.NS", "stream-backfill"))
+                .thenReturn(new HistoryBackfillService.BackfillResult("INFY.NS", 240, 5));
+        when(backfillService.backfill("TCS.NS", "stream-backfill")).thenThrow(new RuntimeException("yahoo 429"));
+        var bean = handler.backfillDailyHistory(backfillService);
+
+        Map<String, Object> event =
+                Map.of("Records", List.of(watchsetInsertRecord("INFY.NS"), watchsetInsertRecord("TCS.NS")));
+
+        assertThatThrownBy(() -> bean.apply(event))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("1")
+                .hasMessageContaining("TCS.NS");
+
+        verify(backfillService).backfill("INFY.NS", "stream-backfill");
+        verify(backfillService).backfill("TCS.NS", "stream-backfill");
+    }
+
+    private static Map<String, Object> watchsetInsertRecord(String ticker) {
+        return Map.of(
+                "eventName",
+                "INSERT",
+                "dynamodb",
+                Map.of(
+                        "NewImage",
+                        Map.of(
+                                "PK", Map.of("S", "WATCHSET"),
+                                "SK", Map.of("S", "TICKER#" + ticker),
+                                "ticker", Map.of("S", ticker))));
     }
 
     private static MarketDataResponse.Builder base() {

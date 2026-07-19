@@ -329,10 +329,12 @@ public class IngestionStack extends Stack {
                 .build();
 
         // Small batches (watch adds arrive one at a time) and bounded retries: a poison record
-        // must not block the shard. These retries only cover batch-level crashes (e.g. the bean
-        // throwing before per-ticker processing) — a per-ticker Yahoo fetch failure is caught and
-        // logged inside the bean, so it never triggers a mapping retry; the sweep script re-covers
-        // any missed ticker instead.
+        // must not block the shard. Per-ticker isolation still holds inside a batch (one bad
+        // ticker doesn't stop the others from being attempted), but the bean now rethrows after
+        // the loop if any ticker failed, so these retries genuinely re-run the batch for
+        // transient failures (Yahoo hiccup, DDB throttle) — safe because the backfill is
+        // idempotent (conditional puts make a retried already-succeeded ticker a no-op). Once
+        // retries are exhausted the record is dropped; the sweep script remains the backstop.
         historyBackfillAlias.addEventSource(DynamoEventSource.Builder.create(data.getPlatformTable())
                 .startingPosition(StartingPosition.LATEST)
                 .batchSize(5)

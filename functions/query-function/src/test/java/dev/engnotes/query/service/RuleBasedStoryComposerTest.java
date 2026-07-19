@@ -212,4 +212,56 @@ class RuleBasedStoryComposerTest {
 
         assertThat(withPack.story()).isEqualTo(withoutPack.story()); // partial data adds nothing
     }
+
+    @Test
+    void bandPositionExactly66_67ReadsUpper() {
+        HorizonStats year = new HorizonStats(
+                "1Y", 251, false, new BigDecimal("28.30"), null, null, null, null, null, null, 150, 100, null, null);
+        Band52w band =
+                new Band52w(new BigDecimal("130"), new BigDecimal("90"), new BigDecimal("66.67"), "HIGH_LOW_52W");
+        var analysis = new DeepAnalysisResponse(TICKER, "2026-07-17T10:00:00Z", List.of(year), band, true);
+
+        Composition composition = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), analysis);
+
+        assertThat(composition.story()).contains("It trades in the upper third of its 52-week range.");
+    }
+
+    @Test
+    void bandPositionExactly33_33ReadsLower() {
+        HorizonStats year = new HorizonStats(
+                "1Y", 251, false, new BigDecimal("28.30"), null, null, null, null, null, null, 150, 100, null, null);
+        Band52w band =
+                new Band52w(new BigDecimal("130"), new BigDecimal("90"), new BigDecimal("33.33"), "HIGH_LOW_52W");
+        var analysis = new DeepAnalysisResponse(TICKER, "2026-07-17T10:00:00Z", List.of(year), band, true);
+
+        Composition composition = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), analysis);
+
+        assertThat(composition.story()).contains("It trades in the lower third of its 52-week range.");
+    }
+
+    @Test
+    void bandPositionJustBelow66_67ReadsMiddle() {
+        HorizonStats year = new HorizonStats(
+                "1Y", 251, false, new BigDecimal("28.30"), null, null, null, null, null, null, 150, 100, null, null);
+        Band52w band =
+                new Band52w(new BigDecimal("130"), new BigDecimal("90"), new BigDecimal("66.66"), "HIGH_LOW_52W");
+        var analysis = new DeepAnalysisResponse(TICKER, "2026-07-17T10:00:00Z", List.of(year), band, true);
+
+        Composition composition = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), analysis);
+
+        assertThat(composition.story()).contains("It trades in the middle third of its 52-week range.");
+    }
+
+    @Test
+    void bandPositionJustAbove33_33ReadsMiddle() {
+        HorizonStats year = new HorizonStats(
+                "1Y", 251, false, new BigDecimal("28.30"), null, null, null, null, null, null, 150, 100, null, null);
+        Band52w band =
+                new Band52w(new BigDecimal("130"), new BigDecimal("90"), new BigDecimal("33.34"), "HIGH_LOW_52W");
+        var analysis = new DeepAnalysisResponse(TICKER, "2026-07-17T10:00:00Z", List.of(year), band, true);
+
+        Composition composition = composer.compose(TICKER, richWeek(), Optional.empty(), Optional.empty(), analysis);
+
+        assertThat(composition.story()).contains("It trades in the middle third of its 52-week range.");
+    }
 }

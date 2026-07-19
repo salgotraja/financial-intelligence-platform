@@ -1,6 +1,10 @@
 package dev.engnotes.query.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.engnotes.query.model.DailyMarketDataResponse;
@@ -190,6 +194,58 @@ class DeepAnalysisServiceTest {
         assertThat(response.found()).isFalse();
         assertThat(response.horizons()).isEmpty();
         assertThat(response.band52w()).isNull();
+    }
+
+    @Test
+    void overloadUsesSuppliedLatestPointWithoutFetchingItAgain() {
+        when(dailyMarketDataQuery.findDailyPoints("INFY.NS", "260"))
+                .thenReturn(new DailyMarketDataResponse("INFY.NS", sixDays(), true));
+        Optional<MarketDataPoint> supplied = Optional.of(new MarketDataPoint(
+                "2026-07-17T09:59:00Z",
+                new BigDecimal("106"),
+                null,
+                null,
+                null,
+                null,
+                new BigDecimal("130"),
+                new BigDecimal("90")));
+
+        DeepAnalysisResponse response = service.analyze("INFY.NS", supplied);
+
+        assertThat(response.band52w().source()).isEqualTo("HIGH_LOW_52W");
+        assertThat(response.band52w().high()).isEqualByComparingTo("130");
+        assertThat(response.band52w().low()).isEqualByComparingTo("90");
+        verify(marketDataQuery, never()).findLatestPoint(any());
+        // The 260-row daily fetch is expensive; the overload must not re-fetch it.
+        verify(dailyMarketDataQuery, times(1)).findDailyPoints("INFY.NS", "260");
+    }
+
+    @Test
+    void singleArgPathFetchesLatestPointWithTheCanonicalTicker() {
+        // Raw ticker differs from canonical, matching StoryQuery's normalization case.
+        when(dailyMarketDataQuery.findDailyPoints(any(), any()))
+                .thenReturn(new DailyMarketDataResponse("^NSEI", sixDays(), true));
+        when(marketDataQuery.findLatestPoint("^NSEI")).thenReturn(Optional.empty());
+
+        service.analyze("%5ENSEI");
+
+        verify(marketDataQuery).findLatestPoint("^NSEI");
+        verify(marketDataQuery, never()).findLatestPoint("%5ENSEI");
+        // Single-arg path must fetch dailies exactly once, not once to resolve the canonical
+        // ticker and again via delegation - that would double an expensive ~260-row query.
+        verify(dailyMarketDataQuery, times(1)).findDailyPoints("%5ENSEI", "260");
+    }
+
+    @Test
+    void singleArgPathSkipsLatestPointFetchWhenNoHistoryFound() {
+        when(dailyMarketDataQuery.findDailyPoints("EMPTY.NS", "260"))
+                .thenReturn(DailyMarketDataResponse.notFound("EMPTY.NS"));
+
+        DeepAnalysisResponse response = service.analyze("EMPTY.NS");
+
+        assertThat(response.found()).isFalse();
+        verify(marketDataQuery, never()).findLatestPoint(any());
+        verify(dailyMarketDataQuery, times(1)).findDailyPoints("EMPTY.NS", "260");
     }
 
     @Test

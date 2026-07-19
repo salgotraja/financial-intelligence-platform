@@ -70,6 +70,15 @@ describe('DeepAnalysisPanel', () => {
     expect(screen.getByText(/52-week range/i)).toBeInTheDocument()
   })
 
+  it('exposes the 52-week band bar as an ARIA meter with correct valuenow', async () => {
+    getDeepAnalysis.mockResolvedValue(analysis)
+
+    render(<DeepAnalysisPanel symbol="X" enabled />)
+
+    const meter = await screen.findByRole('meter')
+    expect(meter).toHaveAttribute('aria-valuenow', '40')
+  })
+
   it('renders the empty state when no history exists', async () => {
     getDeepAnalysis.mockResolvedValue({
       ticker: 'X',
