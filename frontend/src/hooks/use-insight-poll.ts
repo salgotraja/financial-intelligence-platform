@@ -13,7 +13,7 @@ const MAX_TICKERS = 25
 
 /**
  * Polls GET /insights/{ticker} every 60s while the NSE session is open, replacing the
- * former WebSocket push feed (ADR 0005). Consumers still do their own one-shot initial
+ * former WebSocket push feed. Consumers still do their own one-shot initial
  * fetch; this hook only layers fresher insights on top, so the first poll fires one
  * interval after mount. Outside market hours nothing new can land on the 5-minute
  * ingestion schedule, and the post-ingest 35s/75s reload timers cover manual refreshes.
