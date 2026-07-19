@@ -98,8 +98,8 @@ class DsrAuditServiceTest {
     void recordErasureCompletionRetryWithSameRequestedAtAndCorrelationIdOverwritesSameKey() {
         DsrAuditService audit = new DsrAuditService(dynamoDb, AUDIT_TABLE, clock);
 
-        // First attempt fails downstream after the write; the state machine retries the whole state,
-        // which re-invokes this method with the same requestedAt/correlationId but a later completedAt.
+        // First attempt fails downstream after the write; a repeat of the erasure cascade re-invokes
+        // this method with the same requestedAt/correlationId but a later completedAt.
         audit.recordErasureCompletion(
                 "user-5", "user-5", null, "corr-retry", "2026-06-28T09:00:00Z", "2026-06-28T09:05:00Z", false);
         audit.recordErasureCompletion(
