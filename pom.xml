@@ -25,7 +25,6 @@
         <module>functions/authorizer-function</module>
         <module>functions/consent-function</module>
         <module>functions/dsr-function</module>
-        <module>functions/notifier-function</module>
         <module>infrastructure</module>
     </modules>
 
