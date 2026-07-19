@@ -20,7 +20,6 @@ fi
 
 STACK_DATA="FinancialPlatform-Data-$ENV"
 STACK_SECURITY="FinancialPlatform-Security-$ENV"
-STACK_NETWORK="FinancialPlatform-Network-$ENV"
 STACK_INGESTION="FinancialPlatform-Ingestion-$ENV"
 STACK_QUERY="FinancialPlatform-Query-$ENV"
 STACK_REALTIME="FinancialPlatform-Realtime-$ENV"

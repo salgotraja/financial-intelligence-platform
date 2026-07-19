@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Destroy every ephemeral stack (Realtime, Query, Ingestion, Network, Security), keeping ONLY DataStack.
+# Destroy every ephemeral stack (Realtime, Query, Ingestion, Security), keeping ONLY DataStack.
 # DataStack holds the deletion-protected, permanent DPDP audit table and is NEVER a destroy target.
 # cdk resolves the safe destroy order from stack dependencies (Realtime/Query before Security, etc.). Idempotent.
 source "$(dirname "$0")/lib/common.sh"
@@ -8,12 +8,12 @@ source "$(dirname "$0")/lib/common.sh"
 # enforce the "never prod" invariant itself (it does not call preflight()).
 [[ "$ENV" == "dev" ]] || die "teardown is dev-only (ENV=$ENV); refusing to destroy"
 
-log "Destroying $STACK_REALTIME, $STACK_QUERY, $STACK_INGESTION, $STACK_NETWORK, $STACK_SECURITY (only Data retained)..."
+log "Destroying $STACK_REALTIME, $STACK_QUERY, $STACK_INGESTION, $STACK_SECURITY (only Data retained)..."
 # Own --output dir: the CDK CLI locks cdk.out, so sharing it with a manual cdk session (deploy,
 # watch, diff) fails with "Other CLIs (PID=...) are currently reading from cdk.out".
 CDK_OUT="$(mktemp -d "${TMPDIR:-/tmp}/cdk-teardown.XXXXXX")"
 trap 'rm -rf "$CDK_OUT"' EXIT
-run bash -c "cd '$REPO_ROOT/infrastructure' && $CDK destroy '$STACK_REALTIME' '$STACK_QUERY' '$STACK_INGESTION' '$STACK_NETWORK' '$STACK_SECURITY' --context env=$ENV --force --output '$CDK_OUT'"
+run bash -c "cd '$REPO_ROOT/infrastructure' && $CDK destroy '$STACK_REALTIME' '$STACK_QUERY' '$STACK_INGESTION' '$STACK_SECURITY' --context env=$ENV --force --output '$CDK_OUT'"
 
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
   log "Verifying DataStack survived (audit table is deletion-protected and permanent)..."

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build function jars, deploy all 6 CDK stacks to env=dev, disable the ingest schedule,
+# Build function jars, deploy all 5 CDK stacks to env=dev, disable the ingest schedule,
 # and capture API/Cognito outputs to state. QueryStack hard-depends on IngestionStack, so
 # --all is required; the schedule rule is disabled immediately to avoid Bedrock/ingest spend.
 source "$(dirname "$0")/lib/common.sh"
@@ -34,7 +34,7 @@ else
   log "(dry-run) would delete orphan 'financial' log groups not owned by any live platform stack"
 fi
 
-log "Deploying all 6 stacks (env=$ENV, alertEmail=${ALERT_EMAIL:-<stack default>})..."
+log "Deploying all 5 stacks (env=$ENV, alertEmail=${ALERT_EMAIL:-<stack default>})..."
 run bash -c "cd '$REPO_ROOT/infrastructure' && $CDK deploy --all --context env=$ENV${ALERT_EMAIL:+ --context alertEmail=$ALERT_EMAIL} --require-approval never"
 
 log "Disabling all scheduled rules to neutralize Bedrock/ingest spend..."
