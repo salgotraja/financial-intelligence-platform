@@ -6,7 +6,7 @@
 source "$(dirname "$0")/lib/common.sh"
 preflight
 load_state
-[[ -n "${API_URL:-}" && -n "${USER_POOL_ID:-}" && -n "${CLIENT_ID:-}" && -n "${WS_URL:-}" ]] \
+[[ -n "${API_URL:-}" && -n "${USER_POOL_ID:-}" && -n "${CLIENT_ID:-}" ]] \
   || die "state.env incomplete — run scripts/deploy-ephemeral.sh first"
 
 APP_NAME="financial-intelligence-frontend"
@@ -30,7 +30,7 @@ COGNITO_DOMAIN="$domain_prefix.auth.$REGION.amazoncognito.com"
 log "Updating Amplify env ($APP_ID) to pool=$USER_POOL_ID client=$CLIENT_ID..."
 # --environment-variables REPLACES the whole map: every var must be listed.
 run aws amplify update-app --app-id "$APP_ID" --environment-variables \
-  "AMPLIFY_MONOREPO_APP_ROOT=frontend,NEXT_PUBLIC_API_URL=$API_URL,NEXT_PUBLIC_WS_URL=$WS_URL,NEXT_PUBLIC_USER_POOL_ID=$USER_POOL_ID,NEXT_PUBLIC_USER_POOL_CLIENT_ID=$CLIENT_ID,NEXT_PUBLIC_COGNITO_DOMAIN=$COGNITO_DOMAIN,NEXT_PUBLIC_SIGNIN_REDIRECT=$APP_URL/callback,NEXT_PUBLIC_SIGNOUT_REDIRECT=$APP_URL" >/dev/null
+  "AMPLIFY_MONOREPO_APP_ROOT=frontend,NEXT_PUBLIC_API_URL=$API_URL,NEXT_PUBLIC_USER_POOL_ID=$USER_POOL_ID,NEXT_PUBLIC_USER_POOL_CLIENT_ID=$CLIENT_ID,NEXT_PUBLIC_COGNITO_DOMAIN=$COGNITO_DOMAIN,NEXT_PUBLIC_SIGNIN_REDIRECT=$APP_URL/callback,NEXT_PUBLIC_SIGNOUT_REDIRECT=$APP_URL" >/dev/null
 
 log "Starting RELEASE build..."
 job_id="$(aws amplify start-job --app-id "$APP_ID" --branch-name main --job-type RELEASE \

@@ -34,8 +34,9 @@ dual-writes a hot point to DynamoDB and a cold object to the S3 lake, updating t
 z-score baseline. When a z-score anomaly fires, the correlation grouping for that ticker is
 resolved and the insight Lambda assembles cross-ticker context, calls Bedrock through the
 cross-region inference profile, validates the structured JSON (falling back to rule-based on
-throttle, invalid output, or an open cost circuit breaker), stores the insight, and pushes it
-over WebSocket to users whose watchlist intersects the insight's tickers.
+throttle, invalid output, or an open cost circuit breaker), and stores the insight. Clients
+pick up new insights through the read path below; the frontend polls on a 60s interval during
+market hours.
 
 Read path (serving, CQRS):
 `GET /insights` returns the latest cached insights touching the caller's watchlist;

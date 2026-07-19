@@ -30,7 +30,7 @@ import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
  *
  * <p>Spec s11 erasure step 1: {@link #setDeletionPending} writes {@code USER#{sub}/PROFILE}
  * ({@code deletionPending=true}, {@code requestedAt}) before any delete, so every gated write path
- * (watchlist add, consent grant, WebSocket connect/subscribe) refuses for the duration of the
+ * (watchlist add, consent grant) refuses for the duration of the
  * cascade. {@link #clearDeletionPending} deletes that item last. Both are public and independently
  * invokable (each a Step Functions state in Task 11) and idempotent: the put overwrites, the delete
  * of an absent key is a no-op.

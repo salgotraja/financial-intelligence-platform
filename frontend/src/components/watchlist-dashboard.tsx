@@ -13,7 +13,7 @@ import { KNOWN_TICKERS } from '@/lib/tickers'
 import { useAuthStore } from '@/stores/auth-store'
 import { useAsyncData } from '@/hooks/use-async-data'
 import { useWatchlistDashboard } from '@/hooks/use-watchlist-dashboard'
-import { useInsightFeed } from '@/hooks/use-insight-feed'
+import { useInsightPoll } from '@/hooks/use-insight-poll'
 import { BrowseGrid } from './browse-grid'
 import { IndexChart } from './index-chart'
 import { LiveDot } from './live-dot'
@@ -35,7 +35,7 @@ export const WatchlistDashboard = () => {
   } = useAsyncData(getWatchlist, canManage)
   const tickers = useMemo(() => watchlist?.tickers ?? [], [watchlist])
   const entries = useWatchlistDashboard(tickers)
-  const { insights, connected } = useInsightFeed(tickers)
+  const insights = useInsightPoll(tickers)
 
   const mood = useMemo(() => {
     const inputs: MoodInput[] = tickers.map((ticker) => {
@@ -117,7 +117,7 @@ export const WatchlistDashboard = () => {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <span className="flex items-center gap-3">
           <h1 className="text-xl font-semibold tracking-tight">Watchlist</h1>
-          <LiveDot open={isMarketOpen(new Date())} connected={connected} />
+          <LiveDot open={isMarketOpen(new Date())} />
         </span>
         <form onSubmit={(e) => void onAdd(e)} className="flex gap-2">
           <Input

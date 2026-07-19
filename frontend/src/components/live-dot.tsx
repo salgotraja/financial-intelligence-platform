@@ -1,24 +1,18 @@
-// Market session takes priority over feed connectivity: outside NSE hours the feed is
-// idle by design, so "CLOSED" is the honest label even while the socket stays connected.
-export const LiveDot = ({ open, connected }: { open: boolean; connected: boolean }) => {
-  const live = open && connected
-  const label = !open ? 'CLOSED' : connected ? 'LIVE' : 'OFFLINE'
-  const title = !open
-    ? 'market closed'
-    : connected
-      ? 'live feed connected'
-      : 'feed offline'
+// Reflects the NSE market session only: with the poll-based feed there is no
+// connection state to report, so LIVE simply means the session is open and the
+// 60s insight poll is active.
+export const LiveDot = ({ open }: { open: boolean }) => {
+  const label = open ? 'LIVE' : 'CLOSED'
+  const title = open ? 'market open, polling every 60s' : 'market closed'
 
   return (
     <span
       className={`flex items-center gap-1.5 font-mono text-xs ${
-        live ? 'text-primary' : 'text-muted-foreground'
+        open ? 'text-primary' : 'text-muted-foreground'
       }`}
       title={title}
     >
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${live ? 'bg-primary' : 'bg-muted-foreground'}`}
-      />
+      <span className={`h-1.5 w-1.5 rounded-full ${open ? 'bg-primary' : 'bg-muted-foreground'}`} />
       {label}
     </span>
   )

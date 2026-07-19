@@ -25,9 +25,8 @@ import org.springframework.stereotype.Service;
  * <p>Group path: at most one cross-ticker generation per group per {@code
  * MIN_GROUP_INSIGHT_INTERVAL_MINUTES} (default 15). A generation stores the canonical group insight
  * ({@link GroupInsightStoreService}) and then updates every member's existing per-ticker {@code
- * TICKER#{member}/INSIGHT#} latest via {@link InsightStoreService}, so the current UI and the
- * DynamoDB-Streams notifier keep working unchanged for every member, not only the triggering
- * ticker. A window hit is a clean success ({@code skipped=true}), not a failure - the state machine
+ * TICKER#{member}/INSIGHT#} latest via {@link InsightStoreService}, so the current UI keeps
+ * working unchanged for every member, not only the triggering ticker. A window hit is a clean success ({@code skipped=true}), not a failure - the state machine
  * must not retry or DLQ an anti-spam skip.
  */
 @Service

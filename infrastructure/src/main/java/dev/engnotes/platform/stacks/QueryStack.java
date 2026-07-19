@@ -1452,13 +1452,11 @@ public class QueryStack extends Stack {
     // exception message in a separate Maven module, and those modules cannot depend on
     // infrastructure/. Changing a phrase here or in any of the sites below without updating the
     // other silently reclassifies that error as a 500. Sites, by phrase:
-    //   "Invalid ticker"        - query-function Tickers.java, notifier-function ConnectionRegistry.java
+    //   "Invalid ticker"        - query-function Tickers.java
     //   "allowlist validation"  - watchlist-function TickerValidator.java
     //   "consent required"      - watchlist-function WatchlistHandler.java
     //   "deletion pending"      - watchlist-function WatchlistHandler.java, consent-function
-    //                             ConsentStoreService.java (notifier-function's WebSocket routes use
-    //                             the same phrase but return their own statusCode directly, not
-    //                             through this REST selectionPattern mapping)
+    //                             ConsentStoreService.java
     private static final String CLIENT_ERROR_PATTERN =
             "Invalid ticker|allowlist validation|consent required|deletion pending";
     private static final String CORS_HEADER = "method.response.header.Access-Control-Allow-Origin";

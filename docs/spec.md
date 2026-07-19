@@ -68,7 +68,7 @@ ap-south-1 via a cross-region inference profile (section 9).
 | Foundation stack | CDK (Java) | KMS CMK, single DynamoDB table, S3 data lake, SNS, Cognito user pool |
 | Ingestion stack | CDK (Java) | EventBridge schedule, ingestion state machine (Distributed Map), fetch/store Lambda, DLQ |
 | Insight stack | CDK (Java) | Anomaly Lambda, correlation Lambda, Bedrock insight Lambda, insight store, cost circuit breaker |
-| API stack | CDK (Java) | REST API GW (watchlist, on-demand ingest, query, account/PII), WebSocket API GW, Cognito group authorizers, WAF |
+| API stack | CDK (Java) | REST API GW (watchlist, on-demand ingest, query, account/PII), Cognito group authorizers, WAF |
 | Security/compliance stack | CDK (Java) | Cognito groups + MFA + password policy, consent Lambda triggers, PII/account endpoints, erasure state machine, append-only audit table |
 | Watchlist function | Spring Cloud Function | CRUD on per-user watchlists |
 | Ingestion function | Spring Cloud Function | `fetchMarketData`: provider-abstracted fetch, dual-write DynamoDB + S3 |
@@ -77,7 +77,7 @@ ap-south-1 via a cross-region inference profile (section 9).
 | Consent triggers | Java Lambda | `preAuthentication` (consent + version gate), `postConfirmation` (record consent), `preTokenGeneration` (group claims) |
 | Erasure function | Spring Cloud Function | `eraseUser`: cascade delete across Cognito, `USER#{sub}` items, S3 user-tagged objects; write erasure audit |
 | Account function | Spring Cloud Function | `accountData`: right-to-access aggregation; `recordConsent` |
-| Frontend | Next.js (SSR) | Watchlist management, charts, live insight feed over WebSocket, consent screen |
+| Frontend | Next.js (SSR) | Watchlist management, charts, 60s market-hours insight polling, consent screen |
 
 CDK is Java (per project conventions), not TypeScript. The "CDK in TypeScript" line in
 the original roadmap is superseded.
@@ -99,7 +99,6 @@ Attributes `GSI1PK`/`GSI1SK` back GSI1. TTL attribute: `ttl` (epoch seconds).
 | Anomaly/baseline state | `TICKER#{ticker}` | `BASELINE` | Running mean/variance/count for z-score; updated each ingest |
 | User watchlist item | `USER#{sub}` | `WATCH#{ticker}` | One item per tracked ticker; query by `USER#{sub}` prefix |
 | User profile / consent | `USER#{sub}` | `PROFILE` | Mirror of consent state + `deletion_pending` flag; lets write paths cheaply skip pending users |
-| WebSocket connection | `USER#{sub}` | `CONN#{connectionId}` | Live connections for push; TTL-expired; deleted on erasure by `USER#{sub}` prefix |
 | Distinct ticker index | `WATCHSET` | `TICKER#{ticker}` | Set of all tracked tickers (union); maintained on watchlist writes; read by ingestion fan-out |
 | Correlation group | `GROUP#{groupId}` | `META` | Group membership + window + computed-at |
 | Insight (latest) | `GROUP#{groupId}` | `INSIGHT#LATEST` | Overwritten each generation; read path serves this |
@@ -252,12 +251,14 @@ produces a usable insight without fabricating LLM output or failing the user sil
 
 ## 10. Delivery and Query Path
 
-### Real-time delivery: WebSocket
-- API Gateway WebSocket API. Connections tracked in DynamoDB (connection-id to user sub).
-- When an insight is stored, the write path pushes it to connected users whose watchlist
-  intersects the insight's tickers (via the GSI1 ticker-to-insight mapping).
-- Why WebSocket over poll/SNS-email: live feed is the best demo and the most realistic
-  product UX; the connection table is a known, bounded piece of infra.
+### Near-real-time delivery: polling
+- The frontend polls `GET /insights/{ticker}` on a 60s interval during NSE market hours,
+  matching the API Gateway response-cache TTL.
+- Originally delivered over an API Gateway WebSocket API with DynamoDB-tracked connections;
+  that decision was reversed (2026-07-19): ingestion runs on a 5-minute schedule, so push only removed a
+  sub-minute notification lag on data that itself refreshes every 5 minutes, while carrying
+  an entire stack, a notifier Lambda module, reconnect logic against the ~2h connection cap,
+  and one of the platform table's two hard-capped stream-consumer slots.
 
 ### Read path: read-only latest cache (CQRS)
 - `GET /insights` returns the latest cached insights touching the caller's watchlist;
@@ -318,7 +319,7 @@ and the anchor for consent, purpose limitation, and data-subject rights.
 
 ### Identity and tenancy
 - Cognito User Pools. Per-user watchlists keyed by `sub`. API Gateway uses a Cognito JWT
-  authorizer for REST and WebSocket connect.
+  authorizer for REST.
 - Multi-tenant: every watchlist, feed query, and account endpoint is scoped to the
   authenticated `sub`.
 - Why Cognito over single API key: real multi-tenant model, JWT validation, native consent and
@@ -383,7 +384,7 @@ PII.
 
 ### PII scope (what is and is not personal data)
 Personal data is limited to the Cognito profile, the watchlist (reveals user interest, tied to
-`sub`), WebSocket connection records, and the audit trail. Market data and generated insights
+`sub`), and the audit trail. Market data and generated insights
 are about securities, not people, so they are out of PII scope. This keeps the erasure cascade
 small and is itself a data-minimisation statement.
 
@@ -426,8 +427,8 @@ small and is itself a data-minimisation statement.
 
 ## 13. Frontend
 
-- Next.js (SSR), deployed via Amplify or Lambda. Cognito Hosted UI for auth, WebSocket client
-  for the live insight feed, charts for price and anomaly context, watchlist CRUD.
+- Next.js (SSR), deployed via Amplify or Lambda. Cognito Hosted UI for auth, 60s market-hours
+  polling for the insight feed, charts for price and anomaly context, watchlist CRUD.
 - Why Next.js over a static SPA: richer interactive UI and SSR is an explicit learning target.
   The tradeoff (an SSR runtime competing with backend depth) is accepted and managed by
   building the UI after the walking skeleton works.
@@ -459,8 +460,8 @@ retired first by getting one thin path working end to end on real AWS, then hard
 
 Phase 0: Walking skeleton (thin end to end, 1 user, 2-3 tickers):
 Cognito login with a consent gate, add ticker to watchlist, scheduled ingest of those tickers, store hot + lake,
-z-score anomaly gate, one Bedrock insight (structured JSON, with fallback), WebSocket push,
-Next.js UI shows it live. Crude but complete and deployed to real AWS.
+z-score anomaly gate, one Bedrock insight (structured JSON, with fallback), and a Next.js UI
+that surfaces it. Crude but complete and deployed to real AWS.
 
 Phase 1: Correctness and resilience: provider abstraction + failover, idempotency, retries,
 DLQs, rule-based fallback hardening, input validation and the pentest fixes.
@@ -529,7 +530,8 @@ load test with recorded p50/p95/p99, CI/CD gates, the three write-ups.
   static sectors).
 - Universe is a Cognito multi-tenant user-managed watchlist (not a static list).
 - Query path is read-only latest-cache (CQRS), generation fully decoupled.
-- Delivery is real-time WebSocket push (the doc's "Send Notification" state).
+- Delivery is near-real-time polling of the read path (originally WebSocket push; reversed
+  2026-07-19 once the 5-minute ingestion cadence made push's sub-minute advantage moot).
 - Frontend is in scope: Next.js SSR.
 - Ingestion fan-out is a Step Functions Distributed Map over the distinct watchlist union.
 - Data model is single-table DynamoDB.

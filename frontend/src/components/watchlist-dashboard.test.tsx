@@ -40,9 +40,7 @@ vi.mock('@/lib/api', () => ({
   getDailyMarketData: vi.fn(async (t: string) => ({ ticker: t, days: [], found: false })),
 }))
 
-vi.mock('@/hooks/use-insight-feed', () => ({
-  useInsightFeed: () => ({ insights: {}, connected: false }),
-}))
+vi.mock('@/hooks/use-insight-poll', () => ({ useInsightPoll: () => ({}) }))
 
 describe('WatchlistDashboard', () => {
   it('shows an upgrade notice for readers without calling the API', async () => {

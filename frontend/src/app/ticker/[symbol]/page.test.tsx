@@ -32,9 +32,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
   }
 })
 
-vi.mock('@/hooks/use-insight-feed', () => ({
-  useInsightFeed: () => ({ insights: {}, connected: false }),
-}))
+vi.mock('@/hooks/use-insight-poll', () => ({ useInsightPoll: () => ({}) }))
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
