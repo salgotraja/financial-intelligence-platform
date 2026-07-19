@@ -81,7 +81,9 @@ public class DataStack extends Stack {
                         .pointInTimeRecoveryEnabled(true)
                         .build()) // PITR for disaster recovery
                 .timeToLiveAttribute("ttl") // auto-expire hot data
-                // Realtime feed (spec 2026-07-12): notifier Lambda consumes INSERTed INSIGHT# items.
+                // Stream exists for the backfill consumer (see IngestionStack's HistoryBackfillFn);
+                // the notifier that used to be the stream's other consumer is gone with the
+                // WebSocket push path, so a second consumer slot is free.
                 .stream(StreamViewType.NEW_IMAGE)
                 .removalPolicy(statefulRemoval)
                 .build();

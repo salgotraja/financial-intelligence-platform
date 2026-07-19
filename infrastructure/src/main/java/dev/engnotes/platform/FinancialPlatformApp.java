@@ -3,7 +3,6 @@ package dev.engnotes.platform;
 import dev.engnotes.platform.stacks.DataStack;
 import dev.engnotes.platform.stacks.IngestionStack;
 import dev.engnotes.platform.stacks.QueryStack;
-import dev.engnotes.platform.stacks.RealtimeStack;
 import dev.engnotes.platform.stacks.SecurityStack;
 import software.amazon.awscdk.Annotations;
 import software.amazon.awscdk.App;
@@ -44,9 +43,6 @@ public class FinancialPlatformApp {
 
         // Query (API Gateway, query + watchlist + authorizer Lambdas) - depends on Data/Ingestion/Security.
         new QueryStack(app, "FinancialPlatform-Query-" + env, props, env, data, ingestion, security);
-
-        // Realtime (WebSocket API, connections table, stream fan-out) - depends on Data + Security.
-        new RealtimeStack(app, "FinancialPlatform-Realtime-" + env, props, env, data, security);
 
         // Acknowledge expected synth-time advisories (after the constructs exist so the
         // acknowledgement covers them): SnapStart engages only on published versions (aliases publish

@@ -34,14 +34,12 @@ class NoVpcRegressionTest {
         var security = new SecurityStack(app, "Security", props, "dev", data);
         var ingestion = new IngestionStack(app, "Ingestion", props, "dev", data);
         var query = new QueryStack(app, "Query", props, "dev", data, ingestion, security);
-        var realtime = new RealtimeStack(app, "Realtime", props, "dev", data, security);
 
         Map<String, Template> templatesByStack = new LinkedHashMap<>();
         templatesByStack.put("Data", Template.fromStack(data));
         templatesByStack.put("Security", Template.fromStack(security));
         templatesByStack.put("Ingestion", Template.fromStack(ingestion));
         templatesByStack.put("Query", Template.fromStack(query));
-        templatesByStack.put("Realtime", Template.fromStack(realtime));
 
         for (var entry : templatesByStack.entrySet()) {
             Template template = entry.getValue();
