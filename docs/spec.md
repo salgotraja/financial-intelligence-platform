@@ -65,7 +65,7 @@ ap-south-1 via a cross-region inference profile (section 9).
 
 | Component | Tech | Responsibility |
 |---|---|---|
-| Foundation stack | CDK (Java) | VPC, KMS CMK, single DynamoDB table, S3 data lake, SNS, Cognito user pool |
+| Foundation stack | CDK (Java) | KMS CMK, single DynamoDB table, S3 data lake, SNS, Cognito user pool |
 | Ingestion stack | CDK (Java) | EventBridge schedule, ingestion state machine (Distributed Map), fetch/store Lambda, DLQ |
 | Insight stack | CDK (Java) | Anomaly Lambda, correlation Lambda, Bedrock insight Lambda, insight store, cost circuit breaker |
 | API stack | CDK (Java) | REST API GW (watchlist, on-demand ingest, query, account/PII), WebSocket API GW, Cognito group authorizers, WAF |
@@ -394,9 +394,9 @@ small and is itself a data-minimisation statement.
 ### Security
 - IAM least privilege, no wildcards. Each Lambda gets only the specific table, bucket, secret
   path, and Bedrock model/profile it needs.
-- KMS CMK (with rotation) encrypts DynamoDB and S3. VPC with private subnets for Lambdas that
-  touch sensitive data; VPC endpoints for DynamoDB, S3, Secrets Manager so traffic stays on
-  the AWS network. WAF on API Gateway.
+- KMS CMK (with rotation) encrypts DynamoDB and S3. WAF on API Gateway. Lambdas run outside any
+  VPC and reach AWS services over TLS with SigV4-signed requests; an earlier VPC/PrivateLink
+  layer was measured and removed (see architecture.md, Network Posture).
 - Input validation at every trust boundary. In particular, validate `ticker` against a strict
   allowlist (`^[A-Z0-9.^-]{1,15}$`) before it reaches any URL, S3 key, S3 tag, or DynamoDB
   write. This closes the URL-injection, S3 key-injection, S3 tag-injection, and log-forging
@@ -468,7 +468,7 @@ DLQs, rule-based fallback hardening, input validation and the pentest fixes.
 Phase 2: Scale: Distributed Map fan-out, single-table GSIs finalized, correlation grouping
 Lambda, read-path provisioned concurrency and API GW caching.
 
-Phase 3: Security and compliance hardening: KMS, VPC + endpoints, WAF, IAM Access Analyzer,
+Phase 3: Security and compliance hardening: KMS, WAF, IAM Access Analyzer,
 least-privilege review. DPDP: Cognito MFA + password policy + groups, consent triggers and
 versioning, right-to-access endpoint, right-to-erasure Step Functions workflow, and the
 append-only audit table.
