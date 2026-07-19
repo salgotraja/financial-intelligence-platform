@@ -6,7 +6,6 @@ import dev.engnotes.authorizer.jwt.Principal;
 import dev.engnotes.authorizer.policy.RoutePolicy;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,41 +50,6 @@ public class AuthorizerHandler {
                 return policy(principal.sub(), allow(resources), principal.sub(), joinGroups(principal.groups()));
             } catch (RuntimeException e) {
                 log.warn("Deny (verification failed): {}", e.getMessage());
-                return policy("unknown", deny(methodArn), "unknown", "");
-            }
-        };
-    }
-
-    private static final Set<String> WEBSOCKET_GROUPS = Set.of("readers", "premium", "admins");
-
-    /**
-     * WebSocket $connect authorizer (REQUEST type): the browser cannot set headers on the upgrade,
-     * so the access token arrives as ?token=. Any known platform group may connect; subscribe
-     * validates ticker format; all groups see all tickers, matching GET /insights. Untyped map
-     * event: the v2 REQUEST shape has no safe POJO here (Jackson 3 ignores the
-     * aws-lambda-java-events annotations).
-     */
-    @Bean
-    public Function<Map<String, Object>, Map<String, Object>> authorizeWebSocket(JwtVerifier verifier) {
-        return event -> {
-            String methodArn = (String) event.get("methodArn");
-            try {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> query = (Map<String, Object>) event.get("queryStringParameters");
-                String token = query == null ? null : (String) query.get("token");
-                if (token == null || token.isBlank()) {
-                    throw new IllegalStateException("missing token query parameter");
-                }
-                Principal principal = verifier.verify(token);
-                boolean permitted = principal.groups().stream().anyMatch(WEBSOCKET_GROUPS::contains);
-                if (!permitted) {
-                    log.info("WebSocket deny (no permitted groups). sub={}", principal.sub());
-                    return policy(principal.sub(), deny(methodArn), principal.sub(), joinGroups(principal.groups()));
-                }
-                return policy(
-                        principal.sub(), allow(List.of(methodArn)), principal.sub(), joinGroups(principal.groups()));
-            } catch (RuntimeException e) {
-                log.warn("WebSocket deny (verification failed): {}", e.getMessage());
                 return policy("unknown", deny(methodArn), "unknown", "");
             }
         };
