@@ -13,17 +13,17 @@ import software.amazon.awssdk.services.sesv2.model.Message;
 import software.amazon.awssdk.services.sesv2.model.SendEmailRequest;
 
 /**
- * Sends the erasure confirmation email (spec s11 {@code SEND_CONFIRMATION_EMAIL}, Task 11) via SES v2.
- * Sender is {@code ALERT_EMAIL}, the same address the platform's SNS alarm topics already use
- * (DataStack's {@code EmailIdentity}, verified once). SES sandbox note: in dev/sandbox mode the
- * recipient must also be a verified identity, so this effectively sends to the operator's own inbox
- * until the account requests production access. Content is plain and factual: no PII beyond the
- * recipient address itself.
+ * Sends the erasure confirmation email (spec s11, Task 11) via SES v2. Sender is {@code ALERT_EMAIL},
+ * the same address the platform's SNS alarm topics already use (DataStack's {@code EmailIdentity},
+ * verified once). SES sandbox note: in dev/sandbox mode the recipient must also be a verified
+ * identity, so this effectively sends to the operator's own inbox until the account requests
+ * production access. Content is plain and factual: no PII beyond the recipient address itself.
  *
  * <p>Any SES failure (including sandbox rejection of an unverified recipient) propagates as an
- * unchecked exception, deliberately not caught here: the erasure workflow's {@code SendConfirmationEmail}
- * state owns the retry-then-catch-to-audit behavior, which only works if this method lets the Lambda
- * invocation fail on error.
+ * unchecked exception, deliberately not caught here: {@link ErasureService#erase} sends this
+ * confirmation inline, after the Cognito delete, using the email it captured at the start of the
+ * cascade, and it is the one that catches a send failure and folds it to {@code emailSent=false}
+ * without failing the erasure.
  */
 @Service
 public class ErasureEmailService {
@@ -38,7 +38,7 @@ public class ErasureEmailService {
         this.senderEmail = senderEmail;
     }
 
-    /** No-op when {@code toEmail} is blank (subject's Cognito identity was already gone at MarkDeletionPending). */
+    /** No-op when {@code toEmail} is blank (no email was captured before the Cognito identity was deleted). */
     public void sendConfirmation(String toEmail, String subjectSub, String requestedAt) {
         if (toEmail == null || toEmail.isBlank()) {
             log.info("Erasure confirmation email skipped (no address captured). subjectSub={}", subjectSub);

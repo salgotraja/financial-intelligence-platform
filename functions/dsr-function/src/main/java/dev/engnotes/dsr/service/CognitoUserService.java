@@ -14,8 +14,8 @@ import software.amazon.awssdk.services.cognitoidentityprovider.model.UserType;
  * Cognito identity lookups for the erasure workflow (spec s11, Task 11). The immutable {@code sub} is
  * mapped to the pool user via a {@code ListUsers} filter, shared by both operations: {@link #deleteBySub}
  * removes the identity as the final, irreversible erasure step (absent user is a logged no-op, so
- * erasure stays idempotent); {@link #findEmailBySub} reads the {@code email} attribute for
- * {@code MarkDeletionPending} to capture, since the address is gone once {@link #deleteBySub} runs.
+ * erasure stays idempotent); {@link #findEmailBySub} reads the {@code email} attribute for the erasure
+ * cascade to capture up front, since the address is gone once {@link #deleteBySub} runs.
  */
 @Service
 public class CognitoUserService {

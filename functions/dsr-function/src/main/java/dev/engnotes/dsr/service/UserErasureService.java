@@ -136,9 +136,9 @@ public class UserErasureService {
     }
 
     /**
-     * Documented no-op safeguard step (spec s11 {@code S3_SAFEGUARD}): the S3 data lake holds
-     * ticker/price time-series only, never subject-linked keys, so there is nothing to scan or delete.
-     * This module carries no S3 client or grant; a real tagged-object scan-and-delete would need both.
+     * Documented no-op safeguard step: the S3 data lake holds ticker/price time-series only, never
+     * subject-linked keys, so there is nothing to scan or delete. This module carries no S3 client or
+     * grant; a real tagged-object scan-and-delete would need both.
      */
     public void s3Safeguard(String subjectSub) {
         log.info("S3 safeguard no-op: data lake holds no subject-linked keys. subjectSub={}", subjectSub);
