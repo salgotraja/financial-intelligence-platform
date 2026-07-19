@@ -32,6 +32,13 @@
         <java.version>25</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
+        <!-- Reproducible builds: fixed archive timestamp so rebuilds produce byte-identical jars
+             and CDK stops re-publishing Lambda assets on every deploy. Works together with
+             .mvn/jvm.config (-Djava.properties.date), which pins the date comment that
+             Properties.store() writes into the shaded META-INF/spring.factories; without it the
+             merged file changes every build. Bump both when cutting a release. -->
+        <project.build.outputTimestamp>2026-07-19T00:00:00Z</project.build.outputTimestamp>
+
         <!-- Spring Cloud (release train aligned to Spring Boot 4.1.x; it manages
              spring-cloud-function + the AWS adapter - do not pin those yourself) -->
         <spring-cloud.version>2025.1.2</spring-cloud.version>
