@@ -34,7 +34,7 @@ jobs:
   build-and-test:
     name: Build and Test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -46,8 +46,8 @@ jobs:
           distribution: corretto   # same JVM family as the Lambda java25 runtime
           cache: maven
 
-      - name: Build, test, and verify (includes the Spotless gate)
-        run: ./mvnw ${{ env.MAVEN_ARGS }} verify
+      - name: Build, test, and verify (unit + LocalStack ITs, Spotless and coverage gates)
+        run: ./mvnw ${{ env.MAVEN_ARGS }} verify -Pintegration-tests
 
       - name: Upload test reports
         if: always()   # upload even on failure for debugging
@@ -56,6 +56,15 @@ jobs:
           name: test-reports
           path: '**/target/surefire-reports/'
           retention-days: 14
+
+      - name: Upload coverage reports
+        if: always()   # publish coverage even when the gate fails, for diagnosis
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-coverage
+          path: functions/*/target/site/jacoco/
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Upload Lambda JARs
         uses: actions/upload-artifact@v7
