@@ -50,14 +50,13 @@ VPC and reach the managed services (Cognito, API Gateway, Step Functions, EventB
 S3, Bedrock, SNS, SQS, SES, KMS, CloudWatch, X-Ray) over their public regional endpoints with
 TLS and SigV4-signed requests. Bedrock is invoked through a cross-region inference profile.
 
-*The diagram below predates the VPC removal and still shows the earlier VPC grouping; a refreshed
-export is pending.*
-
 ![Deployment architecture with AWS resources](./assets/financial_intelligence_platform_deployment.drawio.png)
 
 > Source: [`financial_intelligence_platform_deployment.drawio`](./assets/financial_intelligence_platform_deployment.drawio)
 > is the canonical editable diagram (official AWS icons). The PNG above and the
 > [SVG](./assets/financial_intelligence_platform_deployment.drawio.svg) are exports that embed the XML.
+> The earlier VPC-era deployment view is kept for reference as
+> [`financial_intelligence_platform_deployment_vpc_era.drawio.png`](./assets/financial_intelligence_platform_deployment_vpc_era.drawio.png).
 
 ### Network Posture
 

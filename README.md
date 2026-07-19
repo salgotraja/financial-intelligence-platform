@@ -12,8 +12,7 @@ Cloud Function on Lambda, AWS CDK (Java) for infrastructure.
 
 ![Architecture](docs/assets/financial_intelligence_platform_architecture.drawio.png)
 
-Deployment view (managed AWS services; all Lambdas run outside any VPC. The diagram still shows
-the earlier VPC grouping, refresh pending):
+Deployment view (managed AWS services; all Lambdas run outside any VPC):
 
 ![Deployment architecture](docs/assets/financial_intelligence_platform_deployment.drawio.png)
 
