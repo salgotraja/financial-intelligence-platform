@@ -76,9 +76,11 @@ class UserErasureServiceTest {
         when(dynamoDb.queryPaginator(any(QueryRequest.class)))
                 .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
         when(dynamoDb.query(any(QueryRequest.class)))
-                .thenReturn(QueryResponse.builder()
-                        .items(List.of(Map.of("ticker", s("RELIANCE.NS"))))
-                        .build());
+                .thenReturn(
+                        QueryResponse.builder()
+                                .items(List.of(Map.of("ticker", s("RELIANCE.NS"))))
+                                .build(),
+                        QueryResponse.builder().items(List.of()).build());
         when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
                 .thenReturn(BatchWriteItemResponse.builder().build());
 
@@ -101,7 +103,8 @@ class UserErasureServiceTest {
                         .build())
                 .thenReturn(QueryResponse.builder()
                         .items(List.of(Map.of("ticker", s("INFY.NS"))))
-                        .build());
+                        .build())
+                .thenReturn(QueryResponse.builder().items(List.of()).build());
         when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
                 .thenReturn(BatchWriteItemResponse.builder().build());
 
@@ -109,6 +112,35 @@ class UserErasureServiceTest {
 
         // CONSENT + 2 tickers * (WATCH# + WATCHSET) = 5 deletes
         assertThat(itemsDeleted).isEqualTo(5);
+    }
+
+    @Test
+    void deleteUserItemsDeletesHoldingItems() {
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenReturn(
+                        QueryResponse.builder()
+                                .items(List.of(Map.of("ticker", s("RELIANCE.NS"))))
+                                .build(),
+                        QueryResponse.builder()
+                                .items(List.of(
+                                        Map.of("PK", s("USER#user-1"), "SK", s("HOLDING#RELIANCE.NS")),
+                                        Map.of("PK", s("USER#user-1"), "SK", s("HOLDING#INFY.NS"))))
+                                .build());
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
+                .thenReturn(BatchWriteItemResponse.builder().build());
+
+        erasure.deleteUserItems("user-1");
+
+        ArgumentCaptor<BatchWriteItemRequest> captor = ArgumentCaptor.forClass(BatchWriteItemRequest.class);
+        verify(dynamoDb).batchWriteItem(captor.capture());
+        List<software.amazon.awssdk.services.dynamodb.model.WriteRequest> writes =
+                captor.getValue().requestItems().get(TABLE);
+        assertThat(writes)
+                .extracting(w -> w.deleteRequest().key().get("PK").s() + "/"
+                        + w.deleteRequest().key().get("SK").s())
+                .contains("USER#user-1/HOLDING#RELIANCE.NS", "USER#user-1/HOLDING#INFY.NS");
     }
 
     @Test

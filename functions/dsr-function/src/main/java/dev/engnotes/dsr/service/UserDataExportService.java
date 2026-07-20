@@ -2,6 +2,8 @@ package dev.engnotes.dsr.service;
 
 import dev.engnotes.dsr.model.AuditEventView;
 import dev.engnotes.dsr.model.ConsentView;
+import dev.engnotes.dsr.model.HoldingView;
+import dev.engnotes.dsr.model.LotView;
 import dev.engnotes.dsr.model.UserDataExport;
 import java.util.List;
 import java.util.Map;
@@ -16,8 +18,9 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 
 /**
  * Right-to-access reader: assembles a subject's personal data from the consent record, the watchlist
- * items ({@code PK=USER#{sub}, begins_with(SK, WATCH#)}), and the audit trail ({@code PK=USER#{sub}} on
- * the audit table). Read-only; the caller writes the DATA_EXPORTED audit event after a successful read.
+ * items ({@code PK=USER#{sub}, begins_with(SK, WATCH#)}), the portfolio holdings ({@code PK=USER#{sub},
+ * begins_with(SK, HOLDING#)}), and the audit trail ({@code PK=USER#{sub}} on the audit table). Read-only;
+ * the caller writes the DATA_EXPORTED audit event after a successful read.
  */
 @Service
 public class UserDataExportService {
@@ -36,8 +39,10 @@ public class UserDataExportService {
     }
 
     public UserDataExport export(String subjectSub) {
+        List<String> watchlist = readWatchlist(subjectSub);
+        List<HoldingView> holdings = readHoldings(subjectSub);
         return new UserDataExport(
-                "ok", subjectSub, readConsent(subjectSub), readWatchlist(subjectSub), readAudit(subjectSub));
+                "ok", subjectSub, readConsent(subjectSub), watchlist, readAudit(subjectSub), holdings);
     }
 
     private ConsentView readConsent(String subjectSub) {
@@ -70,6 +75,35 @@ public class UserDataExportService {
                 .toList();
     }
 
+    private List<HoldingView> readHoldings(String subjectSub) {
+        return dynamoDb
+                .queryPaginator(QueryRequest.builder()
+                        .tableName(platformTable)
+                        .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
+                        .expressionAttributeValues(Map.of(":pk", s("USER#" + subjectSub), ":sk", s("HOLDING#")))
+                        .build())
+                .items()
+                .stream()
+                .map(item -> new HoldingView(
+                        str(item, "ticker"),
+                        readLots(item),
+                        rawValue(item, "totalQty"),
+                        rawValue(item, "avgCost"),
+                        str(item, "lastLotMutation")))
+                .toList();
+    }
+
+    private static List<LotView> readLots(Map<String, AttributeValue> item) {
+        AttributeValue lots = item.get("lots");
+        if (lots == null || lots.l() == null) {
+            return List.of();
+        }
+        return lots.l().stream()
+                .map(AttributeValue::m)
+                .map(lot -> new LotView(str(lot, "buyDate"), rawValue(lot, "qty"), rawValue(lot, "price")))
+                .toList();
+    }
+
     private List<AuditEventView> readAudit(String subjectSub) {
         return dynamoDb
                 .queryPaginator(QueryRequest.builder()
@@ -92,6 +126,15 @@ public class UserDataExportService {
     private static String str(Map<String, AttributeValue> item, String key) {
         AttributeValue value = item.get(key);
         return value == null ? null : value.s();
+    }
+
+    /** Reads a raw string or numeric attribute's underlying value without parsing it. */
+    private static String rawValue(Map<String, AttributeValue> item, String key) {
+        AttributeValue value = item.get(key);
+        if (value == null) {
+            return null;
+        }
+        return value.s() != null ? value.s() : value.n();
     }
 
     private static AttributeValue s(String value) {

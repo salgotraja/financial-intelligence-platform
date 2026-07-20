@@ -51,9 +51,11 @@ class UserWatchlistPurgeServiceTest {
     void purgeDeletesUserItemsAndWatchsetMirrors() {
         stubPaginator();
         when(dynamoDb.query(any(QueryRequest.class)))
-                .thenReturn(QueryResponse.builder()
-                        .items(List.of(Map.of("ticker", s("RELIANCE.NS")), Map.of("ticker", s("INFY.NS"))))
-                        .build());
+                .thenReturn(
+                        QueryResponse.builder()
+                                .items(List.of(Map.of("ticker", s("RELIANCE.NS")), Map.of("ticker", s("INFY.NS"))))
+                                .build(),
+                        QueryResponse.builder().items(List.of()).build());
         when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
                 .thenReturn(BatchWriteItemResponse.builder().build());
 
@@ -82,7 +84,8 @@ class UserWatchlistPurgeServiceTest {
                         .build())
                 .thenReturn(QueryResponse.builder()
                         .items(List.of(Map.of("ticker", s("INFY.NS"))))
-                        .build());
+                        .build())
+                .thenReturn(QueryResponse.builder().items(List.of()).build());
         when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
                 .thenReturn(BatchWriteItemResponse.builder().build());
 
@@ -94,7 +97,7 @@ class UserWatchlistPurgeServiceTest {
     }
 
     @Test
-    void purgeIsNoOpOnEmptyWatchlist() {
+    void purgeIsNoOpWhenWatchlistAndHoldingsAreBothEmpty() {
         stubPaginator();
         when(dynamoDb.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of()).build());
@@ -102,5 +105,56 @@ class UserWatchlistPurgeServiceTest {
         purge.purge("user-123");
 
         verify(dynamoDb, never()).batchWriteItem(any(BatchWriteItemRequest.class));
+    }
+
+    @Test
+    void purgeDeletesHoldingItemsAndStillPrunesWatchsetMirrors() {
+        stubPaginator();
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenReturn(
+                        QueryResponse.builder()
+                                .items(List.of(Map.of("ticker", s("RELIANCE.NS"))))
+                                .build(),
+                        QueryResponse.builder()
+                                .items(List.of(Map.of("PK", s("USER#user-123"), "SK", s("HOLDING#RELIANCE.NS"))))
+                                .build());
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
+                .thenReturn(BatchWriteItemResponse.builder().build());
+
+        purge.purge("user-123");
+
+        ArgumentCaptor<BatchWriteItemRequest> captor = ArgumentCaptor.forClass(BatchWriteItemRequest.class);
+        verify(dynamoDb).batchWriteItem(captor.capture());
+        List<WriteRequest> writes = captor.getValue().requestItems().get(TABLE);
+        assertThat(writes)
+                .extracting(w -> w.deleteRequest().key().get("PK").s() + "/"
+                        + w.deleteRequest().key().get("SK").s())
+                .containsExactly(
+                        "USER#user-123/WATCH#RELIANCE.NS",
+                        "WATCHSET/TICKER#RELIANCE.NS",
+                        "USER#user-123/HOLDING#RELIANCE.NS");
+    }
+
+    @Test
+    void purgeDeletesHoldingsWhenWatchlistIsEmpty() {
+        stubPaginator();
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenReturn(
+                        QueryResponse.builder().items(List.of()).build(),
+                        QueryResponse.builder()
+                                .items(List.of(Map.of("PK", s("USER#user-123"), "SK", s("HOLDING#INFY.NS"))))
+                                .build());
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class)))
+                .thenReturn(BatchWriteItemResponse.builder().build());
+
+        purge.purge("user-123");
+
+        ArgumentCaptor<BatchWriteItemRequest> captor = ArgumentCaptor.forClass(BatchWriteItemRequest.class);
+        verify(dynamoDb).batchWriteItem(captor.capture());
+        List<WriteRequest> writes = captor.getValue().requestItems().get(TABLE);
+        assertThat(writes)
+                .extracting(w -> w.deleteRequest().key().get("PK").s() + "/"
+                        + w.deleteRequest().key().get("SK").s())
+                .containsExactly("USER#user-123/HOLDING#INFY.NS");
     }
 }

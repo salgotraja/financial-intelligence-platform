@@ -52,6 +52,7 @@ class UserDataExportServiceTest {
                         QueryResponse.builder()
                                 .items(List.of(Map.of("ticker", s("RELIANCE.NS")), Map.of("ticker", s("INFY.NS"))))
                                 .build(),
+                        QueryResponse.builder().items(List.of()).build(),
                         QueryResponse.builder()
                                 .items(List.of(Map.of(
                                         "eventType", s("CONSENT_GRANTED"),
@@ -74,6 +75,7 @@ class UserDataExportServiceTest {
         assertThat(result.auditTrail()).hasSize(1);
         assertThat(result.auditTrail().getFirst().eventType()).isEqualTo("CONSENT_GRANTED");
         assertThat(result.auditTrail().getFirst().at()).isEqualTo("EVENT#2026-06-28T00:00:00Z#corr-1");
+        assertThat(result.holdings()).isEmpty();
     }
 
     @Test
@@ -92,6 +94,7 @@ class UserDataExportServiceTest {
         assertThat(result.consent().version()).isNull();
         assertThat(result.watchlist()).isEmpty();
         assertThat(result.auditTrail()).isEmpty();
+        assertThat(result.holdings()).isEmpty();
     }
 
     @Test
@@ -102,6 +105,7 @@ class UserDataExportServiceTest {
                 .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
         when(dynamoDb.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of()).build()) // watchlist: one empty page
+                .thenReturn(QueryResponse.builder().items(List.of()).build()) // holdings: one empty page
                 .thenReturn(QueryResponse.builder() // audit page 1
                         .items(List.of(Map.of("eventType", s("CONSENT_GRANTED"), "SK", s("EVENT#1"))))
                         .lastEvaluatedKey(Map.of("PK", s("USER#user-1"), "SK", s("EVENT#1")))
@@ -118,7 +122,51 @@ class UserDataExportServiceTest {
                 .containsExactly("CONSENT_GRANTED", "DATA_EXPORTED");
     }
 
+    @Test
+    void exportIncludesHoldingsWithLots() {
+        when(dynamoDb.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().build());
+        when(dynamoDb.queryPaginator(any(QueryRequest.class)))
+                .thenAnswer(inv -> new QueryIterable(dynamoDb, inv.getArgument(0)));
+        when(dynamoDb.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of()).build()) // watchlist: empty
+                .thenReturn(QueryResponse.builder() // holdings: one item with one lot
+                        .items(List.of(Map.of(
+                                "ticker", s("RELIANCE.NS"),
+                                "lots",
+                                        AttributeValue.builder()
+                                                .l(List.of(AttributeValue.builder()
+                                                        .m(Map.of(
+                                                                "buyDate", s("2026-01-15"),
+                                                                "qty", n("10"),
+                                                                "price", n("2500.50")))
+                                                        .build()))
+                                                .build(),
+                                "totalQty", n("10"),
+                                "avgCost", n("2500.50"),
+                                "lastLotMutation", s("2026-01-15"))))
+                        .build())
+                .thenReturn(QueryResponse.builder().items(List.of()).build()); // audit: empty
+
+        UserDataExport result = export.export("user-1");
+
+        assertThat(result.holdings()).hasSize(1);
+        var holding = result.holdings().getFirst();
+        assertThat(holding.ticker()).isEqualTo("RELIANCE.NS");
+        assertThat(holding.totalQty()).isEqualTo("10");
+        assertThat(holding.avgCost()).isEqualTo("2500.50");
+        assertThat(holding.lastLotMutation()).isEqualTo("2026-01-15");
+        assertThat(holding.lots()).hasSize(1);
+        assertThat(holding.lots().getFirst().buyDate()).isEqualTo("2026-01-15");
+        assertThat(holding.lots().getFirst().qty()).isEqualTo("10");
+        assertThat(holding.lots().getFirst().price()).isEqualTo("2500.50");
+    }
+
     private static AttributeValue s(String value) {
         return AttributeValue.builder().s(value).build();
+    }
+
+    private static AttributeValue n(String value) {
+        return AttributeValue.builder().n(value).build();
     }
 }

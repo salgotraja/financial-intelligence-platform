@@ -15,13 +15,16 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
 
 /**
- * Purges a user's watchlist on consent withdrawal (spec decision 6): deletes each
- * {@code USER#{sub}/WATCH#{ticker}} item and its {@code WATCHSET/TICKER#{ticker}} mirror. Owned by
- * consent (a DPDP data-lifecycle concern, the seed of sub-project C's erasure), reusing the fixed
- * key construction rather than coupling to a shared module. Idempotent and re-runnable: an empty
- * watchlist is a no-op. Single-owner WATCHSET pruning is unconditional, consistent with
- * WatchlistStoreService (multi-user "remove-if-still-watched" is deferred there too). The ticker
- * query paginates and the deletes drain UnprocessedItems via {@link DynamoBatch}.
+ * Purges a user's watchlist and portfolio holdings on consent withdrawal (spec decision 6): deletes
+ * each {@code USER#{sub}/WATCH#{ticker}} item and its {@code WATCHSET/TICKER#{ticker}} mirror, plus
+ * every {@code USER#{sub}/HOLDING#{ticker}} item. Owned by consent (a DPDP data-lifecycle concern, the
+ * seed of sub-project C's erasure), reusing the fixed key construction rather than coupling to a shared
+ * module. Idempotent and re-runnable: an empty watchlist and empty holdings together are a no-op.
+ * Single-owner WATCHSET pruning is unconditional, consistent with WatchlistStoreService (multi-user
+ * "remove-if-still-watched" is deferred there too). Holdings need no WATCHSET cleanup of their own:
+ * every held ticker is also watchlisted, so its WATCHSET mirror is already deleted by the WATCH# loop.
+ * The ticker and holding queries paginate and the deletes drain UnprocessedItems via {@link
+ * DynamoBatch}.
  */
 @Service
 public class UserWatchlistPurgeService {
@@ -51,7 +54,18 @@ public class UserWatchlistPurgeService {
                 .map(AttributeValue::s)
                 .toList();
 
-        if (tickers.isEmpty()) {
+        List<Map<String, AttributeValue>> holdingKeys = dynamoDb
+                .queryPaginator(QueryRequest.builder()
+                        .tableName(platformTable)
+                        .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
+                        .expressionAttributeValues(Map.of(":pk", s("USER#" + sub), ":sk", s("HOLDING#")))
+                        .build())
+                .items()
+                .stream()
+                .map(item -> Map.of("PK", item.get("PK"), "SK", item.get("SK")))
+                .toList();
+
+        if (tickers.isEmpty() && holdingKeys.isEmpty()) {
             log.info("Watchlist purge no-op (empty). sub={}", sub);
             return;
         }
@@ -61,9 +75,12 @@ public class UserWatchlistPurgeService {
             writes.add(deleteOf(Map.of("PK", s("USER#" + sub), "SK", s("WATCH#" + ticker))));
             writes.add(deleteOf(Map.of("PK", s("WATCHSET"), "SK", s("TICKER#" + ticker))));
         }
+        for (Map<String, AttributeValue> holdingKey : holdingKeys) {
+            writes.add(deleteOf(holdingKey));
+        }
 
         DynamoBatch.batchWriteAllWithRetry(dynamoDb, platformTable, writes);
-        log.info("Purged watchlist. sub={} tickers={}", sub, tickers.size());
+        log.info("Purged watchlist. sub={} tickers={} holdings={}", sub, tickers.size(), holdingKeys.size());
     }
 
     private static WriteRequest deleteOf(Map<String, AttributeValue> key) {

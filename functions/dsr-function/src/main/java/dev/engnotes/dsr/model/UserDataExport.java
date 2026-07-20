@@ -7,10 +7,15 @@ import java.util.List;
  * when authorization fails (200-with-error-body convention).
  */
 public record UserDataExport(
-        String status, String subjectSub, ConsentView consent, List<String> watchlist, List<AuditEventView> auditTrail)
+        String status,
+        String subjectSub,
+        ConsentView consent,
+        List<String> watchlist,
+        List<AuditEventView> auditTrail,
+        List<HoldingView> holdings)
         implements DsrResponse {
 
     public static UserDataExport denied() {
-        return new UserDataExport("denied", null, null, List.of(), List.of());
+        return new UserDataExport("denied", null, null, List.of(), List.of(), List.of());
     }
 }

@@ -51,7 +51,8 @@ class DsrHandlerTest {
 
     @Test
     void exportReadsThenAuditsForSelfService() {
-        when(export.export("user-1")).thenReturn(new UserDataExport("ok", "user-1", null, List.of(), List.of()));
+        when(export.export("user-1"))
+                .thenReturn(new UserDataExport("ok", "user-1", null, List.of(), List.of(), List.of()));
 
         DsrResponse response =
                 handle(new DsrRequest(DsrOperation.EXPORT, "user-1", "readers", null, "1.2.3.4", "corr-1"));

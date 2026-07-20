@@ -24,7 +24,9 @@ import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
 /**
  * Right-to-erasure cascade (generalizes consent-function's withdrawal purge). Deletes the subject's
  * {@code CONSENT} record + every {@code WATCH#{ticker}} item + its {@code WATCHSET/TICKER#{ticker}}
- * mirror from the platform table, then deletes the Cognito identity. DynamoDB deletes run before the
+ * mirror + every {@code HOLDING#{ticker}} item from the platform table, then deletes the Cognito
+ * identity. Holdings need no WATCHSET cleanup of their own: every held ticker is also watchlisted, so
+ * its WATCHSET mirror is already deleted by the WATCH# loop. DynamoDB deletes run before the
  * Cognito call (the only irreversible step). The audit trail is on a separate table and is untouched.
  * Idempotent and re-runnable: re-running an already-erased subject deletes the CONSENT key again
  * (no-op) and finds no Cognito user.
@@ -102,10 +104,10 @@ public class UserErasureService {
     }
 
     /**
-     * Deletes the subject's {@code CONSENT} record and every {@code WATCH#{ticker}} item plus its
-     * {@code WATCHSET/TICKER#{ticker}} mirror. Idempotent and re-runnable: an absent CONSENT/WATCH item
-     * is simply not returned by the query, so a retry after partial success deletes only what remains.
-     * Returns the count of items deleted.
+     * Deletes the subject's {@code CONSENT} record, every {@code WATCH#{ticker}} item plus its
+     * {@code WATCHSET/TICKER#{ticker}} mirror, and every {@code HOLDING#{ticker}} item. Idempotent and
+     * re-runnable: an absent CONSENT/WATCH/HOLDING item is simply not returned by the query, so a retry
+     * after partial success deletes only what remains. Returns the count of items deleted.
      */
     public int deleteUserItems(String subjectSub) {
         List<String> tickers = dynamoDb
@@ -122,6 +124,18 @@ public class UserErasureService {
                 .map(AttributeValue::s)
                 .toList();
 
+        List<Map<String, AttributeValue>> holdingKeys = dynamoDb
+                .queryPaginator(QueryRequest.builder()
+                        .tableName(platformTable)
+                        .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
+                        .expressionAttributeValues(Map.of(
+                                ":pk", AttributeValues.s("USER#" + subjectSub), ":sk", AttributeValues.s("HOLDING#")))
+                        .build())
+                .items()
+                .stream()
+                .map(item -> Map.of("PK", item.get("PK"), "SK", item.get("SK")))
+                .toList();
+
         List<WriteRequest> writes = new ArrayList<>();
         writes.add(deleteOf(Map.of("PK", AttributeValues.s("USER#" + subjectSub), "SK", AttributeValues.s("CONSENT"))));
         for (String ticker : tickers) {
@@ -129,6 +143,9 @@ public class UserErasureService {
                     Map.of("PK", AttributeValues.s("USER#" + subjectSub), "SK", AttributeValues.s("WATCH#" + ticker))));
             writes.add(
                     deleteOf(Map.of("PK", AttributeValues.s("WATCHSET"), "SK", AttributeValues.s("TICKER#" + ticker))));
+        }
+        for (Map<String, AttributeValue> holdingKey : holdingKeys) {
+            writes.add(deleteOf(holdingKey));
         }
 
         DynamoBatch.batchWriteAllWithRetry(dynamoDb, platformTable, writes);
