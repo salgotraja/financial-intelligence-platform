@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 const LINKS = [
   { href: '/dashboard', label: 'Dashboard' },
+  { href: '/portfolio', label: 'Portfolio' },
   { href: '/privacy', label: 'Privacy' },
 ]
 

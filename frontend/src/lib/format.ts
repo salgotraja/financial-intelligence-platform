@@ -13,3 +13,16 @@ export const formatTimestamp = (iso: string | null | undefined): string => {
     minute: '2-digit',
   })
 }
+
+// Rupee amounts as plain 2-decimal figures (no currency symbol, matching StatDelta's
+// existing convention), so callers prefix a symbol only where the layout wants one.
+export const formatMoney = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '–'
+  return value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+// Signed percentage, e.g. "+1.25%" / "-2.40%", matching StatDelta/IndexChart's convention.
+export const formatPercent = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '–'
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
+}

@@ -1,7 +1,7 @@
 import { appConfig } from './config'
 import { getAccessToken } from './auth'
 
-export type ApiErrorKind = 'unauthorized' | 'consent-required' | 'client' | 'server'
+export type ApiErrorKind = 'unauthorized' | 'consent-required' | 'conflict' | 'client' | 'server'
 
 export class ApiError extends Error {
   constructor(
@@ -172,8 +172,66 @@ export interface IngestAccepted {
   ticker: string
 }
 
+export interface LotInput {
+  buyDate: string
+  qty: number
+  price: number
+}
+
+export interface HoldingValuation {
+  ticker: string
+  qty: number
+  avgCost: number
+  ltp: number | null
+  dayChange: number | null
+  pnl: number | null
+  pnlPct: number | null
+  asOf: string | null
+  degraded: boolean
+}
+
+export interface PortfolioValuation {
+  asOf: string | null
+  totalValue: number
+  totalCost: number
+  totalPnl: number
+  totalDayChange: number
+  holdings: HoldingValuation[]
+}
+
+export interface HistoryPoint {
+  day: string
+  value: number
+}
+
+export interface BuyMarker {
+  day: string
+  ticker: string
+  qty: number
+  price: number
+}
+
+export interface PortfolioHistory {
+  floor: string | null
+  asOf: string | null
+  points: HistoryPoint[]
+  markers: BuyMarker[]
+  degradedTickers: string[]
+  benchmark: HistoryPoint[]
+  benchmarkFrom: string | null
+  beatBenchmarkPct: number | null
+}
+
+export interface PortfolioResponse {
+  status: string
+  ticker: string | null
+  portfolio: PortfolioValuation | null
+  history: PortfolioHistory | null
+}
+
 const errorKind = (status: number, message: string): ApiErrorKind => {
   if (status === 401 || status === 403) return 'unauthorized'
+  if (status === 409) return 'conflict'
   if (status === 400) return message.includes('consent required') ? 'consent-required' : 'client'
   return 'server'
 }
@@ -250,3 +308,24 @@ export const deleteAccount = (): Promise<ErasureResult> =>
 
 export const triggerIngest = (ticker: string): Promise<IngestAccepted> =>
   apiFetch<IngestAccepted>(`/ingest/${encodeURIComponent(ticker)}`, { method: 'POST' })
+
+export const getPortfolio = async (): Promise<PortfolioValuation> => {
+  const result = await apiFetch<PortfolioResponse>('/portfolio')
+  if (!result.portfolio) throw new Error('portfolio response missing portfolio data')
+  return result.portfolio
+}
+
+export const getPortfolioHistory = async (): Promise<PortfolioHistory> => {
+  const result = await apiFetch<PortfolioResponse>('/portfolio/history')
+  if (!result.history) throw new Error('portfolio response missing history data')
+  return result.history
+}
+
+export const saveHolding = (ticker: string, lots: LotInput[]): Promise<PortfolioResponse> =>
+  apiFetch<PortfolioResponse>(`/portfolio/${encodeURIComponent(ticker)}`, {
+    method: 'POST',
+    body: JSON.stringify({ lots }),
+  })
+
+export const deleteHolding = (ticker: string): Promise<PortfolioResponse> =>
+  apiFetch<PortfolioResponse>(`/portfolio/${encodeURIComponent(ticker)}`, { method: 'DELETE' })
