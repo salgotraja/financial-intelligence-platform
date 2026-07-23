@@ -158,8 +158,8 @@ class PortfolioHandlerTest {
 
     @Test
     void historyReturnsSeries() {
-        PortfolioHistory stubbedHistory =
-                new PortfolioHistory("2026-07-20", "2026-07-23", List.of(), List.of(), List.of());
+        PortfolioHistory stubbedHistory = new PortfolioHistory(
+                "2026-07-20", "2026-07-23", List.of(), List.of(), List.of(), List.of(), null, null);
         when(historyService.history("user-123")).thenReturn(stubbedHistory);
 
         PortfolioResponse response = new PortfolioHandler()

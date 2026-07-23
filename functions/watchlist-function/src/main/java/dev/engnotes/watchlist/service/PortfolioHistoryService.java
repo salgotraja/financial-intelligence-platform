@@ -49,6 +49,8 @@ public class PortfolioHistoryService {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
+    private static final String BENCHMARK_TICKER = "^NSEI";
+
     private final HoldingsStoreService holdings;
     private final DynamoDbClient dynamoDb;
     private final String platformTable;
@@ -70,7 +72,7 @@ public class PortfolioHistoryService {
         long startNanos = System.nanoTime();
         List<StoredHolding> stored = holdings.list(ownerSub);
         if (stored.isEmpty()) {
-            return new PortfolioHistory(null, null, List.of(), List.of(), List.of());
+            return new PortfolioHistory(null, null, List.of(), List.of(), List.of(), List.of(), null, null);
         }
 
         List<String> degradedTickers = new ArrayList<>();
@@ -100,7 +102,7 @@ public class PortfolioHistoryService {
                     null,
                     0,
                     (System.nanoTime() - startNanos) / 1_000_000);
-            return new PortfolioHistory(null, null, List.of(), List.of(), degradedTickers);
+            return new PortfolioHistory(null, null, List.of(), List.of(), degradedTickers, List.of(), null, null);
         }
 
         LocalDate floor = null;
@@ -126,6 +128,7 @@ public class PortfolioHistoryService {
         }
 
         List<HistoryPoint> points = new ArrayList<>();
+        TreeMap<LocalDate, BigDecimal> pvByDay = new TreeMap<>();
         for (LocalDate day : curveDays) {
             BigDecimal valueInternal = BigDecimal.ZERO;
             for (StoredHolding holding : withRollups) {
@@ -143,6 +146,7 @@ public class PortfolioHistoryService {
                         .multiply(BigDecimal.valueOf(qty))
                         .setScale(MoneyScale.INTERNAL, RoundingMode.HALF_UP));
             }
+            pvByDay.put(day, valueInternal);
             points.add(new HistoryPoint(day.toString(), MoneyScale.toDisplay(valueInternal)));
         }
 
@@ -160,17 +164,63 @@ public class PortfolioHistoryService {
 
         String asOf = curveDays.isEmpty() ? null : curveDays.last().toString();
 
+        List<HistoryPoint> benchmark = List.of();
+        String benchmarkFrom = null;
+        BigDecimal beatBenchmarkPct = null;
+
+        TreeMap<LocalDate, BigDecimal> nsei = dayRollups(BENCHMARK_TICKER);
+        if (!nsei.isEmpty() && !curveDays.isEmpty()) {
+            LocalDate overlayStart = null;
+            for (LocalDate day : curveDays) {
+                if (!day.isBefore(nsei.firstKey())) {
+                    overlayStart = day;
+                    break;
+                }
+            }
+            if (overlayStart != null) {
+                BigDecimal pv0 = pvByDay.get(overlayStart);
+                BigDecimal nsei0 = nsei.floorEntry(overlayStart).getValue();
+                if (pv0 != null && nsei0.signum() != 0) {
+                    List<HistoryPoint> benchmarkPoints = new ArrayList<>();
+                    for (LocalDate day : curveDays.tailSet(overlayStart, true)) {
+                        BigDecimal ratio = nsei.floorEntry(day)
+                                .getValue()
+                                .divide(nsei0, MoneyScale.INTERNAL, RoundingMode.HALF_UP);
+                        BigDecimal benchValueInternal =
+                                pv0.multiply(ratio).setScale(MoneyScale.INTERNAL, RoundingMode.HALF_UP);
+                        benchmarkPoints.add(new HistoryPoint(day.toString(), MoneyScale.toDisplay(benchValueInternal)));
+                    }
+                    benchmark = benchmarkPoints;
+                    benchmarkFrom = overlayStart.toString();
+
+                    LocalDate lastDay = curveDays.last();
+                    BigDecimal pvLast = pvByDay.get(lastDay);
+                    BigDecimal nseiLast = nsei.floorEntry(lastDay).getValue();
+                    BigDecimal portfolioReturnPct = pvLast.subtract(pv0)
+                            .divide(pv0, MoneyScale.INTERNAL, RoundingMode.HALF_UP)
+                            .multiply(BigDecimal.valueOf(100));
+                    BigDecimal niftyReturnPct = nseiLast.subtract(nsei0)
+                            .divide(nsei0, MoneyScale.INTERNAL, RoundingMode.HALF_UP)
+                            .multiply(BigDecimal.valueOf(100));
+                    beatBenchmarkPct = MoneyScale.toDisplay(portfolioReturnPct.subtract(niftyReturnPct));
+                }
+            }
+        }
+
         long durationMs = (System.nanoTime() - startNanos) / 1_000_000;
         log.info(
-                "Portfolio history. owner={} tickers={} degraded={} floor={} points={} durationMs={}",
+                "Portfolio history. owner={} tickers={} degraded={} floor={} points={} durationMs={} benchmarkFrom={} beatPct={}",
                 ownerSub,
                 withRollups.size(),
                 degradedTickers.size(),
                 floor,
                 points.size(),
-                durationMs);
+                durationMs,
+                benchmarkFrom,
+                beatBenchmarkPct);
 
-        return new PortfolioHistory(floor.toString(), asOf, points, markers, degradedTickers);
+        return new PortfolioHistory(
+                floor.toString(), asOf, points, markers, degradedTickers, benchmark, benchmarkFrom, beatBenchmarkPct);
     }
 
     private TreeMap<LocalDate, BigDecimal> dayRollups(String ticker) {

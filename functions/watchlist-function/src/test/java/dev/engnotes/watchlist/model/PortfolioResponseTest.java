@@ -48,7 +48,8 @@ class PortfolioResponseTest {
 
     @Test
     void historyHasStatusOkNullTickerAndPortfolioAndProvidedHistory() {
-        PortfolioHistory history = new PortfolioHistory("2026-07-20", "2026-07-23", List.of(), List.of(), List.of());
+        PortfolioHistory history = new PortfolioHistory(
+                "2026-07-20", "2026-07-23", List.of(), List.of(), List.of(), List.of(), null, null);
 
         PortfolioResponse response = PortfolioResponse.history(history);
 

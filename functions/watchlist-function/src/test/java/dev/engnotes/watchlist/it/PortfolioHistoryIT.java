@@ -102,4 +102,22 @@ class PortfolioHistoryIT extends AbstractLocalStackIT {
                 response.history().points().get(response.history().points().size() - 1);
         assertThat(lastPoint.value()).isEqualByComparingTo("1100.00");
     }
+
+    @Test
+    void historyIncludesNseiBenchmarkOverlay() {
+        grantConsent("owner-history-benchmark");
+        seedHolding("owner-history-benchmark", "RELIANCE.NS");
+        seedDayRollup("RELIANCE.NS", "2026-07-20", "100");
+        seedDayRollup("RELIANCE.NS", "2026-07-21", "110");
+        seedDayRollup("^NSEI", "2026-07-20", "20000");
+        seedDayRollup("^NSEI", "2026-07-21", "21000");
+
+        PortfolioResponse response = portfolio.apply(new PortfolioRequest(
+                PortfolioOperation.HISTORY, null, null, "owner-history-benchmark", "corr-it-history-2"));
+
+        assertThat(response.history().benchmark()).isNotEmpty();
+        assertThat(response.history().benchmarkFrom())
+                .isEqualTo(response.history().floor());
+        assertThat(response.history().beatBenchmarkPct()).isNotNull();
+    }
 }

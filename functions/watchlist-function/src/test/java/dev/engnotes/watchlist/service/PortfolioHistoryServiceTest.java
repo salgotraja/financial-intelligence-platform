@@ -2,6 +2,7 @@ package dev.engnotes.watchlist.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 import dev.engnotes.watchlist.model.Holding;
@@ -14,6 +15,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -37,6 +39,14 @@ class PortfolioHistoryServiceTest {
 
     private PortfolioHistoryService service() {
         return new PortfolioHistoryService(holdings, dynamoDb, TABLE, FIXED_CLOCK);
+    }
+
+    @BeforeEach
+    void defaultNoNseiBenchmarkData() {
+        lenient()
+                .when(dynamoDb.query(argThat((QueryRequest r) -> r != null
+                        && r.expressionAttributeValues().get(":pk").s().equals("TICKER#^NSEI"))))
+                .thenReturn(QueryResponse.builder().items(List.of()).build());
     }
 
     private static AttributeValue s(String value) {
@@ -185,5 +195,81 @@ class PortfolioHistoryServiceTest {
         assertThat(history.points()).isEmpty();
         assertThat(history.markers()).isEmpty();
         assertThat(history.degradedTickers()).isEmpty();
+        assertThat(history.benchmark()).isEmpty();
+        assertThat(history.benchmarkFrom()).isNull();
+        assertThat(history.beatBenchmarkPct()).isNull();
+    }
+
+    @Test
+    void overlaysNormalizedNseiBenchmark() {
+        Lot lot = new Lot(LocalDate.parse("2026-07-20"), 10, new BigDecimal("100"));
+        when(holdings.list("owner-1")).thenReturn(List.of(holdingOf("RELIANCE.NS", lot)));
+        stubDay(
+                "RELIANCE.NS",
+                dayItem("RELIANCE.NS", "2026-07-20", "100"),
+                dayItem("RELIANCE.NS", "2026-07-21", "110"));
+        stubDay("^NSEI", dayItem("^NSEI", "2026-07-20", "20000"), dayItem("^NSEI", "2026-07-21", "20000"));
+
+        PortfolioHistory history = service().history("owner-1");
+
+        assertThat(history.benchmark()).isNotEmpty();
+        assertThat(history.benchmark().get(0).day()).isEqualTo("2026-07-20");
+        assertThat(history.benchmark().get(0).value()).isEqualByComparingTo("1000.00");
+        assertThat(history.benchmarkFrom()).isEqualTo("2026-07-20");
+        assertThat(history.beatBenchmarkPct()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void noOverlayWhenNoIndexData() {
+        Lot lot = new Lot(LocalDate.parse("2026-07-20"), 10, new BigDecimal("100"));
+        when(holdings.list("owner-1")).thenReturn(List.of(holdingOf("RELIANCE.NS", lot)));
+        stubDay(
+                "RELIANCE.NS",
+                dayItem("RELIANCE.NS", "2026-07-20", "100"),
+                dayItem("RELIANCE.NS", "2026-07-21", "105"),
+                dayItem("RELIANCE.NS", "2026-07-22", "110"),
+                dayItem("RELIANCE.NS", "2026-07-23", "115"));
+
+        PortfolioHistory history = service().history("owner-1");
+
+        assertThat(history.benchmark()).isEmpty();
+        assertThat(history.benchmarkFrom()).isNull();
+        assertThat(history.beatBenchmarkPct()).isNull();
+    }
+
+    @Test
+    void benchmarkClipsToIndexStartButPortfolioNotTruncated() {
+        Lot lot = new Lot(LocalDate.parse("2026-07-18"), 10, new BigDecimal("100"));
+        when(holdings.list("owner-1")).thenReturn(List.of(holdingOf("RELIANCE.NS", lot)));
+        stubDay(
+                "RELIANCE.NS",
+                dayItem("RELIANCE.NS", "2026-07-18", "100"),
+                dayItem("RELIANCE.NS", "2026-07-19", "101"),
+                dayItem("RELIANCE.NS", "2026-07-20", "102"),
+                dayItem("RELIANCE.NS", "2026-07-21", "103"));
+        stubDay("^NSEI", dayItem("^NSEI", "2026-07-20", "20000"), dayItem("^NSEI", "2026-07-21", "20100"));
+
+        PortfolioHistory history = service().history("owner-1");
+
+        assertThat(history.floor()).isEqualTo("2026-07-18");
+        assertThat(history.points().get(0).day()).isEqualTo("2026-07-18");
+        assertThat(history.benchmarkFrom()).isEqualTo("2026-07-20");
+        assertThat(history.benchmark().size()).isLessThan(history.points().size());
+    }
+
+    @Test
+    void beatBenchmarkPctNegativeWhenNiftyOutperforms() {
+        Lot lot = new Lot(LocalDate.parse("2026-07-20"), 10, new BigDecimal("100"));
+        when(holdings.list("owner-1")).thenReturn(List.of(holdingOf("RELIANCE.NS", lot)));
+        stubDay(
+                "RELIANCE.NS",
+                dayItem("RELIANCE.NS", "2026-07-20", "100"),
+                dayItem("RELIANCE.NS", "2026-07-21", "101"));
+        stubDay("^NSEI", dayItem("^NSEI", "2026-07-20", "20000"), dayItem("^NSEI", "2026-07-21", "20400"));
+
+        PortfolioHistory history = service().history("owner-1");
+
+        // Portfolio +1% (100 -> 101), NIFTY +2% (20000 -> 20400): beat = 1% - 2% = -1.00.
+        assertThat(history.beatBenchmarkPct()).isEqualByComparingTo("-1.00");
     }
 }
