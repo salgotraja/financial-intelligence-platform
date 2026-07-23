@@ -823,13 +823,13 @@ public class QueryStack extends Stack {
                                         + "  \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\","
                                         + "  \"ownerSub\": \"$context.authorizer.sub\","
                                         + "  \"correlationId\": \"$context.requestId\" }"))
-                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                        .integrationResponses(conflictAwareIntegrationResponses(allowOrigin))
                         .build(),
                 MethodOptions.builder()
                         .authorizer(apiAuthorizer)
                         .authorizationType(AuthorizationType.CUSTOM)
                         .requestParameters(Map.of("method.request.path.ticker", true))
-                        .methodResponses(standardMethodResponses())
+                        .methodResponses(conflictAwareMethodResponses())
                         .build());
 
         watchlistResource.addMethod(
@@ -1270,8 +1270,13 @@ public class QueryStack extends Stack {
     //   "consent required"      - watchlist-function WatchlistHandler.java
     //   "deletion pending"      - watchlist-function WatchlistHandler.java, consent-function
     //                             ConsentStoreService.java
+    //   "holding exists"        - watchlist-function WatchlistHandler.java (409 conflict)
+    //
+    // The watchlist DELETE method uses the conflict-aware responses below (409), not the shared
+    // ones, so a held ticker's REMOVE refusal maps to 409 rather than 400.
     private static final String CLIENT_ERROR_PATTERN =
             "Invalid ticker|allowlist validation|consent required|deletion pending";
+    private static final String CONFLICT_PATTERN = "holding exists";
     private static final String CORS_HEADER = "method.response.header.Access-Control-Allow-Origin";
 
     // Non-proxy integrations never emit response headers unless every IntegrationResponse maps them
@@ -1307,6 +1312,59 @@ public class QueryStack extends Stack {
                         .build(),
                 MethodResponse.builder()
                         .statusCode("400")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build(),
+                MethodResponse.builder()
+                        .statusCode("500")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build());
+    }
+
+    // Watchlist DELETE only (audit item E6): a held ticker's REMOVE refusal must map to 409, not
+    // 400 or 500. The 500 pattern excludes both CLIENT_ERROR_PATTERN and CONFLICT_PATTERN so
+    // neither client-input failures nor holding conflicts get reclassified as server errors.
+    private static List<IntegrationResponse> conflictAwareIntegrationResponses(String allowOrigin) {
+        return List.of(
+                IntegrationResponse.builder()
+                        .statusCode("200")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
+                        .build(),
+                IntegrationResponse.builder()
+                        .statusCode("400")
+                        .selectionPattern(".*(" + CLIENT_ERROR_PATTERN + ").*")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
+                        .responseTemplates(Map.of(
+                                "application/json",
+                                "{\"error\":\"$util.escapeJavaScript($input.path('$.errorMessage'))\"}"))
+                        .build(),
+                IntegrationResponse.builder()
+                        .statusCode("409")
+                        .selectionPattern(".*(" + CONFLICT_PATTERN + ").*")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
+                        .responseTemplates(Map.of(
+                                "application/json",
+                                "{\"error\":\"$util.escapeJavaScript($input.path('$.errorMessage'))\"}"))
+                        .build(),
+                IntegrationResponse.builder()
+                        .statusCode("500")
+                        .selectionPattern("^((?!" + CLIENT_ERROR_PATTERN + "|" + CONFLICT_PATTERN + ")(.|\\n))+$")
+                        .responseParameters(Map.of(CORS_HEADER, "'" + allowOrigin + "'"))
+                        .responseTemplates(Map.of("application/json", "{\"error\":\"internal error\"}"))
+                        .build());
+    }
+
+    private static List<MethodResponse> conflictAwareMethodResponses() {
+        return List.of(
+                MethodResponse.builder()
+                        .statusCode("200")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build(),
+                MethodResponse.builder()
+                        .statusCode("400")
+                        .responseParameters(Map.of(CORS_HEADER, true))
+                        .build(),
+                MethodResponse.builder()
+                        .statusCode("409")
                         .responseParameters(Map.of(CORS_HEADER, true))
                         .build(),
                 MethodResponse.builder()

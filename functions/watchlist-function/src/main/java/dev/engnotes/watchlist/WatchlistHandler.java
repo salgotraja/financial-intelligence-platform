@@ -4,6 +4,7 @@ import dev.engnotes.watchlist.exception.WatchlistException;
 import dev.engnotes.watchlist.model.WatchlistRequest;
 import dev.engnotes.watchlist.model.WatchlistResponse;
 import dev.engnotes.watchlist.service.ConsentGate;
+import dev.engnotes.watchlist.service.HoldingsStoreService;
 import dev.engnotes.watchlist.service.WatchlistStoreService;
 import dev.engnotes.watchlist.validation.TickerValidator;
 import java.util.function.Function;
@@ -25,6 +26,10 @@ import org.springframework.context.annotation.Bean;
  * <p>Validates the ticker at the trust boundary (spec section 12) before any write, resolves the
  * owner sub (request sub, else the DEFAULT_OWNER_SUB fallback for unauthenticated local runs), then
  * dispatches. Items are keyed under USER#{sub} so the DPDP erasure cascade stays a prefix delete.
+ *
+ * <p>REMOVE refuses (409, via {@link WatchlistException}) when a holding still exists for the
+ * ticker: held tickers must stay watchlisted so the ingestion fan-out keeps backfilling their
+ * history (audit item E6).
  */
 @SpringBootApplication
 public class WatchlistHandler {
@@ -39,6 +44,7 @@ public class WatchlistHandler {
     public Function<WatchlistRequest, WatchlistResponse> watchlist(
             WatchlistStoreService store,
             ConsentGate consentGate,
+            HoldingsStoreService holdingsStore,
             @Value("${DEFAULT_OWNER_SUB:dev-user}") String defaultOwnerSub) {
         return request -> {
             String owner = (request.ownerSub() != null && !request.ownerSub().isBlank())
@@ -71,6 +77,14 @@ public class WatchlistHandler {
                 }
                 case REMOVE -> {
                     String ticker = TickerValidator.validate(request.ticker());
+                    // Invariant (audit item E6): held tickers must stay watchlisted so ingestion
+                    // keeps backfilling their history. The "holding exists" prefix keeps
+                    // QueryStack's watchlist DELETE 409 mapping in sync; changing it here requires
+                    // the matching change in QueryStack.
+                    if (holdingsStore.get(owner, ticker).isPresent()) {
+                        throw new WatchlistException("holding exists: remove the holding for " + ticker
+                                + " before removing it from the watchlist");
+                    }
                     store.remove(owner, ticker);
                     yield WatchlistResponse.removed(ticker);
                 }

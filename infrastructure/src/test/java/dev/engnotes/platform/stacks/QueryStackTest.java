@@ -206,6 +206,62 @@ class QueryStackTest {
         }
     }
 
+    // Only the watchlist DELETE route's 500 pattern needs to exclude "holding exists" (it is the
+    // only route whose Lambda can throw that message); the shared 500 pattern every other route
+    // uses is deliberately untouched (broadening it would widen every route's error mapping for a
+    // phrase that route can never emit).
+    @Test
+    @SuppressWarnings("unchecked")
+    void watchlistDeleteServerErrorPatternExcludesHoldingConflict() {
+        var integration = (Map<String, Object>) watchlistDeleteMethod().get("Integration");
+        var integrationResponses = (List<Map<String, Object>>) integration.get("IntegrationResponses");
+        var pattern = integrationResponses.stream()
+                .filter(r -> "500".equals(r.get("StatusCode")))
+                .map(r -> (String) r.get("SelectionPattern"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("expected a 500 selection pattern on watchlist DELETE"));
+
+        var regex = Pattern.compile(pattern);
+        assertFalse(
+                regex.matcher("holding exists: remove the holding").matches(),
+                "holding conflicts must map to 409, not 500 on watchlist DELETE");
+        assertTrue(regex.matcher("java.lang.IllegalStateException: boom").matches());
+        assertFalse(regex.matcher("").matches(), "500 pattern must not match empty success errorMessage");
+    }
+
+    // The watchlist DELETE method has its own conflict-aware responses (409), distinct from the
+    // shared error-aware ones every other route uses, so a held ticker's REMOVE refusal (audit item
+    // E6, "holding exists" prefix in WatchlistHandler.java) surfaces as 409 to the client.
+    @Test
+    @SuppressWarnings("unchecked")
+    void watchlistDeleteMapsHoldingConflictTo409() {
+        var method = watchlistDeleteMethod();
+
+        var methodStatusCodes = ((List<Map<String, Object>>) method.get("MethodResponses"))
+                .stream().map(r -> r.get("StatusCode")).toList();
+        assertEquals(List.of("200", "400", "409", "500"), methodStatusCodes);
+
+        var integration = (Map<String, Object>) method.get("Integration");
+        var integrationResponses = (List<Map<String, Object>>) integration.get("IntegrationResponses");
+        var conflictResponse = integrationResponses.stream()
+                .filter(r -> "409".equals(r.get("StatusCode")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("expected a 409 integration response"));
+        assertTrue(
+                ((String) conflictResponse.get("SelectionPattern")).contains("holding exists"),
+                "expected the 409 selection pattern to match the holding-exists conflict message");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> watchlistDeleteMethod() {
+        return synth().findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .filter(p -> "DELETE".equals(p.get("HttpMethod")))
+                .filter(p -> requestTemplateBody(p).contains("\"operation\": \"REMOVE\""))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("expected the watchlist {ticker} resource's DELETE method"));
+    }
+
     @Test
     void p99AlarmPagesCriticalTopicWithSustainedWindow() {
         synth().hasResourceProperties(
