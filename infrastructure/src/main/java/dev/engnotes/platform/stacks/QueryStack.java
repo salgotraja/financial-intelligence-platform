@@ -274,6 +274,35 @@ public class QueryStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        // Portfolio Lambda: second function from the same watchlist-function asset, selected via
+        // SPRING_CLOUD_FUNCTION_DEFINITION=portfolio. Shares watchlistRole: portfolio holdings live
+        // on the same platform table as the watchlist and need the same read-write + KMS grants.
+        var portfolioFn = Function.Builder.create(this, "PortfolioFn")
+                .functionName("financial-portfolio-" + env)
+                .description("Portfolio holdings CRUD (lots-based)")
+                .runtime(Runtime.JAVA_25)
+                .handler("org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest")
+                .code(Code.fromAsset("../functions/watchlist-function/target/watchlist-function.jar"))
+                .role(watchlistRole)
+                .memorySize(512)
+                .timeout(Duration.seconds(10))
+                .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+                .tracing(Tracing.ACTIVE)
+                .environment(OrderedMap.of(
+                        Map.entry("PLATFORM_TABLE", data.getPlatformTable().getTableName()),
+                        Map.entry("ENVIRONMENT", env),
+                        Map.entry("DEFAULT_OWNER_SUB", "dev-user"),
+                        Map.entry("SPRING_CLOUD_FUNCTION_DEFINITION", "portfolio"),
+                        Map.entry("MAIN_CLASS", "dev.engnotes.watchlist.WatchlistHandler"),
+                        Map.entry("LOG_LEVEL", env.equals("prod") ? "INFO" : "DEBUG")))
+                .build();
+
+        LogGroup.Builder.create(this, "PortfolioFnLogs")
+                .logGroupName("/aws/lambda/" + portfolioFn.getFunctionName())
+                .retention(RetentionDays.ONE_MONTH)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
         // Consent Lambda (DPDP, spec sub-project B). Read-write on the platform table (consent record
         // + withdrawal purge) and PutItem-only on the audit table (write-only audit trail).
         var consentRole = Role.Builder.create(this, "ConsentLambdaRole")
@@ -420,6 +449,10 @@ public class QueryStack extends Stack {
         var watchlistFnAlias = Alias.Builder.create(this, "WatchlistFnAlias")
                 .aliasName("live")
                 .version(watchlistFn.getCurrentVersion())
+                .build();
+        var portfolioFnAlias = Alias.Builder.create(this, "PortfolioFnAlias")
+                .aliasName("live")
+                .version(portfolioFn.getCurrentVersion())
                 .build();
         var consentFnAlias = Alias.Builder.create(this, "ConsentFnAlias")
                 .aliasName("live")
@@ -843,6 +876,69 @@ public class QueryStack extends Stack {
                                         + "  \"correlationId\": \"$context.requestId\" }"))
                         // Authorization must be a cache key, else the 60s stage cache serves one
                         // caller's list to every other caller for up to 60s.
+                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.header.Authorization", true))
+                        .methodResponses(standardMethodResponses())
+                        .build());
+
+        // Portfolio routes (non-proxy): POST/DELETE carry {ticker}; POST also forwards the lots array
+        // from the body; GET lists. Same jar as watchlist, portfolio bean.
+        var portfolioResource = api.getRoot().addResource("portfolio");
+        var portfolioTickerResource = portfolioResource.addResource("{ticker}");
+
+        portfolioTickerResource.addMethod(
+                "POST",
+                LambdaIntegration.Builder.create(portfolioFnAlias)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"CREATE\","
+                                        + "  \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\","
+                                        + "  \"lots\": $input.json('$.lots'),"
+                                        + "  \"ownerSub\": \"$context.authorizer.sub\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.path.ticker", true))
+                        .methodResponses(standardMethodResponses())
+                        .build());
+
+        portfolioTickerResource.addMethod(
+                "DELETE",
+                LambdaIntegration.Builder.create(portfolioFnAlias)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"DELETE\","
+                                        + "  \"ticker\": \"$util.escapeJavaScript($input.params('ticker'))\","
+                                        + "  \"ownerSub\": \"$context.authorizer.sub\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.path.ticker", true))
+                        .methodResponses(standardMethodResponses())
+                        .build());
+
+        portfolioResource.addMethod(
+                "GET",
+                LambdaIntegration.Builder.create(portfolioFnAlias)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"LIST\","
+                                        + "  \"ownerSub\": \"$context.authorizer.sub\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
                         .cacheKeyParameters(List.of("method.request.header.Authorization"))
                         .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
                         .build(),

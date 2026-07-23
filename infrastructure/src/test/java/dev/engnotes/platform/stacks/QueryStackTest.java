@@ -117,11 +117,11 @@ class QueryStackTest {
                 .filter(body -> body.contains("$input.params('ticker')"))
                 .toList();
         assertEquals(
-                8,
+                10,
                 tickerTemplates.size(),
-                "expected 8 ticker-interpolating request templates (insight GET, market-data GET,"
-                        + " market-data daily GET, stories GET, analysis GET, watchlist POST/DELETE, ingest"
-                        + " POST)");
+                "expected 10 ticker-interpolating request templates (insight GET, market-data GET,"
+                        + " market-data daily GET, stories GET, analysis GET, watchlist POST/DELETE,"
+                        + " portfolio POST/DELETE, ingest POST)");
         for (var body : tickerTemplates) {
             var unescapedRemainder = body.replace("$util.escapeJavaScript($input.params('ticker'))", "");
             assertFalse(
@@ -393,6 +393,43 @@ class QueryStackTest {
                                                 Map.of("SPRING_CLOUD_FUNCTION_DEFINITION", "serveDeepAnalysis")))))));
     }
 
+    // Confirms the second Lambda wired from the watchlist-function jar (SPRING_CLOUD_FUNCTION_
+    // DEFINITION=portfolio), the /portfolio API resource, and that the POST /portfolio/{ticker}
+    // route's request template forwards the body's lots array unquoted (so Spring deserializes it
+    // into List<Lot> instead of receiving an escaped string).
+    @Test
+    @SuppressWarnings("unchecked")
+    void portfolioLambdaAndRoutesWire() {
+        var template = synth();
+
+        template.hasResourceProperties(
+                "AWS::Lambda::Function",
+                Match.objectLike(Map.of(
+                        "FunctionName",
+                        "financial-portfolio-dev",
+                        "Environment",
+                        Match.objectLike(Map.of(
+                                "Variables",
+                                Match.objectLike(Map.of("SPRING_CLOUD_FUNCTION_DEFINITION", "portfolio")))))));
+
+        var pathParts = template.findResources("AWS::ApiGateway::Resource").values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .map(p -> (String) p.get("PathPart"))
+                .toList();
+        assertTrue(pathParts.contains("portfolio"), "expected a portfolio API resource");
+
+        var createTemplates = template.findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .map(QueryStackTest::requestTemplateBody)
+                .filter(body -> body.contains("\"operation\": \"CREATE\"") && body.contains("\"lots\""))
+                .toList();
+        assertEquals(1, createTemplates.size(), "expected exactly one POST /portfolio/{ticker} CREATE method");
+        assertTrue(
+                createTemplates.get(0).contains("$input.json('$.lots')"),
+                "expected the lots array forwarded unquoted via $input.json so Spring deserializes" + " List<Lot>: "
+                        + createTemplates.get(0));
+    }
+
     // The OPTIONS preflight response carries Access-Control-Allow-Origin (CDK's
     // defaultCorsPreflightOptions handles that), but browsers also read the header off the actual
     // GET/POST/DELETE response. Non-proxy integrations never emit it unless every IntegrationResponse
@@ -454,10 +491,10 @@ class QueryStackTest {
     void userScopedGetMethodsCacheKeyOnAuthorizationHeader() {
         var methods = userScopedGetMethods();
         assertEquals(
-                4,
+                5,
                 methods.size(),
                 "expected LIST/VIEW/EXPORT GET methods plus the bare /insights feed"
-                        + " (/watchlist, /user/consent, /user/export, /insights)");
+                        + " (/watchlist, /portfolio, /user/consent, /user/export, /insights)");
         for (var props : methods) {
             var integration = (Map<String, Object>) props.get("Integration");
             var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");
