@@ -137,6 +137,87 @@ static String validated(String raw) {
       <pre><code>.cacheKeyParameters(List.of("method.request.header.Authorization"))</code></pre>
       <p><strong>Use it when:</strong> a cached response depends on identity, tenant, locale, query parameters, or any other request value. Every response-shaping value belongs in the cache key.</p>
 
+      <h2 id="guided-labs">Guided labs</h2>
+      <p>Use these labs to turn a passive read into a traceable learning exercise. Start in development or LocalStack; do not use a production account for exploratory requests.</p>
+
+      <h3>Lab 1. Trace one on-demand ticker refresh</h3>
+      <ol>
+        <li>Choose a valid ticker such as <code>RELIANCE.NS</code>. The boundary rule permits uppercase letters, digits, dots, carets, and hyphens only.</li>
+        <li>Call <code>POST /ingest/{ticker}</code> with a valid premium or admin access token. The API starts the Step Functions execution; it does not call a Lambda synchronously.</li>
+        <li>In Step Functions, open the execution and follow the correlation ID through <code>ReadWatchset</code>, <code>FanOutTickers</code>, <code>FetchMarketData</code>, and the insight branch.</li>
+        <li>Confirm the hot <code>TICKER#RELIANCE.NS</code> data in DynamoDB and the cold object in S3. Then query <code>GET /insights/RELIANCE.NS</code>.</li>
+      </ol>
+      <p><strong>Expected behaviour:</strong> on-demand refreshes deliberately force the insight branch even if the z-score does not cross the scheduled-ingestion threshold. This is covered by <code>IngestionHandlerTest#onDemandSourceForcesAnomalyWhenEvaluatorFoundNone</code>.</p>
+
+      <h3>Lab 2. Prove the read path is read-only</h3>
+      <ol>
+        <li>Seed or generate two insights for one ticker with different ISO-8601 timestamps.</li>
+        <li>Call <code>GET /insights/TCS.NS</code> and inspect the response.</li>
+        <li>Read <code>InsightQueryIT#returnsLatestInsightForTicker</code> alongside the DynamoDB query implementation.</li>
+      </ol>
+      <p><strong>Expected behaviour:</strong> the newest <code>INSIGHT#</code> sort key wins; no Bedrock call runs on this route. An empty result is represented as <code>found: false</code>, not as a failed pipeline.</p>
+
+      <h3>Lab 3. Follow one compliance request</h3>
+      <ol>
+        <li>Sign in, then read consent with <code>GET /user/consent</code>.</li>
+        <li>Grant or withdraw consent through the matching route and verify that the authenticated user identity comes from authorizer context rather than the request body.</li>
+        <li>Read <code>DsrBeanIT</code> to see the export and erasure cascade tested against LocalStack: user items are removed and audit records survive.</li>
+      </ol>
+      <p><strong>Expected behaviour:</strong> consent and data-subject requests are scoped to the caller’s Cognito <code>sub</code>. A user cannot select another subject through JSON input.</p>
+
+      <h2 id="api-and-data-examples">API and data examples</h2>
+      <p>These are representative response shapes from the Java records. Values are illustrative; names and semantics match the implementation.</p>
+
+      <h3>Read the latest insight</h3>
+      <pre><code>GET /insights/TCS.NS
+Authorization: Bearer &lt;access-token&gt;
+
+{
+  "ticker": "TCS.NS",
+  "generatedAt": "2026-06-30T10:00:00Z",
+  "signal": "BUY",
+  "confidence": 0.80,
+  "rationale": "strong momentum",
+  "drivers": ["volume", "price"],
+  "source": "RULE_BASED",
+  "insightText": "BUY signal",
+  "modelId": "rule-v1",
+  "found": true
+}</code></pre>
+      <p><strong>Interpretation:</strong> <code>source</code> makes the generation path explicit. A rule-based result is a valid, deterministic fallback—not an error or a hidden degraded state.</p>
+
+      <h3>Add a watchlist entry</h3>
+      <pre><code>POST /watchlist/RELIANCE.NS
+Authorization: Bearer &lt;access-token&gt;
+
+{
+  "status": "added",
+  "ticker": "RELIANCE.NS",
+  "tickers": []
+}</code></pre>
+      <p><strong>Use case:</strong> adding a valid ticker updates the caller’s watchlist and the distinct <code>WATCHSET</code> union that scheduled ingestion reads. The authenticated owner is injected by API Gateway; the client never supplies it.</p>
+
+      <h2 id="failure-paths">Failure paths worth learning</h2>
+      <div class="grid">
+        <section class="card"><h3>Invalid ticker</h3><p>URL-decode first, then reject values outside the strict allowlist. This keeps malformed input out of provider URLs, DynamoDB keys, S3 tags, and logs.</p></section>
+        <section class="card"><h3>Provider or Bedrock trouble</h3><p>The write path can fail over between providers; Bedrock throttling, invalid structured output, or an open budget circuit produces a deterministic rule-based insight.</p></section>
+        <section class="card"><h3>Concurrent erasure</h3><p>A conditional deletion lease makes a duplicate request report in-progress instead of running a second cascade. A stale lease can be safely taken over.</p></section>
+      </div>
+      <p>When investigating, identify the boundary first: API input validation, workflow retry/DLQ, provider fallback, or durable audit record. This prevents treating an expected business outcome—such as <code>found: false</code>—as a system failure.</p>
+
+      <h2 id="code-to-proof-map">Code-to-proof map</h2>
+      <table>
+        <thead><tr><th>Learn this behaviour</th><th>Start in code</th><th>Read this proof</th></tr></thead>
+        <tbody>
+          <tr><td>On-demand ingest forces an insight</td><td><code>IngestionHandler#fetchMarketData</code></td><td><code>IngestionHandlerTest#onDemandSourceForcesAnomalyWhenEvaluatorFoundNone</code></td></tr>
+          <tr><td>Newest stored insight is served</td><td><code>InsightQuery</code></td><td><code>InsightQueryIT#returnsLatestInsightForTicker</code></td></tr>
+          <tr><td>Stories remain deterministic</td><td><code>RuleBasedStoryComposer</code></td><td><code>RuleBasedStoryComposerTest</code></td></tr>
+          <tr><td>Consent and erasure respect subject boundaries</td><td><code>ConsentHandler</code>, <code>DsrHandler</code></td><td><code>DsrBeanIT</code></td></tr>
+          <tr><td>API cache keys isolate callers</td><td><code>QueryStack</code></td><td><code>QueryStackTest</code></td></tr>
+        </tbody>
+      </table>
+      <p>A useful habit: read the implementation, then its focused test, then the integration test. The three layers explain intent, local behaviour, and the AWS-shaped boundary respectively.</p>
+
       <div class="notice history"><strong>Historical material is intentional.</strong> The reference guide preserves retired VPC and WebSocket designs because their trade-offs are useful lessons. The deployment status in the introductory notice takes precedence for implementation work.</div>
 
       <section id="reference">
