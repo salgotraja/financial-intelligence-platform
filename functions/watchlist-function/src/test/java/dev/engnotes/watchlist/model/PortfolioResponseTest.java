@@ -15,6 +15,7 @@ class PortfolioResponseTest {
         assertThat(response.status()).isEqualTo("created");
         assertThat(response.ticker()).isEqualTo("RELIANCE.NS");
         assertThat(response.portfolio()).isNull();
+        assertThat(response.history()).isNull();
     }
 
     @Test
@@ -24,6 +25,7 @@ class PortfolioResponseTest {
         assertThat(response.status()).isEqualTo("deleted");
         assertThat(response.ticker()).isEqualTo("TCS.NS");
         assertThat(response.portfolio()).isNull();
+        assertThat(response.history()).isNull();
     }
 
     @Test
@@ -41,5 +43,18 @@ class PortfolioResponseTest {
         assertThat(response.status()).isEqualTo("ok");
         assertThat(response.ticker()).isNull();
         assertThat(response.portfolio()).isSameAs(valuation);
+        assertThat(response.history()).isNull();
+    }
+
+    @Test
+    void historyHasStatusOkNullTickerAndPortfolioAndProvidedHistory() {
+        PortfolioHistory history = new PortfolioHistory("2026-07-20", "2026-07-23", List.of(), List.of(), List.of());
+
+        PortfolioResponse response = PortfolioResponse.history(history);
+
+        assertThat(response.status()).isEqualTo("ok");
+        assertThat(response.ticker()).isNull();
+        assertThat(response.portfolio()).isNull();
+        assertThat(response.history()).isSameAs(history);
     }
 }

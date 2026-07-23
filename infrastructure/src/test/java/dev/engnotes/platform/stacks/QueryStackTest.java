@@ -430,6 +430,27 @@ class QueryStackTest {
                         + createTemplates.get(0));
     }
 
+    // Pins the GET /portfolio/history time-machine route: exactly one method whose request template
+    // dispatches HISTORY, and its resource sits under /portfolio (path parts "portfolio", "history").
+    @Test
+    @SuppressWarnings("unchecked")
+    void portfolioHistoryRouteWires() {
+        var template = synth();
+
+        var historyTemplates = template.findResources("AWS::ApiGateway::Method").values().stream()
+                .map(m -> (Map<String, Object>) m.get("Properties"))
+                .map(QueryStackTest::requestTemplateBody)
+                .filter(body -> body.contains("\"operation\": \"HISTORY\""))
+                .toList();
+        assertEquals(1, historyTemplates.size(), "expected exactly one GET /portfolio/history HISTORY method");
+
+        var pathParts = template.findResources("AWS::ApiGateway::Resource").values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .map(p -> (String) p.get("PathPart"))
+                .toList();
+        assertTrue(pathParts.contains("history"), "expected a /portfolio/history API resource");
+    }
+
     // The OPTIONS preflight response carries Access-Control-Allow-Origin (CDK's
     // defaultCorsPreflightOptions handles that), but browsers also read the header off the actual
     // GET/POST/DELETE response. Non-proxy integrations never emit it unless every IntegrationResponse
@@ -491,10 +512,11 @@ class QueryStackTest {
     void userScopedGetMethodsCacheKeyOnAuthorizationHeader() {
         var methods = userScopedGetMethods();
         assertEquals(
-                5,
+                6,
                 methods.size(),
-                "expected LIST/VIEW/EXPORT GET methods plus the bare /insights feed"
-                        + " (/watchlist, /portfolio, /user/consent, /user/export, /insights)");
+                "expected LIST/VIEW/EXPORT/HISTORY GET methods plus the bare /insights feed"
+                        + " (/watchlist, /portfolio, /portfolio/history, /user/consent, /user/export,"
+                        + " /insights)");
         for (var props : methods) {
             var integration = (Map<String, Object>) props.get("Integration");
             var cacheKeyParameters = (List<String>) integration.get("CacheKeyParameters");
@@ -770,6 +792,7 @@ class QueryStackTest {
                     return body.contains("\"operation\": \"LIST\"")
                             || body.contains("\"operation\": \"VIEW\"")
                             || body.contains("\"operation\": \"EXPORT\"")
+                            || body.contains("\"operation\": \"HISTORY\"")
                             // The bare /insights feed has no "operation" field (it is its own Lambda
                             // function, selected via SPRING_CLOUD_FUNCTION_DEFINITION, not an
                             // operation-dispatch handler), so it is identified by ownerSub alone.

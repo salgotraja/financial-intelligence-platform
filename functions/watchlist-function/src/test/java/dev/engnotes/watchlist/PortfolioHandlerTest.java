@@ -9,12 +9,14 @@ import static org.mockito.Mockito.when;
 
 import dev.engnotes.watchlist.exception.WatchlistException;
 import dev.engnotes.watchlist.model.Lot;
+import dev.engnotes.watchlist.model.PortfolioHistory;
 import dev.engnotes.watchlist.model.PortfolioOperation;
 import dev.engnotes.watchlist.model.PortfolioRequest;
 import dev.engnotes.watchlist.model.PortfolioResponse;
 import dev.engnotes.watchlist.model.PortfolioValuation;
 import dev.engnotes.watchlist.service.ConsentGate;
 import dev.engnotes.watchlist.service.HoldingsStoreService;
+import dev.engnotes.watchlist.service.PortfolioHistoryService;
 import dev.engnotes.watchlist.service.ValuationService;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -44,6 +46,9 @@ class PortfolioHandlerTest {
     @Mock
     private ConsentGate consentGate;
 
+    @Mock
+    private PortfolioHistoryService historyService;
+
     @BeforeEach
     void allowConsentByDefault() {
         lenient()
@@ -57,7 +62,7 @@ class PortfolioHandlerTest {
     @Test
     void createUsesRequestSubWhenPresent() {
         PortfolioResponse response = new PortfolioHandler()
-                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                 .apply(new PortfolioRequest(
                         PortfolioOperation.CREATE, "RELIANCE.NS", List.of(SAMPLE_LOT), "user-123", "corr-1"));
 
@@ -69,7 +74,7 @@ class PortfolioHandlerTest {
     @Test
     void createFallsBackToDefaultSubWhenRequestSubBlank() {
         new PortfolioHandler()
-                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                 .apply(new PortfolioRequest(
                         PortfolioOperation.CREATE, "RELIANCE.NS", List.of(SAMPLE_LOT), null, "corr-1"));
 
@@ -79,7 +84,7 @@ class PortfolioHandlerTest {
     @Test
     void createRejectsInvalidTickerWithoutTouchingStore() {
         assertThatThrownBy(() -> new PortfolioHandler()
-                        .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                        .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                         .apply(new PortfolioRequest(
                                 PortfolioOperation.CREATE, "bad/ticker", List.of(SAMPLE_LOT), "user-123", "corr-2")))
                 .isInstanceOf(WatchlistException.class);
@@ -91,7 +96,7 @@ class PortfolioHandlerTest {
         Lot futureLot = new Lot(LocalDate.parse("2026-07-24"), 10, new BigDecimal("100.50"));
 
         assertThatThrownBy(() -> new PortfolioHandler()
-                        .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                        .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                         .apply(new PortfolioRequest(
                                 PortfolioOperation.CREATE, "RELIANCE.NS", List.of(futureLot), "user-123", "corr-3")))
                 .isInstanceOf(WatchlistException.class);
@@ -103,7 +108,7 @@ class PortfolioHandlerTest {
         when(consentGate.isDeletionPending("user-123")).thenReturn(true);
 
         assertThatThrownBy(() -> new PortfolioHandler()
-                        .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                        .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                         .apply(new PortfolioRequest(
                                 PortfolioOperation.CREATE, "RELIANCE.NS", List.of(SAMPLE_LOT), "user-123", "corr-4")))
                 .isInstanceOf(WatchlistException.class)
@@ -114,7 +119,7 @@ class PortfolioHandlerTest {
     @Test
     void deleteUsesRequestSub() {
         PortfolioResponse response = new PortfolioHandler()
-                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                 .apply(new PortfolioRequest(PortfolioOperation.DELETE, "TCS.NS", null, "user-123", "corr-5"));
 
         verify(store).delete("user-123", "TCS.NS");
@@ -124,7 +129,7 @@ class PortfolioHandlerTest {
     @Test
     void deleteIgnoresDeletionPending() {
         PortfolioResponse response = new PortfolioHandler()
-                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                 .apply(new PortfolioRequest(PortfolioOperation.DELETE, "RELIANCE.NS", null, "user-123", "corr-6"));
 
         assertThat(response.status()).isEqualTo("deleted");
@@ -144,7 +149,7 @@ class PortfolioHandlerTest {
         when(valuation.value("user-123")).thenReturn(stubbedValuation);
 
         PortfolioResponse response = new PortfolioHandler()
-                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                 .apply(new PortfolioRequest(PortfolioOperation.LIST, null, null, "user-123", "corr-7"));
 
         assertThat(response.status()).isEqualTo("ok");
@@ -152,11 +157,25 @@ class PortfolioHandlerTest {
     }
 
     @Test
+    void historyReturnsSeries() {
+        PortfolioHistory stubbedHistory =
+                new PortfolioHistory("2026-07-20", "2026-07-23", List.of(), List.of(), List.of());
+        when(historyService.history("user-123")).thenReturn(stubbedHistory);
+
+        PortfolioResponse response = new PortfolioHandler()
+                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
+                .apply(new PortfolioRequest(PortfolioOperation.HISTORY, null, null, "user-123", "corr-10"));
+
+        assertThat(response.status()).isEqualTo("ok");
+        assertThat(response.history()).isSameAs(stubbedHistory);
+    }
+
+    @Test
     void deniesEveryOperationWithoutActiveConsent() {
         when(consentGate.isActive("user-123")).thenReturn(false);
 
         assertThatThrownBy(() -> new PortfolioHandler()
-                        .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                        .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                         .apply(new PortfolioRequest(PortfolioOperation.LIST, null, null, "user-123", "corr-8")))
                 .isInstanceOf(WatchlistException.class);
         verifyNoInteractions(store);
@@ -167,7 +186,7 @@ class PortfolioHandlerTest {
         when(consentGate.isActive("user-123")).thenReturn(true);
 
         new PortfolioHandler()
-                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB)
+                .portfolio(store, valuation, consentGate, FIXED_CLOCK, DEFAULT_SUB, historyService)
                 .apply(new PortfolioRequest(
                         PortfolioOperation.CREATE, "RELIANCE.NS", List.of(SAMPLE_LOT), "user-123", "corr-9"));
 

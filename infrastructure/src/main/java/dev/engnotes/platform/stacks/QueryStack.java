@@ -949,6 +949,28 @@ public class QueryStack extends Stack {
                         .methodResponses(standardMethodResponses())
                         .build());
 
+        // Portfolio time-machine route: GET /portfolio/history returns the value-curve (core curve
+        // only, no benchmark overlay). Same non-proxy portfolio Lambda, HISTORY operation.
+        var portfolioHistoryResource = portfolioResource.addResource("history");
+        portfolioHistoryResource.addMethod(
+                "GET",
+                LambdaIntegration.Builder.create(portfolioFnAlias)
+                        .proxy(false)
+                        .requestTemplates(Map.of(
+                                "application/json",
+                                "{ \"operation\": \"HISTORY\","
+                                        + "  \"ownerSub\": \"$context.authorizer.sub\","
+                                        + "  \"correlationId\": \"$context.requestId\" }"))
+                        .cacheKeyParameters(List.of("method.request.header.Authorization"))
+                        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                        .build(),
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of("method.request.header.Authorization", true))
+                        .methodResponses(standardMethodResponses())
+                        .build());
+
         // Consent routes (non-proxy, spec sub-project B): POST -> GRANT, GET -> VIEW, DELETE ->
         // WITHDRAW. The caller sub is taken from the authorizer context, never the body. POST reads
         // {version?, purpose} from the body; both fields are escaped via $util.escapeJavaScript to

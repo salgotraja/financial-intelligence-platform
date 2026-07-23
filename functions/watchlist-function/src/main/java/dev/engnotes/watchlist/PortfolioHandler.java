@@ -6,6 +6,7 @@ import dev.engnotes.watchlist.model.PortfolioResponse;
 import dev.engnotes.watchlist.portfolio.PortfolioValidator;
 import dev.engnotes.watchlist.service.ConsentGate;
 import dev.engnotes.watchlist.service.HoldingsStoreService;
+import dev.engnotes.watchlist.service.PortfolioHistoryService;
 import dev.engnotes.watchlist.service.ValuationService;
 import dev.engnotes.watchlist.validation.TickerValidator;
 import java.time.Clock;
@@ -21,10 +22,11 @@ import org.springframework.context.annotation.Configuration;
  * WatchlistHandler}; deployed as its own Lambda from the same jar.
  *
  * <p>The bean name ("portfolio") must match SPRING_CLOUD_FUNCTION_DEFINITION in QueryStack for the
- * portfolio Lambda. API Gateway maps each HTTP method to this function via the integration request
- * template, setting {@code operation} (POST -> CREATE, GET -> LIST, DELETE -> DELETE), {@code
- * ticker} from the path, {@code lots} from the body (CREATE only), and {@code ownerSub} from the
- * authorizer context ($context.authorizer.sub).
+ * portfolio Lambda. API Gateway maps each HTTP method/route to this function via the integration
+ * request template, setting {@code operation} (POST -> CREATE, GET -> LIST, DELETE -> DELETE, GET
+ * /portfolio/history -> HISTORY), {@code ticker} from the path, {@code lots} from the body (CREATE
+ * only), and {@code ownerSub} from the authorizer context ($context.authorizer.sub). HISTORY is
+ * consent-gated like every other operation but, being a read path, is not deletion-pending gated.
  *
  * <p>Validates the ticker at the trust boundary (spec section 12) before any write, resolves the
  * owner sub (request sub, else the DEFAULT_OWNER_SUB fallback for unauthenticated local runs), then
@@ -42,7 +44,8 @@ public class PortfolioHandler {
             ValuationService valuation,
             ConsentGate consentGate,
             Clock clock,
-            @Value("${DEFAULT_OWNER_SUB:dev-user}") String defaultOwnerSub) {
+            @Value("${DEFAULT_OWNER_SUB:dev-user}") String defaultOwnerSub,
+            PortfolioHistoryService historyService) {
         return request -> {
             String owner = (request.ownerSub() != null && !request.ownerSub().isBlank())
                     ? request.ownerSub()
@@ -82,6 +85,7 @@ public class PortfolioHandler {
                     yield PortfolioResponse.deleted(ticker);
                 }
                 case LIST -> PortfolioResponse.list(valuation.value(owner));
+                case HISTORY -> PortfolioResponse.history(historyService.history(owner));
             };
         };
     }
