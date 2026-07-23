@@ -218,6 +218,59 @@ Authorization: Bearer &lt;access-token&gt;
       </table>
       <p>A useful habit: read the implementation, then its focused test, then the integration test. The three layers explain intent, local behaviour, and the AWS-shaped boundary respectively.</p>
 
+      <h2 id="application-code-map">How the current web application uses the platform</h2>
+      <p>The frontend is not a second backend. It is a Next.js client that obtains a Cognito access token, calls the REST API, and presents the data already enforced by the API Gateway authorizer. Read these four paths to understand the application as it exists today.</p>
+
+      <h3>1. Authentication starts in the browser; authorization stays at the API edge</h3>
+      <p><code>AuthProvider</code> configures Amplify, refreshes the session after sign-in or token refresh, and stores the resulting state. <code>AuthGate</code> changes the visible UI for signed-out users, but it is not the security control. Every API call in <code>frontend/src/lib/api.ts</code> obtains a fresh <strong>access token</strong>; API Gateway and the authorizer enforce the actual route and group policy.</p>
+      <pre><code>const token = await getAccessToken()
+const response = await fetch(`${appConfig.apiUrl}${path}`, {
+  headers: { Authorization: `Bearer ${token}` },
+})</code></pre>
+      <p><strong>Why access versus ID token matters:</strong> the access token carries the authorization claim used by the backend. The frontend reads the ID token only for display-only identity fields such as email.</p>
+
+      <h3>2. The dashboard protects the account-wide Lambda quota</h3>
+      <p><code>WatchlistDashboard</code> loads the caller’s watchlist, then <code>useWatchlistDashboard</code> retrieves market data, insight, and optional daily history for each ticker. Work is bounded to three tickers at once: at most nine calls can be in flight, leaving room under the account’s ten-Lambda quota for auth and other traffic.</p>
+      <pre><code>const [marketData, insight, dailyData] = await Promise.all([
+  getMarketData(ticker),
+  getInsight(ticker),
+  getDailyMarketData(ticker, WEEKLY_CHIP_FETCH_DAYS).catch(() =&gt; null),
+])</code></pre>
+      <p><strong>Learning point:</strong> daily history improves a weekly UI chip, so its failure is deliberately non-fatal. Market data and the latest insight are the card’s primary state and fail together.</p>
+
+      <h3>3. Polling complements cached reads; it does not replace the first load</h3>
+      <p>The ticker page first loads market data and the insight in parallel. <code>useInsightPoll</code> then polls insights every 60 seconds only during NSE market hours. That interval matches API Gateway’s response-cache TTL: polling sooner would just read the same cached response. After a manual ingest request, the UI reloads after 35 seconds and again after 75 seconds so it can cross the cache boundary.</p>
+      <pre><code>const POLL_INTERVAL_MS = 60_000
+const FETCH_CONCURRENCY = 3
+
+const timer = setInterval(() =&gt; void poll(), POLL_INTERVAL_MS)</code></pre>
+      <p><strong>Learning point:</strong> “live” here means periodically refreshed data, not a WebSocket connection. The former WebSocket implementation is historical material.</p>
+
+      <h3>4. UI mutations must outrank stale cached reads</h3>
+      <p>Adding a ticker succeeds before the API Gateway watchlist cache necessarily expires. The dashboard therefore updates local state from the confirmed mutation rather than immediately refetching a potentially stale list. <code>useAsyncData</code> also assigns a sequence number to each load, so an older request cannot overwrite a newer reload or confirmed mutation.</p>
+      <pre><code>const seq = ++seqRef.current
+const result = await fetcherRef.current()
+if (!mountedRef.current || seq !== seqRef.current) return
+setData(result)</code></pre>
+      <p><strong>Read the proof:</strong> <code>useAsyncData.test.ts</code> covers both stale-response suppression and mutation invalidation; <code>useInsightPoll.test.ts</code> covers the 60-second, market-hours-only polling contract.</p>
+
+      <h2 id="current-boundaries">Current implementation boundaries</h2>
+      <p>A learning guide should distinguish code that is executable through the application from code that is an internal building block or future seam.</p>
+      <div class="notice"><strong>Holdings are not an exposed application feature yet.</strong> <code>Holding</code>, <code>Lot</code>, <code>HoldingsStoreService</code>, and <code>HoldingMath</code> implement a tested persistence/domain seam under <code>USER#{sub} / HOLDING#{ticker}</code>. There is currently no API Gateway route, Spring Cloud Function operation, or frontend caller for it. Do not treat the model as a user-facing portfolio API.</div>
+      <p>The seam is still useful to study: a holding is a full replacement snapshot of purchase lots; <code>totalQty</code> and weighted <code>avgCost</code> are derived values; and a successful upsert adds the ticker to the watchlist union, allowing ingestion and daily-history backfill to see it. The absence of a route is deliberate scope information, not a broken request path.</p>
+
+      <h3>Use the frontend to find the correct backend entry point</h3>
+      <table>
+        <thead><tr><th>User action</th><th>Frontend entry point</th><th>API call</th><th>Backend owner</th></tr></thead>
+        <tbody>
+          <tr><td>View a ticker</td><td><code>app/ticker/[symbol]/page.tsx</code></td><td><code>GET /insights/{ticker}</code>, <code>GET /market-data/{ticker}</code></td><td>Query function</td></tr>
+          <tr><td>Change chart range</td><td><code>DailyRangeChart</code></td><td><code>GET /market-data/{ticker}/daily?days=N</code></td><td>Query function</td></tr>
+          <tr><td>Add or remove a watchlist ticker</td><td><code>WatchlistDashboard</code></td><td><code>POST</code> or <code>DELETE /watchlist/{ticker}</code></td><td>Watchlist function</td></tr>
+          <tr><td>Grant or withdraw consent</td><td><code>ConsentPanel</code></td><td><code>POST</code> or <code>DELETE /user/consent</code></td><td>Consent function</td></tr>
+          <tr><td>Export or erase data</td><td><code>DangerZone</code></td><td><code>GET /user/export</code>, <code>DELETE /user/account</code></td><td>DSR function</td></tr>
+        </tbody>
+      </table>
+
       <div class="notice history"><strong>Historical material is intentional.</strong> The reference guide preserves retired VPC and WebSocket designs because their trade-offs are useful lessons. The deployment status in the introductory notice takes precedence for implementation work.</div>
 
       <section id="reference">
