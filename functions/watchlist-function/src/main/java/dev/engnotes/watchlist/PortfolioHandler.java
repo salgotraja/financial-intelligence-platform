@@ -1,14 +1,12 @@
 package dev.engnotes.watchlist;
 
 import dev.engnotes.watchlist.exception.WatchlistException;
-import dev.engnotes.watchlist.model.PortfolioHolding;
 import dev.engnotes.watchlist.model.PortfolioRequest;
 import dev.engnotes.watchlist.model.PortfolioResponse;
-import dev.engnotes.watchlist.portfolio.HoldingMath;
 import dev.engnotes.watchlist.portfolio.PortfolioValidator;
 import dev.engnotes.watchlist.service.ConsentGate;
 import dev.engnotes.watchlist.service.HoldingsStoreService;
-import dev.engnotes.watchlist.service.StoredHolding;
+import dev.engnotes.watchlist.service.ValuationService;
 import dev.engnotes.watchlist.validation.TickerValidator;
 import java.time.Clock;
 import java.util.function.Function;
@@ -41,6 +39,7 @@ public class PortfolioHandler {
     @Bean
     public Function<PortfolioRequest, PortfolioResponse> portfolio(
             HoldingsStoreService store,
+            ValuationService valuation,
             ConsentGate consentGate,
             Clock clock,
             @Value("${DEFAULT_OWNER_SUB:dev-user}") String defaultOwnerSub) {
@@ -82,21 +81,8 @@ public class PortfolioHandler {
                     store.delete(owner, ticker);
                     yield PortfolioResponse.deleted(ticker);
                 }
-                case LIST ->
-                    PortfolioResponse.list(store.list(owner).stream()
-                            .map(PortfolioHandler::toView)
-                            .toList());
+                case LIST -> PortfolioResponse.list(valuation.value(owner));
             };
         };
-    }
-
-    private static PortfolioHolding toView(StoredHolding stored) {
-        return new PortfolioHolding(
-                stored.holding().ticker(),
-                stored.holding().lots(),
-                HoldingMath.totalQty(stored.holding().lots()),
-                HoldingMath.avgCost(stored.holding().lots()),
-                stored.lastLotMutation(),
-                stored.updatedAt());
     }
 }
