@@ -9,6 +9,8 @@ import dev.engnotes.dsr.model.DsrOperation;
 import dev.engnotes.dsr.model.DsrRequest;
 import dev.engnotes.dsr.model.DsrResponse;
 import dev.engnotes.dsr.model.ErasureResult;
+import dev.engnotes.dsr.model.HoldingView;
+import dev.engnotes.dsr.model.LotView;
 import dev.engnotes.dsr.model.UserDataExport;
 import dev.engnotes.dsr.service.CognitoUserService;
 import dev.engnotes.dsr.service.ErasureEmailService;
@@ -18,6 +20,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
@@ -86,6 +89,40 @@ class DsrBeanIT extends AbstractLocalStackIT {
                         "PK", AttributeValue.builder().s("USER#" + sub).build(),
                         "SK", AttributeValue.builder().s("WATCH#" + ticker).build(),
                         "ticker", AttributeValue.builder().s(ticker).build()))
+                .build());
+    }
+
+    private void seedHolding(String sub, String ticker) {
+        dynamoDbClient.putItem(PutItemRequest.builder()
+                .tableName(PlatformSchema.PLATFORM_TABLE)
+                .item(Map.of(
+                        "PK", AttributeValue.builder().s("USER#" + sub).build(),
+                        "SK", AttributeValue.builder().s("HOLDING#" + ticker).build(),
+                        "ticker", AttributeValue.builder().s(ticker).build(),
+                        "lots",
+                                AttributeValue.builder()
+                                        .l(List.of(AttributeValue.builder()
+                                                .m(Map.of(
+                                                        "buyDate",
+                                                                AttributeValue.builder()
+                                                                        .s("2020-01-15")
+                                                                        .build(),
+                                                        "qty",
+                                                                AttributeValue.builder()
+                                                                        .n("10")
+                                                                        .build(),
+                                                        "price",
+                                                                AttributeValue.builder()
+                                                                        .n("100.5")
+                                                                        .build()))
+                                                .build()))
+                                        .build(),
+                        "totalQty", AttributeValue.builder().n("10").build(),
+                        "avgCost", AttributeValue.builder().n("100.5").build(),
+                        "updatedAt",
+                                AttributeValue.builder()
+                                        .s("2026-07-22T00:00:00Z")
+                                        .build()))
                 .build());
     }
 
@@ -244,5 +281,44 @@ class DsrBeanIT extends AbstractLocalStackIT {
         assertEquals("erased", ((ErasureResult) response).status());
         assertNull(getItem("USER#sub-stale", "CONSENT"));
         assertNull(getItem("USER#sub-stale", "PROFILE"));
+    }
+
+    @Test
+    void eraseAlsoDeletesHoldings() {
+        seedConsent("sub-hold");
+        seedWatch("sub-hold", "INFY.NS");
+        seedHolding("sub-hold", "INFY.NS");
+
+        DsrResponse response =
+                dsr.apply(new DsrRequest(DsrOperation.ERASE, "sub-hold", "users", null, "1.2.3.4", "corr-hold"));
+
+        ErasureResult result = (ErasureResult) response;
+        assertEquals("erased", result.status());
+        assertEquals(4, result.itemsDeleted()); // CONSENT + WATCH#INFY.NS + WATCHSET mirror + HOLDING#INFY.NS
+        assertNull(getItem("USER#sub-hold", "HOLDING#INFY.NS"));
+        assertNull(getItem("USER#sub-hold", "WATCH#INFY.NS"));
+        assertNull(getItem("WATCHSET", "TICKER#INFY.NS"));
+        assertNull(getItem("USER#sub-hold", "CONSENT"));
+    }
+
+    @Test
+    void exportIncludesHoldings() {
+        seedConsent("subject-h");
+        seedHolding("subject-h", "INFY.NS");
+
+        DsrResponse response =
+                dsr.apply(new DsrRequest(DsrOperation.EXPORT, "subject-h", "user", "subject-h", "1.2.3.4", "corr-eh"));
+
+        UserDataExport export = (UserDataExport) response;
+        assertThat(export.holdings()).hasSize(1);
+        HoldingView view = export.holdings().get(0);
+        assertThat(view.ticker()).isEqualTo("INFY.NS");
+        assertThat(view.totalQty()).isEqualTo("10");
+        assertThat(view.avgCost()).isEqualTo("100.5");
+        assertThat(view.lots()).hasSize(1);
+        LotView lot = view.lots().get(0);
+        assertThat(lot.buyDate()).isEqualTo("2020-01-15");
+        assertThat(lot.qty()).isEqualTo("10");
+        assertThat(lot.price()).isEqualTo("100.5");
     }
 }

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.engnotes.consent.service.UserWatchlistPurgeService;
 import dev.engnotes.itsupport.AbstractLocalStackIT;
 import dev.engnotes.itsupport.PlatformSchema;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -37,6 +38,40 @@ class WatchlistPurgeIT extends AbstractLocalStackIT {
                 .build());
     }
 
+    private void seedHolding(String sub, String ticker) {
+        ddb().putItem(PutItemRequest.builder()
+                .tableName(PlatformSchema.PLATFORM_TABLE)
+                .item(Map.of(
+                        "PK", AttributeValue.builder().s("USER#" + sub).build(),
+                        "SK", AttributeValue.builder().s("HOLDING#" + ticker).build(),
+                        "ticker", AttributeValue.builder().s(ticker).build(),
+                        "lots",
+                                AttributeValue.builder()
+                                        .l(List.of(AttributeValue.builder()
+                                                .m(Map.of(
+                                                        "buyDate",
+                                                                AttributeValue.builder()
+                                                                        .s("2020-01-15")
+                                                                        .build(),
+                                                        "qty",
+                                                                AttributeValue.builder()
+                                                                        .n("10")
+                                                                        .build(),
+                                                        "price",
+                                                                AttributeValue.builder()
+                                                                        .n("100.5")
+                                                                        .build()))
+                                                .build()))
+                                        .build(),
+                        "totalQty", AttributeValue.builder().n("10").build(),
+                        "avgCost", AttributeValue.builder().n("100.5").build(),
+                        "updatedAt",
+                                AttributeValue.builder()
+                                        .s("2026-07-22T00:00:00Z")
+                                        .build()))
+                .build());
+    }
+
     @Test
     void purgeDeletesAllUserWatchItemsAndMirrors() {
         var purge = newPurge();
@@ -64,5 +99,34 @@ class WatchlistPurgeIT extends AbstractLocalStackIT {
                         .build())
                 .items();
         assertThat(mirrors).isEmpty();
+    }
+
+    @Test
+    void purgeAlsoDeletesHoldings() {
+        var purge = newPurge();
+        seedWatch("user-6", "CCC.NS");
+        seedHolding("user-6", "CCC.NS");
+
+        purge.purge("user-6");
+
+        var remainingHoldings = ddb().query(QueryRequest.builder()
+                        .tableName(PlatformSchema.PLATFORM_TABLE)
+                        .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
+                        .expressionAttributeValues(Map.of(
+                                ":pk", AttributeValue.builder().s("USER#user-6").build(),
+                                ":sk", AttributeValue.builder().s("HOLDING#").build()))
+                        .build())
+                .items();
+        assertThat(remainingHoldings).isEmpty();
+
+        var remainingWatch = ddb().query(QueryRequest.builder()
+                        .tableName(PlatformSchema.PLATFORM_TABLE)
+                        .keyConditionExpression("PK = :pk AND begins_with(SK, :sk)")
+                        .expressionAttributeValues(Map.of(
+                                ":pk", AttributeValue.builder().s("USER#user-6").build(),
+                                ":sk", AttributeValue.builder().s("WATCH#").build()))
+                        .build())
+                .items();
+        assertThat(remainingWatch).isEmpty();
     }
 }
