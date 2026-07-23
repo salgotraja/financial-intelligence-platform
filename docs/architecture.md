@@ -43,6 +43,18 @@ Read path (serving, CQRS):
 `GET /market/{ticker}` returns the latest hot market data. Neither read invokes Bedrock, so
 read p99 stays low and the path can use provisioned concurrency and API Gateway caching.
 
+Portfolio path (personal, read-and-write): the `portfolio` bean (a second Lambda from the
+watchlist-function jar) serves lots-based holdings under `USER#{sub}/HOLDING#{ticker}`.
+`POST/DELETE /portfolio/{ticker}` create-or-replace and delete holdings, gated by active consent
+and the erasure lease; creating a holding routes through the watchlist transaction so the ticker
+joins the WATCHSET union and its one-year daily history backfills. `GET /portfolio` values the
+holdings server-side (latest intraday price, or the latest daily close on weekends; close-to-close
+day change; P&L) with an honest `asOf`. `GET /portfolio/history` reconstructs the daily value curve
+from stored daily rollups since the earliest truthful day, overlaid with a normalized `^NSEI`
+benchmark and a beat-NIFTY delta. All portfolio computation is read-side over data already stored,
+so it adds no Bedrock or ingestion cost. A watchlist removal of a still-held ticker returns 409, so
+every held ticker stays watchlisted and keeps backfilling.
+
 ## Deployment View (AWS Resources)
 
 The deployment diagram maps the design onto the AWS resources actually provisioned, grouped by
@@ -104,12 +116,14 @@ re-consent). PreTokenGeneration injects the user's group claim (`readers` / `pre
 
 Erasure flow: `DELETE /user/my-data` runs a synchronous cascade in the DSR Lambda (the Step
 Functions workflow was collapsed 2026-07-19) that acquires a `deletion_pending` lease via a
-DynamoDB conditional write, batch-deletes all `USER#{sub}` items (watchlist, connections,
-profile), runs the S3 user-tagged safeguard delete, deletes the Cognito user, emails
+DynamoDB conditional write, batch-deletes all `USER#{sub}` items (watchlist, holdings,
+connections, profile), runs the S3 user-tagged safeguard delete, deletes the Cognito user, emails
 confirmation, then clears the lease and writes a permanent erasure record (hashed sub, no PII)
-to the append-only audit table. The request returns 200 with the completed result.
-Right-to-access (`GET /user/my-data`) aggregates Cognito attributes plus all `USER#{sub}` items
-and logs an `access_event`.
+to the append-only audit table. The request returns 200 with the completed result. Consent
+withdrawal purges the same watchlist and holdings items; the portfolio has no separate consent
+purpose, so withdrawing consent irrecoverably destroys it. Right-to-access (`GET /user/my-data`)
+aggregates Cognito attributes plus all `USER#{sub}` items (holdings included) and logs an
+`access_event`.
 
 For component responsibilities, the single-table data model, tunable defaults, security,
 observability, cost guardrails, and the build sequence, see [`spec.md`](./spec.md).
