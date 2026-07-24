@@ -17,6 +17,26 @@ import { SUGGESTED_TICKERS, validateHoldingTicker } from '@/lib/tickers'
 
 const emptyLot = (): LotInput => ({ buyDate: '', qty: 0, price: 0 })
 
+const validateLots = (lots: LotInput[]): string[] => {
+  const problems: string[] = []
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const floor = new Date('1996-01-01')
+  lots.forEach((lot, i) => {
+    const n = i + 1
+    if (!lot.buyDate) problems.push(`Lot ${n}: enter a buy date.`)
+    else {
+      const d = new Date(lot.buyDate)
+      if (Number.isNaN(d.getTime())) problems.push(`Lot ${n}: enter a valid buy date.`)
+      else if (d > today) problems.push(`Lot ${n}: buy date can't be in the future.`)
+      else if (d < floor) problems.push(`Lot ${n}: buy date can't be before 1996.`)
+    }
+    if (!(lot.qty > 0)) problems.push(`Lot ${n}: quantity must be greater than 0.`)
+    if (!(lot.price > 0)) problems.push(`Lot ${n}: enter the buy price per share (greater than 0).`)
+  })
+  return problems
+}
+
 const mutationErrorMessage = (err: unknown): string => {
   if (err instanceof ApiError) {
     if (err.kind === 'conflict') return 'That ticker is held or in conflict; please retry.'
@@ -217,6 +237,11 @@ export const HoldingsTable = ({
 
   const saveEdit = async () => {
     if (!editingTicker) return
+    const problems = validateLots(draftLots)
+    if (problems.length > 0) {
+      setError(problems.join(' '))
+      return
+    }
     setBusy(true)
     try {
       await saveHolding(editingTicker, draftLots)
@@ -250,21 +275,7 @@ export const HoldingsTable = ({
     const problems: string[] = []
     const tickerErr = validateHoldingTicker(ticker)
     if (tickerErr) problems.push(tickerErr)
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const floor = new Date('1996-01-01')
-    newLots.forEach((lot, i) => {
-      const n = i + 1
-      if (!lot.buyDate) problems.push(`Lot ${n}: enter a buy date.`)
-      else {
-        const d = new Date(lot.buyDate)
-        if (Number.isNaN(d.getTime())) problems.push(`Lot ${n}: enter a valid buy date.`)
-        else if (d > today) problems.push(`Lot ${n}: buy date can't be in the future.`)
-        else if (d < floor) problems.push(`Lot ${n}: buy date can't be before 1996.`)
-      }
-      if (!(lot.qty > 0)) problems.push(`Lot ${n}: quantity must be greater than 0.`)
-      if (!(lot.price > 0)) problems.push(`Lot ${n}: enter the buy price per share (greater than 0).`)
-    })
+    problems.push(...validateLots(newLots))
     if (problems.length > 0) {
       setError(problems.join(' '))
       return

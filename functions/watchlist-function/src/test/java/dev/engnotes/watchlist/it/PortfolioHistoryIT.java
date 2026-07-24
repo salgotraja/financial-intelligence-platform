@@ -16,6 +16,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Covers {@code portfolio} HISTORY against real DynamoDB (LocalStack): a seeded {@code HOLDING#}
@@ -25,11 +27,20 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 @SpringBootTest
 class PortfolioHistoryIT extends AbstractLocalStackIT {
 
+    private static final ObjectMapper MAPPER =
+            JsonMapper.builder().findAndAddModules().build();
+
+    // The portfolio bean takes the raw JSON body (String) and deserializes it itself so a malformed
+    // body maps to a 400, not a 500; ITs serialize the request the same way API Gateway does.
     @Autowired
-    Function<PortfolioRequest, PortfolioResponse> portfolio;
+    Function<String, PortfolioResponse> portfolio;
 
     @Autowired
     DynamoDbClient dynamoDbClient;
+
+    private static String json(PortfolioRequest request) {
+        return MAPPER.writeValueAsString(request);
+    }
 
     private void grantConsent(String sub) {
         dynamoDbClient.putItem(PutItemRequest.builder()
@@ -93,8 +104,8 @@ class PortfolioHistoryIT extends AbstractLocalStackIT {
         seedDayRollup("RELIANCE.NS", "2026-07-20", "100");
         seedDayRollup("RELIANCE.NS", "2026-07-21", "110");
 
-        PortfolioResponse response = portfolio.apply(
-                new PortfolioRequest(PortfolioOperation.HISTORY, null, null, "owner-history", "corr-it-history-1"));
+        PortfolioResponse response = portfolio.apply(json(
+                new PortfolioRequest(PortfolioOperation.HISTORY, null, null, "owner-history", "corr-it-history-1")));
 
         assertThat(response.history().points()).isNotEmpty();
         assertThat(response.history().floor()).isEqualTo("2026-07-20");
@@ -112,8 +123,8 @@ class PortfolioHistoryIT extends AbstractLocalStackIT {
         seedDayRollup("^NSEI", "2026-07-20", "20000");
         seedDayRollup("^NSEI", "2026-07-21", "21000");
 
-        PortfolioResponse response = portfolio.apply(new PortfolioRequest(
-                PortfolioOperation.HISTORY, null, null, "owner-history-benchmark", "corr-it-history-2"));
+        PortfolioResponse response = portfolio.apply(json(new PortfolioRequest(
+                PortfolioOperation.HISTORY, null, null, "owner-history-benchmark", "corr-it-history-2")));
 
         assertThat(response.history().benchmark()).isNotEmpty();
         assertThat(response.history().benchmarkFrom())
