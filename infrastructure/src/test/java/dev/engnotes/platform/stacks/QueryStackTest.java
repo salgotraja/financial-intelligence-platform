@@ -203,6 +203,10 @@ class QueryStackTest {
             assertFalse(regex.matcher("").matches(), "500 pattern must not match empty success errorMessage");
             assertTrue(regex.matcher("java.lang.IllegalStateException: boom").matches());
             assertFalse(regex.matcher("Invalid ticker: 123").matches(), "client errors must map to 400, not 500");
+            assertFalse(
+                    regex.matcher("invalid request body: Lot buyDate must not be null")
+                            .matches(),
+                    "malformed portfolio bodies must map to 400, not 500");
         }
     }
 
