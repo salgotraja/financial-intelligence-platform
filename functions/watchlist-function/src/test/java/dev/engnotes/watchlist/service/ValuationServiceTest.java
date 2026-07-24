@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
 
+import dev.engnotes.observability.Metrics;
 import dev.engnotes.watchlist.model.Holding;
 import dev.engnotes.watchlist.model.Lot;
 import dev.engnotes.watchlist.model.PortfolioValuation;
@@ -36,8 +37,10 @@ class ValuationServiceTest {
     @Mock
     private DynamoDbClient dynamoDb;
 
+    private final Metrics.Capture capture = Metrics.forTesting();
+
     private ValuationService service() {
-        return new ValuationService(holdings, dynamoDb, TABLE, FIXED_CLOCK);
+        return new ValuationService(holdings, dynamoDb, TABLE, FIXED_CLOCK, capture.metrics());
     }
 
     private static AttributeValue s(String value) {
@@ -113,6 +116,7 @@ class ValuationServiceTest {
         assertThat(valuation.totalPnl()).isEqualByComparingTo("200.00");
         assertThat(valuation.totalDayChange()).isEqualByComparingTo("80.00");
         assertThat(valuation.asOf()).isEqualTo("2026-07-23T10:00:00Z");
+        assertThat(capture.records()).noneMatch(record -> record.contains("\"PortfolioValuationDegradedRows\""));
     }
 
     @Test
@@ -145,6 +149,8 @@ class ValuationServiceTest {
         assertThat(view.pnl()).isNull();
         assertThat(view.dayChange()).isNull();
         assertThat(valuation.totalValue()).isEqualByComparingTo("0.00");
+        assertThat(capture.records())
+                .anySatisfy(record -> assertThat(record).contains("\"PortfolioValuationDegradedRows\""));
     }
 
     @Test

@@ -1,5 +1,7 @@
 package dev.engnotes.watchlist;
 
+import dev.engnotes.observability.Metrics;
+import dev.engnotes.observability.RequestContext;
 import dev.engnotes.watchlist.exception.WatchlistException;
 import dev.engnotes.watchlist.model.PortfolioRequest;
 import dev.engnotes.watchlist.model.PortfolioResponse;
@@ -38,6 +40,8 @@ public class PortfolioHandler {
 
     private static final Logger log = LoggerFactory.getLogger(PortfolioHandler.class);
 
+    static final String MODULE_LABEL = WatchlistHandler.MODULE_LABEL;
+
     @Bean
     public Function<PortfolioRequest, PortfolioResponse> portfolio(
             HoldingsStoreService store,
@@ -45,48 +49,55 @@ public class PortfolioHandler {
             ConsentGate consentGate,
             Clock clock,
             @Value("${DEFAULT_OWNER_SUB:dev-user}") String defaultOwnerSub,
-            PortfolioHistoryService historyService) {
+            PortfolioHistoryService historyService,
+            Metrics metrics) {
         return request -> {
-            String owner = (request.ownerSub() != null && !request.ownerSub().isBlank())
-                    ? request.ownerSub()
-                    : defaultOwnerSub;
-            log.info(
-                    "Portfolio request. operation={} owner={} correlationId={}",
-                    request.operation(),
-                    owner,
-                    request.correlationId());
+            try (var ctx = RequestContext.begin(MODULE_LABEL, request.correlationId())) {
+                ctx.withUser(request.ownerSub());
+                String owner =
+                        (request.ownerSub() != null && !request.ownerSub().isBlank())
+                                ? request.ownerSub()
+                                : defaultOwnerSub;
+                log.info(
+                        "Portfolio request. operation={} owner={} correlationId={}",
+                        request.operation(),
+                        owner,
+                        request.correlationId());
 
-            // Consent gate (spec decision 5): no active consent -> no portfolio interaction at all.
-            // The "consent required" prefix keeps QueryStack's CLIENT_ERROR_PATTERN 400 mapping in
-            // sync; changing it here requires the matching change in QueryStack.
-            if (!consentGate.isActive(owner)) {
-                throw new WatchlistException("consent required: no active consent for owner");
+                // Consent gate (spec decision 5): no active consent -> no portfolio interaction at
+                // all. The "consent required" prefix keeps QueryStack's CLIENT_ERROR_PATTERN 400
+                // mapping in sync; changing it here requires the matching change in QueryStack.
+                if (!consentGate.isActive(owner)) {
+                    metrics.count("ConsentBlocked");
+                    throw new WatchlistException("consent required: no active consent for owner");
+                }
+
+                return switch (request.operation()) {
+                    case CREATE -> {
+                        // Spec s11 erasure step 1: refuse new holding rows while erasure is in
+                        // flight. Scoped to CREATE only, not the consent check above: DELETE and
+                        // LIST stay allowed. The "deletion pending" prefix keeps QueryStack's
+                        // CLIENT_ERROR_PATTERN in sync.
+                        if (consentGate.isDeletionPending(owner)) {
+                            throw new WatchlistException("deletion pending: erasure in progress for this account");
+                        }
+                        String ticker = TickerValidator.validate(request.ticker());
+                        if (request.lots() == null) {
+                            throw new WatchlistException("Holding lots must not be null");
+                        }
+                        PortfolioValidator.validateLots(request.lots(), clock);
+                        store.upsert(owner, ticker, request.lots());
+                        yield PortfolioResponse.created(ticker);
+                    }
+                    case DELETE -> {
+                        String ticker = TickerValidator.validate(request.ticker());
+                        store.delete(owner, ticker);
+                        yield PortfolioResponse.deleted(ticker);
+                    }
+                    case LIST -> PortfolioResponse.list(valuation.value(owner));
+                    case HISTORY -> PortfolioResponse.history(historyService.history(owner));
+                };
             }
-
-            return switch (request.operation()) {
-                case CREATE -> {
-                    // Spec s11 erasure step 1: refuse new holding rows while erasure is in flight.
-                    // Scoped to CREATE only, not the consent check above: DELETE and LIST stay allowed.
-                    // The "deletion pending" prefix keeps QueryStack's CLIENT_ERROR_PATTERN in sync.
-                    if (consentGate.isDeletionPending(owner)) {
-                        throw new WatchlistException("deletion pending: erasure in progress for this account");
-                    }
-                    String ticker = TickerValidator.validate(request.ticker());
-                    if (request.lots() == null) {
-                        throw new WatchlistException("Holding lots must not be null");
-                    }
-                    PortfolioValidator.validateLots(request.lots(), clock);
-                    store.upsert(owner, ticker, request.lots());
-                    yield PortfolioResponse.created(ticker);
-                }
-                case DELETE -> {
-                    String ticker = TickerValidator.validate(request.ticker());
-                    store.delete(owner, ticker);
-                    yield PortfolioResponse.deleted(ticker);
-                }
-                case LIST -> PortfolioResponse.list(valuation.value(owner));
-                case HISTORY -> PortfolioResponse.history(historyService.history(owner));
-            };
         };
     }
 }

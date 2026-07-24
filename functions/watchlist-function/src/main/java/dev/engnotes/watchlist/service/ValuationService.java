@@ -1,5 +1,6 @@
 package dev.engnotes.watchlist.service;
 
+import dev.engnotes.observability.Metrics;
 import dev.engnotes.watchlist.model.HoldingValuation;
 import dev.engnotes.watchlist.model.PortfolioValuation;
 import dev.engnotes.watchlist.portfolio.HoldingMath;
@@ -50,16 +51,19 @@ public class ValuationService {
     private final DynamoDbClient dynamoDb;
     private final String platformTable;
     private final Clock clock;
+    private final Metrics metrics;
 
     public ValuationService(
             HoldingsStoreService holdings,
             DynamoDbClient dynamoDb,
             @Value("${PLATFORM_TABLE:financial-platform-dev}") String platformTable,
-            Clock clock) {
+            Clock clock,
+            Metrics metrics) {
         this.holdings = holdings;
         this.dynamoDb = dynamoDb;
         this.platformTable = platformTable;
         this.clock = clock;
+        this.metrics = metrics;
     }
 
     /** Prices every holding for {@code ownerSub} and sums the non-degraded rows into portfolio totals. */
@@ -144,6 +148,9 @@ public class ValuationService {
                 degradedCount,
                 oldestAsOf,
                 durationMs);
+        if (degradedCount > 0) {
+            metrics.count("PortfolioValuationDegradedRows", degradedCount);
+        }
 
         return new PortfolioValuation(
                 oldestAsOf,
