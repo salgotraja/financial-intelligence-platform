@@ -1389,11 +1389,12 @@ public class QueryStack extends Stack {
     //   "deletion pending"      - watchlist-function WatchlistHandler.java, consent-function
     //                             ConsentStoreService.java
     //   "holding exists"        - watchlist-function WatchlistHandler.java (409 conflict)
+    //   "invalid request body"  - watchlist-function PortfolioHandler.java
     //
     // The watchlist DELETE method uses the conflict-aware responses below (409), not the shared
     // ones, so a held ticker's REMOVE refusal maps to 409 rather than 400.
     private static final String CLIENT_ERROR_PATTERN =
-            "Invalid ticker|allowlist validation|consent required|deletion pending";
+            "Invalid ticker|allowlist validation|consent required|deletion pending|invalid request body";
     private static final String CONFLICT_PATTERN = "holding exists";
     private static final String CORS_HEADER = "method.response.header.Access-Control-Allow-Origin";
 

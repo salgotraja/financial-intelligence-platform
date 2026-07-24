@@ -18,11 +18,12 @@ public final class PortfolioValidator {
         LocalDate today = LocalDate.now(clock);
         for (Lot lot : lots) {
             if (lot.buyDate().isAfter(today)) {
-                throw new WatchlistException("Lot buyDate " + lot.buyDate() + " must not be after " + today);
+                throw new WatchlistException(
+                        "invalid request body: lot buyDate " + lot.buyDate() + " must not be after " + today);
             }
             if (lot.buyDate().isBefore(NSE_ELECTRONIC_ERA_FLOOR)) {
-                throw new WatchlistException(
-                        "Lot buyDate " + lot.buyDate() + " must not be before " + NSE_ELECTRONIC_ERA_FLOOR);
+                throw new WatchlistException("invalid request body: lot buyDate " + lot.buyDate()
+                        + " must not be before " + NSE_ELECTRONIC_ERA_FLOOR);
             }
         }
     }

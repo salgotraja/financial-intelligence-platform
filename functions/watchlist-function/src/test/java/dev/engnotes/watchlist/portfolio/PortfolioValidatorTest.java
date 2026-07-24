@@ -25,14 +25,16 @@ class PortfolioValidatorTest {
     void rejectsBuyDateAfterToday() {
         List<Lot> lots = List.of(lot(LocalDate.of(2024, 6, 16)));
         assertThatThrownBy(() -> PortfolioValidator.validateLots(lots, FIXED_CLOCK))
-                .isInstanceOf(WatchlistException.class);
+                .isInstanceOf(WatchlistException.class)
+                .hasMessageContaining("invalid request body");
     }
 
     @Test
     void rejectsPre1996Date() {
         List<Lot> lots = List.of(lot(LocalDate.of(1995, 12, 31)));
         assertThatThrownBy(() -> PortfolioValidator.validateLots(lots, FIXED_CLOCK))
-                .isInstanceOf(WatchlistException.class);
+                .isInstanceOf(WatchlistException.class)
+                .hasMessageContaining("invalid request body");
     }
 
     @Test
