@@ -2,6 +2,7 @@ package dev.engnotes.dsr.service;
 
 import dev.engnotes.dsr.model.ComplianceEventType;
 import dev.engnotes.dsr.model.ErasureResult;
+import dev.engnotes.observability.Metrics;
 import java.time.Clock;
 import java.time.Instant;
 import org.slf4j.Logger;
@@ -29,23 +30,27 @@ public class ErasureService {
     private final ErasureEmailService confirmationEmail;
     private final DsrAuditService audit;
     private final Clock clock;
+    private final Metrics metrics;
 
     public ErasureService(
             UserErasureService erasure,
             CognitoUserService cognito,
             ErasureEmailService confirmationEmail,
             DsrAuditService audit,
-            Clock clock) {
+            Clock clock,
+            Metrics metrics) {
         this.erasure = erasure;
         this.cognito = cognito;
         this.confirmationEmail = confirmationEmail;
         this.audit = audit;
         this.clock = clock;
+        this.metrics = metrics;
     }
 
     public ErasureResult erase(String subjectSub, String callerSub, String sourceIp, String correlationId) {
         String requestedAt = Instant.now(clock).toString();
         if (!erasure.acquireDeletionLease(subjectSub, requestedAt)) {
+            metrics.count("ErasureLeaseRefused");
             return ErasureResult.inProgress(subjectSub);
         }
 
@@ -70,6 +75,7 @@ public class ErasureService {
                 subjectSub, callerSub, sourceIp, correlationId, requestedAt, completedAt, emailSent);
         audit.recordCompliance(
                 ComplianceEventType.ERASURE, subjectSub, callerSub, requestedAt, correlationId, emailSent);
+        metrics.count("ErasureCompleted");
         return new ErasureResult(
                 "erased", subjectSub, itemsDeleted, cognitoUserDeleted, emailSent, requestedAt, completedAt);
     }

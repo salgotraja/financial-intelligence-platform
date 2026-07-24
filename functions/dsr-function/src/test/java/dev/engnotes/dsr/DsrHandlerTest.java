@@ -19,6 +19,7 @@ import dev.engnotes.dsr.model.UserDataExport;
 import dev.engnotes.dsr.service.DsrAuditService;
 import dev.engnotes.dsr.service.ErasureService;
 import dev.engnotes.dsr.service.UserDataExportService;
+import dev.engnotes.observability.Metrics;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -44,9 +45,12 @@ class DsrHandlerTest {
     private ErasureService erasureService;
 
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+    private final Metrics.Capture capture = Metrics.forTesting();
 
     private DsrResponse handle(DsrRequest request) {
-        return new DsrHandler().dsr(export, audit, erasureService, clock).apply(request);
+        return new DsrHandler()
+                .dsr(export, audit, erasureService, clock, capture.metrics())
+                .apply(request);
     }
 
     @Test
@@ -63,6 +67,7 @@ class DsrHandlerTest {
         order.verify(audit)
                 .recordCompliance(ComplianceEventType.ACCESS, "user-1", "user-1", NOW.toString(), "corr-1", null);
         assertThat(((UserDataExport) response).status()).isEqualTo("ok");
+        assertThat(capture.records()).anySatisfy(record -> assertThat(record).contains("\"ExportGenerated\""));
     }
 
     @Test
@@ -81,6 +86,7 @@ class DsrHandlerTest {
         assertThat(((UserDataExport) response).status()).isEqualTo("denied");
         verify(export, never()).export(anyString());
         verifyNoInteractions(audit);
+        assertThat(capture.records()).noneSatisfy(record -> assertThat(record).contains("\"ExportGenerated\""));
     }
 
     @Test

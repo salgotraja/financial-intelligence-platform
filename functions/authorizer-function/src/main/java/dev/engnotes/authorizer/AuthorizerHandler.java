@@ -4,6 +4,8 @@ import com.amazonaws.services.lambda.runtime.events.APIGatewayCustomAuthorizerEv
 import dev.engnotes.authorizer.jwt.JwtVerifier;
 import dev.engnotes.authorizer.jwt.Principal;
 import dev.engnotes.authorizer.policy.RoutePolicy;
+import dev.engnotes.observability.Metrics;
+import dev.engnotes.observability.RequestContext;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -28,29 +30,42 @@ public class AuthorizerHandler {
 
     private static final Logger log = LoggerFactory.getLogger(AuthorizerHandler.class);
 
+    static final String MODULE_LABEL = "financial-authorizer";
+
     public static void main(String[] args) {
         SpringApplication.run(AuthorizerHandler.class, args);
     }
 
     @Bean
-    public Function<APIGatewayCustomAuthorizerEvent, Map<String, Object>> authorize(JwtVerifier verifier) {
+    public Metrics metrics() {
+        return Metrics.forFunction(MODULE_LABEL);
+    }
+
+    @Bean
+    public Function<APIGatewayCustomAuthorizerEvent, Map<String, Object>> authorize(
+            JwtVerifier verifier, Metrics metrics) {
         return event -> {
-            String methodArn = event.getMethodArn();
-            try {
-                Principal principal = verifier.verify(stripBearer(event.getAuthorizationToken()));
-                List<RoutePolicy.Rule> allowed = RoutePolicy.allowedRules(principal.groups());
-                if (allowed.isEmpty()) {
-                    log.info("Deny (no permitted routes). sub={}", principal.sub());
-                    return policy(principal.sub(), deny(methodArn), principal.sub(), joinGroups(principal.groups()));
+            try (var ctx = RequestContext.begin(MODULE_LABEL, null)) {
+                String methodArn = event.getMethodArn();
+                try {
+                    Principal principal = verifier.verify(stripBearer(event.getAuthorizationToken()));
+                    List<RoutePolicy.Rule> allowed = RoutePolicy.allowedRules(principal.groups());
+                    if (allowed.isEmpty()) {
+                        log.info("Deny (no permitted routes). sub={}", principal.sub());
+                        metrics.count("AuthDenied", "reason", "no_permitted_routes");
+                        return policy(
+                                principal.sub(), deny(methodArn), principal.sub(), joinGroups(principal.groups()));
+                    }
+                    String base = arnBase(methodArn);
+                    List<String> resources = allowed.stream()
+                            .map(rule -> base + "/" + rule.httpMethod() + "/" + rule.resourcePattern())
+                            .toList();
+                    return policy(principal.sub(), allow(resources), principal.sub(), joinGroups(principal.groups()));
+                } catch (RuntimeException e) {
+                    log.warn("Deny (verification failed): {}", e.getMessage());
+                    metrics.count("AuthDenied", "reason", "verification_failed");
+                    return policy("unknown", deny(methodArn), "unknown", "");
                 }
-                String base = arnBase(methodArn);
-                List<String> resources = allowed.stream()
-                        .map(rule -> base + "/" + rule.httpMethod() + "/" + rule.resourcePattern())
-                        .toList();
-                return policy(principal.sub(), allow(resources), principal.sub(), joinGroups(principal.groups()));
-            } catch (RuntimeException e) {
-                log.warn("Deny (verification failed): {}", e.getMessage());
-                return policy("unknown", deny(methodArn), "unknown", "");
             }
         };
     }

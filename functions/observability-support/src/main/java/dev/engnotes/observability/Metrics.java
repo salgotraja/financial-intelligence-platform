@@ -1,6 +1,8 @@
 package dev.engnotes.observability;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -39,6 +41,35 @@ public final class Metrics {
 
     static Metrics forFunction(String function, Supplier<MetricsLogger> loggerFactory) {
         return new Metrics(function, loggerFactory);
+    }
+
+    /** Test-only holder: a Metrics whose emissions are captured as serialized EMF JSON. */
+    public static final class Capture {
+        private final Metrics metrics;
+        private final List<String> records;
+
+        private Capture(Metrics metrics, List<String> records) {
+            this.metrics = metrics;
+            this.records = records;
+        }
+
+        public Metrics metrics() {
+            return metrics;
+        }
+
+        public List<String> records() {
+            return List.copyOf(records);
+        }
+    }
+
+    /**
+     * Returns a {@link Capture} whose {@link Capture#metrics()} appends every emission's
+     * serialized EMF JSON to {@link Capture#records()}, for consumer unit tests to assert on.
+     */
+    public static Capture forTesting() {
+        List<String> sink = new ArrayList<>();
+        Metrics metrics = forFunction("test", () -> CapturingEnvironment.newCapturingLogger(sink));
+        return new Capture(metrics, sink);
     }
 
     public Metrics count(String name, String... dimensionPairs) {

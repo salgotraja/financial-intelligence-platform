@@ -2,6 +2,7 @@ package dev.engnotes.ingestion.service;
 
 import dev.engnotes.ingestion.exception.MarketDataException;
 import dev.engnotes.ingestion.model.MarketDataResponse;
+import dev.engnotes.observability.Metrics;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -54,6 +55,7 @@ public class MarketDataStoreService {
     private final S3Client s3;
     private final ObjectMapper objectMapper;
     private final DailyRollupService rollupService;
+    private final Metrics metrics;
 
     @Value("${PLATFORM_TABLE:financial-platform-dev}")
     private String platformTable;
@@ -62,11 +64,16 @@ public class MarketDataStoreService {
     private String dataLakeBucket;
 
     public MarketDataStoreService(
-            DynamoDbClient dynamoDb, S3Client s3, ObjectMapper objectMapper, DailyRollupService rollupService) {
+            DynamoDbClient dynamoDb,
+            S3Client s3,
+            ObjectMapper objectMapper,
+            DailyRollupService rollupService,
+            Metrics metrics) {
         this.dynamoDb = dynamoDb;
         this.s3 = s3;
         this.objectMapper = objectMapper;
         this.rollupService = rollupService;
+        this.metrics = metrics;
     }
 
     /**
@@ -87,6 +94,7 @@ public class MarketDataStoreService {
                     data.ticker(),
                     timestamp,
                     correlationId);
+            metrics.count("MarketDataIngested", "ticker", data.ticker(), "source", data.dataSource());
 
             return data.withStored(true);
 
@@ -98,8 +106,13 @@ public class MarketDataStoreService {
                     correlationId,
                     e.getMessage(),
                     e);
+            metrics.count("IngestionFailure", "reason", reasonOf(e));
             throw new MarketDataException("Storage failed for ticker " + data.ticker(), e);
         }
+    }
+
+    private static String reasonOf(Throwable t) {
+        return t.getClass().getSimpleName();
     }
 
     private void storeToDynamoDB(MarketDataResponse data, String timestamp, String correlationId) {

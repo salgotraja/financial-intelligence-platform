@@ -3,6 +3,7 @@ package dev.engnotes.ingestion.service;
 import dev.engnotes.ingestion.exception.MarketDataException;
 import dev.engnotes.ingestion.model.MarketDataResponse;
 import dev.engnotes.ingestion.provider.MarketDataProvider;
+import dev.engnotes.observability.Metrics;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,12 +24,14 @@ public class MarketDataFetchService {
     private static final Logger log = LoggerFactory.getLogger(MarketDataFetchService.class);
 
     private final List<MarketDataProvider> providers;
+    private final Metrics metrics;
 
-    public MarketDataFetchService(List<MarketDataProvider> providers) {
+    public MarketDataFetchService(List<MarketDataProvider> providers, Metrics metrics) {
         if (providers.isEmpty()) {
             throw new IllegalStateException("No market data providers configured");
         }
         this.providers = providers;
+        this.metrics = metrics;
     }
 
     public MarketDataResponse fetch(String ticker, String correlationId) {
@@ -58,6 +61,7 @@ public class MarketDataFetchService {
             }
         }
 
+        metrics.count("IngestionFailure", "reason", "provider_exhausted");
         throw new MarketDataException("All market data providers failed for ticker " + ticker, lastFailure);
     }
 }

@@ -7,6 +7,8 @@ import dev.engnotes.insight.model.InsightResponse;
 import dev.engnotes.insight.service.CorrelationService;
 import dev.engnotes.insight.service.InsightGenerationService;
 import dev.engnotes.insight.service.MarketHours;
+import dev.engnotes.observability.Metrics;
+import dev.engnotes.observability.RequestContext;
 import java.time.Clock;
 import java.util.function.Function;
 import org.slf4j.Logger;
@@ -37,6 +39,11 @@ public class InsightHandler {
         SpringApplication.run(InsightHandler.class, args);
     }
 
+    @Bean
+    public Metrics metrics() {
+        return Metrics.forFunction("financial-insight");
+    }
+
     /**
      * Generates an insight for the ticker's market data and returns it as the pipeline's output.
      * Delegates entirely to {@link InsightGenerationService}, which resolves the ticker's
@@ -46,7 +53,12 @@ public class InsightHandler {
     @Bean
     public Function<InsightRequest, InsightResponse> generateInsight(
             InsightGenerationService insightGenerationService) {
-        return insightGenerationService::generate;
+        return request -> {
+            try (var ctx = RequestContext.begin("financial-insight", request.getCorrelationId())) {
+                ctx.withTicker(request.getTicker());
+                return insightGenerationService.generate(request);
+            }
+        };
     }
 
     /**
@@ -59,19 +71,21 @@ public class InsightHandler {
     public Function<CorrelationRequest, CorrelationResponse> computeCorrelations(
             CorrelationService correlationService, Clock clock) {
         return request -> {
-            if (!MarketHours.isMarketOpen(clock.instant())) {
-                log.info("Market closed: skipping correlation pass. source={}", request.source());
-                return CorrelationResponse.marketClosed();
+            try (var ctx = RequestContext.begin("financial-insight", null)) {
+                if (!MarketHours.isMarketOpen(clock.instant())) {
+                    log.info("Market closed: skipping correlation pass. source={}", request.source());
+                    return CorrelationResponse.marketClosed();
+                }
+
+                log.info("Starting correlation pass. source={}", request.source());
+                CorrelationResponse response = correlationService.compute(clock.instant());
+                log.info(
+                        "Correlation pass complete. tickersEvaluated={} groupsComputed={}",
+                        response.tickersEvaluated(),
+                        response.groupsComputed());
+
+                return response;
             }
-
-            log.info("Starting correlation pass. source={}", request.source());
-            CorrelationResponse response = correlationService.compute(clock.instant());
-            log.info(
-                    "Correlation pass complete. tickersEvaluated={} groupsComputed={}",
-                    response.tickersEvaluated(),
-                    response.groupsComputed());
-
-            return response;
         };
     }
 }

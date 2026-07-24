@@ -15,11 +15,13 @@ import dev.engnotes.consent.model.LoginGate;
 import dev.engnotes.consent.service.ConsentStoreService;
 import dev.engnotes.consent.service.UserWatchlistPurgeService;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
@@ -86,6 +88,70 @@ class ConsentHandlerTest {
                 .apply(new ConsentRequest(ConsentOperation.VIEW, null, null, null, null, "corr-4"));
 
         verify(store).read(DEFAULT_SUB);
+    }
+
+    @Test
+    void consentPopulatesRequestContextDuringCallAndClearsAfter() {
+        AtomicReference<String> correlationDuringCall = new AtomicReference<>();
+        AtomicReference<String> functionDuringCall = new AtomicReference<>();
+        when(store.read("user-123")).thenAnswer(invocation -> {
+            correlationDuringCall.set(MDC.get("correlationId"));
+            functionDuringCall.set(MDC.get("function"));
+            return ConsentRecord.deny();
+        });
+
+        new ConsentHandler()
+                .consent(store, purge, DEFAULT_SUB)
+                .apply(new ConsentRequest(ConsentOperation.VIEW, "user-123", null, null, null, "corr-mdc"));
+
+        assertThat(correlationDuringCall.get()).isEqualTo("corr-mdc");
+        assertThat(functionDuringCall.get()).isEqualTo("financial-consent");
+        assertThat(MDC.get("correlationId")).isNull();
+        assertThat(MDC.get("function")).isNull();
+    }
+
+    @Test
+    void postConfirmationWrapsWithRequestContextClearedAfterCall() {
+        AtomicReference<String> correlationDuringCall = new AtomicReference<>();
+        Map<String, Object> event = Map.of(
+                "userName", "a@b.com",
+                "request", Map.of("userAttributes", Map.of("sub", "user-999", "email", "a@b.com")),
+                "response", Map.of());
+        org.mockito.Mockito.doAnswer(invocation -> {
+                    correlationDuringCall.set(MDC.get("correlationId"));
+                    return null;
+                })
+                .when(store)
+                .seedDefaultDeny("user-999");
+
+        Map<String, Object> result =
+                new ConsentHandler().postConfirmation(store).apply(event);
+
+        assertThat(correlationDuringCall.get()).isNotNull();
+        assertThat(MDC.get("correlationId")).isNull();
+        assertThat(MDC.get("function")).isNull();
+        assertThat(result).isSameAs(event);
+    }
+
+    @Test
+    void preAuthenticationWrapsWithRequestContextClearedAfterCall() {
+        AtomicReference<String> correlationDuringCall = new AtomicReference<>();
+        Map<String, Object> event = Map.of(
+                "userName", "a@b.com",
+                "request", Map.of("userAttributes", Map.of("sub", "user-999")),
+                "response", Map.of());
+        when(store.gateLogin("user-999", "login")).thenAnswer(invocation -> {
+            correlationDuringCall.set(MDC.get("correlationId"));
+            return LoginGate.ALLOWED;
+        });
+
+        Map<String, Object> result =
+                new ConsentHandler().preAuthentication(store).apply(event);
+
+        assertThat(correlationDuringCall.get()).isNotNull();
+        assertThat(MDC.get("correlationId")).isNull();
+        assertThat(MDC.get("function")).isNull();
+        assertThat(result).isSameAs(event);
     }
 
     @Test

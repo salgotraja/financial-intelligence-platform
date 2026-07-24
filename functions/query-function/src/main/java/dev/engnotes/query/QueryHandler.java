@@ -1,5 +1,7 @@
 package dev.engnotes.query;
 
+import dev.engnotes.observability.Metrics;
+import dev.engnotes.observability.RequestContext;
 import dev.engnotes.query.model.DailyMarketDataRequest;
 import dev.engnotes.query.model.DailyMarketDataResponse;
 import dev.engnotes.query.model.DeepAnalysisResponse;
@@ -10,17 +12,20 @@ import dev.engnotes.query.model.QueryRequest;
 import dev.engnotes.query.model.QueryResponse;
 import dev.engnotes.query.model.StoryResponse;
 import dev.engnotes.query.service.DailyMarketDataQuery;
+import dev.engnotes.query.service.DataFreshness;
 import dev.engnotes.query.service.DeepAnalysisService;
 import dev.engnotes.query.service.InsightFeedQuery;
 import dev.engnotes.query.service.InsightQuery;
 import dev.engnotes.query.service.MarketDataQuery;
 import dev.engnotes.query.service.StoryQuery;
+import java.time.Instant;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import software.amazon.cloudwatchlogs.emf.model.Unit;
 
 /**
  * Query Lambda - Spring Cloud Function entry point (read path).
@@ -44,138 +49,194 @@ public class QueryHandler {
         SpringApplication.run(QueryHandler.class, args);
     }
 
+    @Bean
+    public Metrics metrics() {
+        return Metrics.forFunction("financial-query");
+    }
+
     /** Returns the latest stored insight for the requested ticker. */
     @Bean
-    public Function<QueryRequest, QueryResponse> serveInsight(InsightQuery insightQuery) {
+    public Function<QueryRequest, QueryResponse> serveInsight(InsightQuery insightQuery, Metrics metrics) {
         return request -> {
-            String ticker = request.ticker();
-            String correlationId = request.correlationId();
+            try (var ctx = RequestContext.begin("financial-query", request.correlationId())) {
+                ctx.withTicker(request.ticker());
+                String ticker = request.ticker();
+                String correlationId = request.correlationId();
 
-            log.info("Serving latest insight. ticker={} correlationId={}", ticker, correlationId);
+                log.info("Serving latest insight. ticker={} correlationId={}", ticker, correlationId);
 
-            QueryResponse response = insightQuery.findLatestInsight(ticker);
+                QueryResponse response = insightQuery.findLatestInsight(ticker);
 
-            log.info(
-                    "Insight query complete. ticker={} found={} correlationId={}",
-                    ticker,
-                    response.found(),
-                    correlationId);
+                if (!response.found()) {
+                    metrics.count("EmptyResult", "route", "insight");
+                }
 
-            return response;
+                log.info(
+                        "Insight query complete. ticker={} found={} correlationId={}",
+                        ticker,
+                        response.found(),
+                        correlationId);
+
+                return response;
+            }
         };
     }
 
     /** Returns recent stored market-data points for the requested ticker (newest first). */
     @Bean
-    public Function<QueryRequest, MarketDataResponse> serveMarketData(MarketDataQuery marketDataQuery) {
+    public Function<QueryRequest, MarketDataResponse> serveMarketData(
+            MarketDataQuery marketDataQuery, Metrics metrics) {
         return request -> {
-            String ticker = request.ticker();
-            String correlationId = request.correlationId();
+            try (var ctx = RequestContext.begin("financial-query", request.correlationId())) {
+                ctx.withTicker(request.ticker());
+                String ticker = request.ticker();
+                String correlationId = request.correlationId();
 
-            log.info("Serving market data. ticker={} correlationId={}", ticker, correlationId);
+                log.info("Serving market data. ticker={} correlationId={}", ticker, correlationId);
 
-            MarketDataResponse response = marketDataQuery.findRecentPoints(ticker);
+                MarketDataResponse response = marketDataQuery.findRecentPoints(ticker);
 
-            log.info(
-                    "Market data query complete. ticker={} found={} points={} correlationId={}",
-                    ticker,
-                    response.found(),
-                    response.points().size(),
-                    correlationId);
+                if (response.found() && !response.points().isEmpty()) {
+                    var age = DataFreshness.ageSecondsSafe(
+                            response.points().getFirst().timestamp(), Instant.now());
+                    age.ifPresent(
+                            seconds -> metrics.gauge("DataFreshnessSeconds", seconds, Unit.SECONDS, "ticker", ticker));
+                }
+                if (!response.found()) {
+                    metrics.count("EmptyResult", "route", "market-data");
+                }
 
-            return response;
+                log.info(
+                        "Market data query complete. ticker={} found={} points={} correlationId={}",
+                        ticker,
+                        response.found(),
+                        response.points().size(),
+                        correlationId);
+
+                return response;
+            }
         };
     }
 
     /** Returns daily OHLCV rollups for the requested ticker (newest first, capped at 260 days). */
     @Bean
     public Function<DailyMarketDataRequest, DailyMarketDataResponse> serveDailyMarketData(
-            DailyMarketDataQuery dailyMarketDataQuery) {
+            DailyMarketDataQuery dailyMarketDataQuery, Metrics metrics) {
         return request -> {
-            String ticker = request.ticker();
-            String correlationId = request.correlationId();
+            try (var ctx = RequestContext.begin("financial-query", request.correlationId())) {
+                ctx.withTicker(request.ticker());
+                String ticker = request.ticker();
+                String correlationId = request.correlationId();
 
-            log.info(
-                    "Serving daily market data. ticker={} days={} correlationId={}",
-                    ticker,
-                    request.days(),
-                    correlationId);
+                log.info(
+                        "Serving daily market data. ticker={} days={} correlationId={}",
+                        ticker,
+                        request.days(),
+                        correlationId);
 
-            DailyMarketDataResponse response = dailyMarketDataQuery.findDailyPoints(ticker, request.days());
+                DailyMarketDataResponse response = dailyMarketDataQuery.findDailyPoints(ticker, request.days());
 
-            log.info(
-                    "Daily market data query complete. ticker={} found={} days={} correlationId={}",
-                    ticker,
-                    response.found(),
-                    response.days().size(),
-                    correlationId);
+                if (!response.found()) {
+                    metrics.count("EmptyResult", "route", "daily-market-data");
+                }
 
-            return response;
+                log.info(
+                        "Daily market data query complete. ticker={} found={} days={} correlationId={}",
+                        ticker,
+                        response.found(),
+                        response.days().size(),
+                        correlationId);
+
+                return response;
+            }
         };
     }
 
     /** Returns the rule-based per-ticker narrative (spec sub-project C, Task 16). */
     @Bean
-    public Function<QueryRequest, StoryResponse> serveStory(StoryQuery storyQuery) {
+    public Function<QueryRequest, StoryResponse> serveStory(StoryQuery storyQuery, Metrics metrics) {
         return request -> {
-            String ticker = request.ticker();
-            String correlationId = request.correlationId();
+            try (var ctx = RequestContext.begin("financial-query", request.correlationId())) {
+                ctx.withTicker(request.ticker());
+                String ticker = request.ticker();
+                String correlationId = request.correlationId();
 
-            log.info("Serving story. ticker={} correlationId={}", ticker, correlationId);
+                log.info("Serving story. ticker={} correlationId={}", ticker, correlationId);
 
-            StoryResponse response = storyQuery.story(ticker);
+                StoryResponse response = storyQuery.story(ticker);
 
-            log.info(
-                    "Story query complete. ticker={} days={} insightCount={} correlationId={}",
-                    ticker,
-                    response.inputs().days(),
-                    response.inputs().insightCount(),
-                    correlationId);
+                if (!response.found()) {
+                    metrics.count("EmptyResult", "route", "story");
+                }
 
-            return response;
+                log.info(
+                        "Story query complete. ticker={} days={} insightCount={} correlationId={}",
+                        ticker,
+                        response.inputs().days(),
+                        response.inputs().insightCount(),
+                        correlationId);
+
+                return response;
+            }
         };
     }
 
     /** Returns the deterministic multi-horizon deep analysis for the requested ticker. */
     @Bean
-    public Function<QueryRequest, DeepAnalysisResponse> serveDeepAnalysis(DeepAnalysisService deepAnalysisService) {
+    public Function<QueryRequest, DeepAnalysisResponse> serveDeepAnalysis(
+            DeepAnalysisService deepAnalysisService, Metrics metrics) {
         return request -> {
-            String ticker = request.ticker();
-            String correlationId = request.correlationId();
+            try (var ctx = RequestContext.begin("financial-query", request.correlationId())) {
+                ctx.withTicker(request.ticker());
+                String ticker = request.ticker();
+                String correlationId = request.correlationId();
 
-            log.info("Serving deep analysis. ticker={} correlationId={}", ticker, correlationId);
+                log.info("Serving deep analysis. ticker={} correlationId={}", ticker, correlationId);
 
-            DeepAnalysisResponse response = deepAnalysisService.analyze(ticker);
+                DeepAnalysisResponse response = deepAnalysisService.analyze(ticker);
 
-            log.info(
-                    "Deep analysis complete. ticker={} found={} horizons={} correlationId={}",
-                    ticker,
-                    response.found(),
-                    response.horizons().size(),
-                    correlationId);
+                if (!response.found()) {
+                    metrics.count("EmptyResult", "route", "deep-analysis");
+                }
 
-            return response;
+                log.info(
+                        "Deep analysis complete. ticker={} found={} horizons={} correlationId={}",
+                        ticker,
+                        response.found(),
+                        response.horizons().size(),
+                        correlationId);
+
+                return response;
+            }
         };
     }
 
     /** Returns the caller's watchlist insight feed: group insights plus ungrouped tickers' latest. */
     @Bean
-    public Function<InsightFeedRequest, InsightFeedResponse> serveInsightFeed(InsightFeedQuery insightFeedQuery) {
+    public Function<InsightFeedRequest, InsightFeedResponse> serveInsightFeed(
+            InsightFeedQuery insightFeedQuery, Metrics metrics) {
         return request -> {
-            String ownerSub = request.ownerSub();
-            String correlationId = request.correlationId();
+            try (var ctx = RequestContext.begin("financial-query", request.correlationId())) {
+                ctx.withUser(request.ownerSub());
+                String ownerSub = request.ownerSub();
+                String correlationId = request.correlationId();
 
-            log.info("Serving insight feed. owner={} correlationId={}", ownerSub, correlationId);
+                log.info("Serving insight feed. owner={} correlationId={}", ownerSub, correlationId);
 
-            InsightFeedResponse response = insightFeedQuery.feed(ownerSub);
+                InsightFeedResponse response = insightFeedQuery.feed(ownerSub);
 
-            log.info(
-                    "Insight feed query complete. owner={} insights={} correlationId={}",
-                    ownerSub,
-                    response.insights().size(),
-                    correlationId);
+                if (!response.found()) {
+                    metrics.count("EmptyResult", "route", "insight-feed");
+                }
 
-            return response;
+                log.info(
+                        "Insight feed query complete. owner={} insights={} correlationId={}",
+                        ownerSub,
+                        response.insights().size(),
+                        correlationId);
+
+                return response;
+            }
         };
     }
 }

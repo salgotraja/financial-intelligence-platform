@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import dev.engnotes.observability.Metrics;
 import dev.engnotes.watchlist.exception.WatchlistException;
 import dev.engnotes.watchlist.model.Holding;
 import dev.engnotes.watchlist.model.Lot;
@@ -44,6 +45,8 @@ class WatchlistHandlerTest {
     @Mock
     private HoldingsStoreService holdingsStore;
 
+    private final Metrics.Capture capture = Metrics.forTesting();
+
     @BeforeEach
     void allowConsentByDefault() {
         lenient()
@@ -61,7 +64,7 @@ class WatchlistHandlerTest {
     @Test
     void addUsesTheRequestSubWhenPresent() {
         WatchlistResponse response = new WatchlistHandler()
-                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                 .apply(new WatchlistRequest(Operation.ADD, "RELIANCE.NS", "user-123", "corr-1"));
 
         verify(store).add("user-123", "RELIANCE.NS");
@@ -72,7 +75,7 @@ class WatchlistHandlerTest {
     @Test
     void addFallsBackToDefaultSubWhenRequestSubBlank() {
         new WatchlistHandler()
-                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                 .apply(new WatchlistRequest(Operation.ADD, "RELIANCE.NS", null, "corr-1"));
 
         verify(store).add(DEFAULT_SUB, "RELIANCE.NS");
@@ -81,7 +84,7 @@ class WatchlistHandlerTest {
     @Test
     void removeUsesTheRequestSub() {
         WatchlistResponse response = new WatchlistHandler()
-                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                 .apply(new WatchlistRequest(Operation.REMOVE, "TCS.NS", "user-123", "corr-2"));
 
         verify(store).remove("user-123", "TCS.NS");
@@ -93,7 +96,7 @@ class WatchlistHandlerTest {
         when(store.list("user-123")).thenReturn(List.of("RELIANCE.NS", "INFY.NS"));
 
         WatchlistResponse response = new WatchlistHandler()
-                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                 .apply(new WatchlistRequest(Operation.LIST, null, "user-123", "corr-3"));
 
         assertThat(response.status()).isEqualTo("ok");
@@ -103,7 +106,7 @@ class WatchlistHandlerTest {
     @Test
     void addRejectsInvalidTickerWithoutTouchingTheStore() {
         assertThatThrownBy(() -> new WatchlistHandler()
-                        .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                        .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                         .apply(new WatchlistRequest(Operation.ADD, "bad/ticker", "user-123", "corr-4")))
                 .isInstanceOf(WatchlistException.class);
         verifyNoInteractions(store);
@@ -114,10 +117,11 @@ class WatchlistHandlerTest {
         when(consentGate.isActive("user-123")).thenReturn(false);
 
         assertThatThrownBy(() -> new WatchlistHandler()
-                        .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                        .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                         .apply(new WatchlistRequest(Operation.LIST, null, "user-123", "corr-5")))
                 .isInstanceOf(WatchlistException.class);
         verifyNoInteractions(store);
+        assertThat(capture.records()).anySatisfy(record -> assertThat(record).contains("\"ConsentBlocked\""));
     }
 
     @Test
@@ -125,7 +129,7 @@ class WatchlistHandlerTest {
         when(consentGate.isDeletionPending("user-123")).thenReturn(true);
 
         assertThatThrownBy(() -> new WatchlistHandler()
-                        .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                        .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                         .apply(new WatchlistRequest(Operation.ADD, "RELIANCE.NS", "user-123", "corr-7")))
                 .isInstanceOf(WatchlistException.class)
                 .hasMessageContaining("deletion pending");
@@ -135,7 +139,7 @@ class WatchlistHandlerTest {
     @Test
     void removeIgnoresDeletionPending() {
         WatchlistResponse response = new WatchlistHandler()
-                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                 .apply(new WatchlistRequest(Operation.REMOVE, "RELIANCE.NS", "user-123", "corr-8"));
 
         assertThat(response.status()).isEqualTo("removed");
@@ -148,7 +152,7 @@ class WatchlistHandlerTest {
         when(store.list("user-123")).thenReturn(List.of("RELIANCE.NS"));
 
         WatchlistResponse response = new WatchlistHandler()
-                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                 .apply(new WatchlistRequest(Operation.LIST, null, "user-123", "corr-9"));
 
         assertThat(response.status()).isEqualTo("ok");
@@ -160,7 +164,7 @@ class WatchlistHandlerTest {
         when(consentGate.isActive("user-123")).thenReturn(true);
 
         new WatchlistHandler()
-                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                 .apply(new WatchlistRequest(Operation.ADD, "RELIANCE.NS", "user-123", "corr-6"));
 
         verify(consentGate).isActive("user-123");
@@ -177,7 +181,7 @@ class WatchlistHandlerTest {
         when(holdingsStore.get("user-123", "RELIANCE.NS")).thenReturn(Optional.of(storedHolding));
 
         assertThatThrownBy(() -> new WatchlistHandler()
-                        .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                        .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                         .apply(new WatchlistRequest(Operation.REMOVE, "RELIANCE.NS", "user-123", "corr-10")))
                 .isInstanceOf(WatchlistException.class)
                 .hasMessageContaining("holding exists");
@@ -187,7 +191,7 @@ class WatchlistHandlerTest {
     @Test
     void removeSucceedsWhenNoHolding() {
         WatchlistResponse response = new WatchlistHandler()
-                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB)
+                .watchlist(store, consentGate, holdingsStore, DEFAULT_SUB, capture.metrics())
                 .apply(new WatchlistRequest(Operation.REMOVE, "TCS.NS", "user-123", "corr-11"));
 
         assertThat(response.status()).isEqualTo("removed");

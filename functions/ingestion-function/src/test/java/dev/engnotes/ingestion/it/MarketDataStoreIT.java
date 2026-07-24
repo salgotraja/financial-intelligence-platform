@@ -9,6 +9,7 @@ import dev.engnotes.ingestion.service.DailyRollupService;
 import dev.engnotes.ingestion.service.MarketDataStoreService;
 import dev.engnotes.itsupport.AbstractLocalStackIT;
 import dev.engnotes.itsupport.PlatformSchema;
+import dev.engnotes.observability.Metrics;
 import java.math.BigDecimal;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -23,7 +24,12 @@ class MarketDataStoreIT extends AbstractLocalStackIT {
 
     private MarketDataStoreService newStore() {
         var rollupService = mock(DailyRollupService.class);
-        var store = new MarketDataStoreService(ddb(), s3(), JsonMapper.builder().build(), rollupService);
+        var store = new MarketDataStoreService(
+                ddb(),
+                s3(),
+                JsonMapper.builder().build(),
+                rollupService,
+                Metrics.forTesting().metrics());
         ReflectionTestUtils.setField(store, "platformTable", PlatformSchema.PLATFORM_TABLE);
         ReflectionTestUtils.setField(store, "dataLakeBucket", PlatformSchema.DATA_LAKE_BUCKET);
         return store;

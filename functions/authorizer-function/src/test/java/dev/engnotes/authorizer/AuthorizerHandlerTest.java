@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayCustomAuthorizerEvent;
 import dev.engnotes.authorizer.jwt.JwtVerifier;
 import dev.engnotes.authorizer.jwt.Principal;
+import dev.engnotes.observability.Metrics;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -21,6 +22,8 @@ class AuthorizerHandlerTest {
 
     @Mock
     private JwtVerifier verifier;
+
+    private final Metrics.Capture capture = Metrics.forTesting();
 
     private APIGatewayCustomAuthorizerEvent event() {
         APIGatewayCustomAuthorizerEvent event = new APIGatewayCustomAuthorizerEvent();
@@ -47,7 +50,7 @@ class AuthorizerHandlerTest {
         when(verifier.verify("some.jwt.token")).thenReturn(new Principal("user-abc", List.of("premium")));
 
         Map<String, Object> response =
-                new AuthorizerHandler().authorize(verifier).apply(event());
+                new AuthorizerHandler().authorize(verifier, capture.metrics()).apply(event());
 
         assertThat(response.get("principalId")).isEqualTo("user-abc");
         @SuppressWarnings("unchecked")
@@ -64,7 +67,7 @@ class AuthorizerHandlerTest {
         when(verifier.verify("some.jwt.token")).thenReturn(new Principal("user-reader", List.of("readers")));
 
         Map<String, Object> response =
-                new AuthorizerHandler().authorize(verifier).apply(event());
+                new AuthorizerHandler().authorize(verifier, capture.metrics()).apply(event());
 
         // Cache-safe: policy is route-independent. Reader gets an Allow listing only read resources;
         // API Gateway then denies the POST /watchlist methodArn because it is not in the resource list.
@@ -80,7 +83,7 @@ class AuthorizerHandlerTest {
         when(verifier.verify("some.jwt.token")).thenThrow(new IllegalStateException("bad token"));
 
         Map<String, Object> response =
-                new AuthorizerHandler().authorize(verifier).apply(event());
+                new AuthorizerHandler().authorize(verifier, capture.metrics()).apply(event());
 
         assertThat(firstStatement(response).get("Effect")).isEqualTo("Deny");
     }
@@ -89,7 +92,29 @@ class AuthorizerHandlerTest {
     void allowStatementHasNoConditionKey() { // regression: null Condition broke API Gateway policy parsing
         when(verifier.verify("some.jwt.token")).thenReturn(new Principal("u", List.of("readers")));
         Map<String, Object> response =
-                new AuthorizerHandler().authorize(verifier).apply(event());
+                new AuthorizerHandler().authorize(verifier, capture.metrics()).apply(event());
         assertThat(firstStatement(response)).doesNotContainKey("Condition");
+    }
+
+    @Test
+    void noPermittedRoutesEmitsAuthDeniedMetric() {
+        when(verifier.verify("some.jwt.token")).thenReturn(new Principal("user-none", List.of()));
+
+        new AuthorizerHandler().authorize(verifier, capture.metrics()).apply(event());
+
+        assertThat(capture.records())
+                .anySatisfy(record ->
+                        assertThat(record).contains("\"AuthDenied\"").contains("\"reason\":\"no_permitted_routes\""));
+    }
+
+    @Test
+    void verificationFailureEmitsAuthDeniedMetric() {
+        when(verifier.verify("some.jwt.token")).thenThrow(new IllegalStateException("bad token"));
+
+        new AuthorizerHandler().authorize(verifier, capture.metrics()).apply(event());
+
+        assertThat(capture.records())
+                .anySatisfy(record ->
+                        assertThat(record).contains("\"AuthDenied\"").contains("\"reason\":\"verification_failed\""));
     }
 }
