@@ -11,6 +11,8 @@ import dev.engnotes.dsr.model.UserDataExport;
 import dev.engnotes.dsr.service.DsrAuditService;
 import dev.engnotes.dsr.service.ErasureService;
 import dev.engnotes.dsr.service.UserDataExportService;
+import dev.engnotes.observability.Metrics;
+import dev.engnotes.observability.RequestContext;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.function.Function;
@@ -36,56 +38,71 @@ public class DsrHandler {
 
     private static final Logger log = LoggerFactory.getLogger(DsrHandler.class);
 
+    private static final String MODULE_LABEL = "financial-dsr";
+
     public static void main(String[] args) {
         SpringApplication.run(DsrHandler.class, args);
     }
 
     @Bean
+    public Metrics metrics() {
+        return Metrics.forFunction(MODULE_LABEL);
+    }
+
+    @Bean
     public Function<DsrRequest, DsrResponse> dsr(
-            UserDataExportService export, DsrAuditService audit, ErasureService erasureService, Clock clock) {
+            UserDataExportService export,
+            DsrAuditService audit,
+            ErasureService erasureService,
+            Clock clock,
+            Metrics metrics) {
         return request -> {
-            Resolution resolution =
-                    SubjectResolver.resolve(request.callerSub(), request.callerGroups(), request.subjectSub());
-            log.info(
-                    "DSR request. operation={} callerSub={} subjectSub={} allowed={} correlationId={}",
-                    request.operation(),
-                    request.callerSub(),
-                    request.subjectSub(),
-                    resolution.allowed(),
-                    request.correlationId());
+            try (var ctx = RequestContext.begin(MODULE_LABEL, request.correlationId())) {
+                ctx.withUser(request.subjectSub());
+                Resolution resolution =
+                        SubjectResolver.resolve(request.callerSub(), request.callerGroups(), request.subjectSub());
+                log.info(
+                        "DSR request. operation={} callerSub={} subjectSub={} allowed={} correlationId={}",
+                        request.operation(),
+                        request.callerSub(),
+                        request.subjectSub(),
+                        resolution.allowed(),
+                        request.correlationId());
 
-            return switch (request.operation()) {
-                case EXPORT -> {
-                    if (!resolution.allowed()) {
-                        yield UserDataExport.denied();
+                return switch (request.operation()) {
+                    case EXPORT -> {
+                        if (!resolution.allowed()) {
+                            yield UserDataExport.denied();
+                        }
+                        UserDataExport data = export.export(resolution.subject());
+                        audit.record(
+                                resolution.subject(),
+                                AuditEventType.DATA_EXPORTED,
+                                request.callerSub(),
+                                request.sourceIp(),
+                                request.correlationId());
+                        audit.recordCompliance(
+                                ComplianceEventType.ACCESS,
+                                resolution.subject(),
+                                request.callerSub(),
+                                Instant.now(clock).toString(),
+                                request.correlationId(),
+                                null);
+                        metrics.count("ExportGenerated");
+                        yield data;
                     }
-                    UserDataExport data = export.export(resolution.subject());
-                    audit.record(
-                            resolution.subject(),
-                            AuditEventType.DATA_EXPORTED,
-                            request.callerSub(),
-                            request.sourceIp(),
-                            request.correlationId());
-                    audit.recordCompliance(
-                            ComplianceEventType.ACCESS,
-                            resolution.subject(),
-                            request.callerSub(),
-                            Instant.now(clock).toString(),
-                            request.correlationId(),
-                            null);
-                    yield data;
-                }
 
-                // Synchronous erasure cascade (Step Functions workflow collapsed 2026-07-19):
-                // idempotent via the conditional deletion lease in ErasureService.
-                case ERASE -> {
-                    if (!resolution.allowed()) {
-                        yield ErasureResult.denied();
+                    // Synchronous erasure cascade (Step Functions workflow collapsed 2026-07-19):
+                    // idempotent via the conditional deletion lease in ErasureService.
+                    case ERASE -> {
+                        if (!resolution.allowed()) {
+                            yield ErasureResult.denied();
+                        }
+                        yield erasureService.erase(
+                                resolution.subject(), request.callerSub(), request.sourceIp(), request.correlationId());
                     }
-                    yield erasureService.erase(
-                            resolution.subject(), request.callerSub(), request.sourceIp(), request.correlationId());
-                }
-            };
+                };
+            }
         };
     }
 }

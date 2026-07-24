@@ -1,11 +1,13 @@
 package dev.engnotes.dsr.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import dev.engnotes.dsr.model.ComplianceEventType;
 import dev.engnotes.dsr.model.ErasureResult;
+import dev.engnotes.observability.Metrics;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -21,6 +23,7 @@ class ErasureServiceTest {
     private CognitoUserService cognito;
     private ErasureEmailService email;
     private DsrAuditService audit;
+    private Metrics.Capture capture;
     private ErasureService service;
 
     @BeforeEach
@@ -29,7 +32,9 @@ class ErasureServiceTest {
         cognito = mock(CognitoUserService.class);
         email = mock(ErasureEmailService.class);
         audit = mock(DsrAuditService.class);
-        service = new ErasureService(erasure, cognito, email, audit, Clock.fixed(Instant.parse(NOW), ZoneOffset.UTC));
+        capture = Metrics.forTesting();
+        service = new ErasureService(
+                erasure, cognito, email, audit, Clock.fixed(Instant.parse(NOW), ZoneOffset.UTC), capture.metrics());
     }
 
     @Test
@@ -52,6 +57,8 @@ class ErasureServiceTest {
         inOrder.verify(erasure).clearDeletionPending("sub-1");
         inOrder.verify(audit).recordErasureCompletion("sub-1", "sub-1", "1.2.3.4", "corr-1", NOW, NOW, true);
         inOrder.verify(audit).recordCompliance(ComplianceEventType.ERASURE, "sub-1", "sub-1", NOW, "corr-1", true);
+        assertThat(capture.records()).anySatisfy(record -> assertThat(record).contains("\"ErasureCompleted\""));
+        assertThat(capture.records()).noneSatisfy(record -> assertThat(record).contains("\"ErasureLeaseRefused\""));
     }
 
     @Test
@@ -64,6 +71,8 @@ class ErasureServiceTest {
         verify(erasure, never()).deleteUserItems(any());
         verify(cognito, never()).deleteBySub(any());
         verifyNoInteractions(audit);
+        assertThat(capture.records()).anySatisfy(record -> assertThat(record).contains("\"ErasureLeaseRefused\""));
+        assertThat(capture.records()).noneSatisfy(record -> assertThat(record).contains("\"ErasureCompleted\""));
     }
 
     @Test
