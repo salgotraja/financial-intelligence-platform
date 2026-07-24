@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import dev.engnotes.ingestion.exception.MarketDataException;
 import dev.engnotes.ingestion.model.MarketDataResponse;
 import dev.engnotes.ingestion.provider.MarketDataProvider;
+import dev.engnotes.observability.Metrics;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,11 +26,13 @@ class MarketDataFetchServiceTest {
     @Mock
     private MarketDataProvider fallback;
 
+    private Metrics.Capture metricsCapture;
     private MarketDataFetchService service;
 
     @BeforeEach
     void setUp() {
-        service = new MarketDataFetchService(List.of(primary, fallback));
+        metricsCapture = Metrics.forTesting();
+        service = new MarketDataFetchService(List.of(primary, fallback), metricsCapture.metrics());
     }
 
     @Test
@@ -60,11 +63,16 @@ class MarketDataFetchServiceTest {
         assertThatThrownBy(() -> service.fetch("RELIANCE.NS", "corr-1"))
                 .isInstanceOf(MarketDataException.class)
                 .hasMessageContaining("All market data providers failed");
+
+        assertThat(metricsCapture.records())
+                .anySatisfy(r -> assertThat(r).contains("IngestionFailure").contains("provider_exhausted"));
     }
 
     @Test
     void rejectsEmptyProviderList() {
-        assertThatThrownBy(() -> new MarketDataFetchService(List.of())).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new MarketDataFetchService(
+                        List.of(), Metrics.forTesting().metrics()))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     private static MarketDataResponse quote(String source) {

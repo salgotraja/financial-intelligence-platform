@@ -8,6 +8,8 @@ import dev.engnotes.ingestion.service.MarketDataFetchService;
 import dev.engnotes.ingestion.service.MarketDataStoreService;
 import dev.engnotes.ingestion.service.MarketHours;
 import dev.engnotes.ingestion.validation.TickerValidator;
+import dev.engnotes.observability.Metrics;
+import dev.engnotes.observability.RequestContext;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +45,11 @@ public class IngestionHandler {
         SpringApplication.run(IngestionHandler.class, args);
     }
 
+    @Bean
+    public Metrics metrics() {
+        return Metrics.forFunction("financial-ingestion");
+    }
+
     /**
      * Fetches live market data for a ticker, evaluates it against the rolling baseline to flag
      * anomalies (the Bedrock gate, spec section 6), then stores it in DynamoDB (hot) and S3 (cold).
@@ -62,46 +69,52 @@ public class IngestionHandler {
             Clock clock) {
         return request -> {
             String correlationId = request.correlationId();
-            // Validate at the trust boundary (spec section 12) before the ticker reaches the
-            // provider URL, S3 keys/tags, or DynamoDB writes downstream.
-            String ticker = TickerValidator.validate(request.ticker());
+            try (var ctx = RequestContext.begin("financial-ingestion", correlationId)) {
+                // Validate at the trust boundary (spec section 12) before the ticker reaches the
+                // provider URL, S3 keys/tags, or DynamoDB writes downstream.
+                String ticker = TickerValidator.validate(request.ticker());
+                ctx.withTicker(ticker);
 
-            if (SCHEDULED_SOURCE.equals(request.source()) && !MarketHours.isMarketOpen(clock.instant())) {
-                log.info("Market closed: skipping scheduled fetch. ticker={} correlationId={}", ticker, correlationId);
-                return MarketDataResponse.builder()
-                        .ticker(ticker)
-                        .correlationId(correlationId)
-                        .dataSource("market-closed")
-                        .stored(false)
-                        .anomaly(false)
-                        .build();
-            }
+                if (SCHEDULED_SOURCE.equals(request.source()) && !MarketHours.isMarketOpen(clock.instant())) {
+                    log.info(
+                            "Market closed: skipping scheduled fetch. ticker={} correlationId={}",
+                            ticker,
+                            correlationId);
+                    return MarketDataResponse.builder()
+                            .ticker(ticker)
+                            .correlationId(correlationId)
+                            .dataSource("market-closed")
+                            .stored(false)
+                            .anomaly(false)
+                            .build();
+                }
 
-            log.info("Starting market data fetch. ticker={} correlationId={}", ticker, correlationId);
+                log.info("Starting market data fetch. ticker={} correlationId={}", ticker, correlationId);
 
-            MarketDataResponse marketData = fetchService.fetch(ticker, correlationId);
-            marketData = anomalyService.evaluate(marketData, correlationId);
+                MarketDataResponse marketData = fetchService.fetch(ticker, correlationId);
+                marketData = anomalyService.evaluate(marketData, correlationId);
 
-            // On-demand refreshes (POST /ingest/{ticker}) must always generate an insight,
-            // regardless of the anomaly gate's verdict; scheduled runs stay anomaly-gated.
-            if ("on-demand".equals(request.source()) && !marketData.anomaly()) {
+                // On-demand refreshes (POST /ingest/{ticker}) must always generate an insight,
+                // regardless of the anomaly gate's verdict; scheduled runs stay anomaly-gated.
+                if ("on-demand".equals(request.source()) && !marketData.anomaly()) {
+                    log.info(
+                            "On-demand refresh: overriding anomaly gate to force insight generation. ticker={} correlationId={}",
+                            ticker,
+                            correlationId);
+                    marketData = marketData.withAnomaly(true, "on-demand refresh");
+                }
+
+                marketData = storeService.store(marketData, correlationId);
+
                 log.info(
-                        "On-demand refresh: overriding anomaly gate to force insight generation. ticker={} correlationId={}",
+                        "Market data fetch complete. ticker={} price={} anomaly={} correlationId={}",
                         ticker,
+                        marketData.price(),
+                        marketData.anomaly(),
                         correlationId);
-                marketData = marketData.withAnomaly(true, "on-demand refresh");
+
+                return marketData;
             }
-
-            marketData = storeService.store(marketData, correlationId);
-
-            log.info(
-                    "Market data fetch complete. ticker={} price={} anomaly={} correlationId={}",
-                    ticker,
-                    marketData.price(),
-                    marketData.anomaly(),
-                    correlationId);
-
-            return marketData;
         };
     }
 
@@ -119,34 +132,36 @@ public class IngestionHandler {
     public Function<Map<String, Object>, Map<String, Object>> backfillDailyHistory(
             HistoryBackfillService backfillService) {
         return event -> {
-            int processed = 0;
-            int written = 0;
-            int skipped = 0;
-            List<String> failedTickers = new ArrayList<>();
-            for (Object recordObj : records(event)) {
-                String ticker = newImageTicker(recordObj);
-                if (ticker == null || ticker.isBlank()) {
-                    continue;
+            try (var ctx = RequestContext.begin("financial-ingestion", null)) {
+                int processed = 0;
+                int written = 0;
+                int skipped = 0;
+                List<String> failedTickers = new ArrayList<>();
+                for (Object recordObj : records(event)) {
+                    String ticker = newImageTicker(recordObj);
+                    if (ticker == null || ticker.isBlank()) {
+                        continue;
+                    }
+                    processed++;
+                    try {
+                        var result = backfillService.backfill(TickerValidator.validate(ticker), "stream-backfill");
+                        written += result.written();
+                        skipped += result.skipped();
+                    } catch (RuntimeException e) {
+                        log.error(
+                                "History backfill failed for one ticker, continuing. ticker={} error={}",
+                                sanitizeForLog(ticker),
+                                e.toString());
+                        failedTickers.add(sanitizeForLog(ticker));
+                    }
                 }
-                processed++;
-                try {
-                    var result = backfillService.backfill(TickerValidator.validate(ticker), "stream-backfill");
-                    written += result.written();
-                    skipped += result.skipped();
-                } catch (RuntimeException e) {
-                    log.error(
-                            "History backfill failed for one ticker, continuing. ticker={} error={}",
-                            sanitizeForLog(ticker),
-                            e.toString());
-                    failedTickers.add(sanitizeForLog(ticker));
+                if (!failedTickers.isEmpty()) {
+                    throw new RuntimeException("Backfill batch had %d failed ticker(s): %s"
+                            .formatted(failedTickers.size(), failedTickers));
                 }
+                log.info("Backfill batch complete. processed={} written={} skipped={}", processed, written, skipped);
+                return Map.of("processed", processed, "written", written, "skipped", skipped);
             }
-            if (!failedTickers.isEmpty()) {
-                throw new RuntimeException(
-                        "Backfill batch had %d failed ticker(s): %s".formatted(failedTickers.size(), failedTickers));
-            }
-            log.info("Backfill batch complete. processed={} written={} skipped={}", processed, written, skipped);
-            return Map.of("processed", processed, "written", written, "skipped", skipped);
         };
     }
 
