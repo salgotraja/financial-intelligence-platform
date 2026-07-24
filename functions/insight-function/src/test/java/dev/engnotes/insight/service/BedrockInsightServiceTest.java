@@ -18,6 +18,7 @@ import dev.engnotes.insight.model.InsightRequest;
 import dev.engnotes.insight.model.InsightResponse;
 import dev.engnotes.insight.model.MemberSnapshot;
 import dev.engnotes.insight.service.prompt.FinancialInsightPrompt;
+import dev.engnotes.observability.Metrics;
 import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,17 +49,20 @@ class BedrockInsightServiceTest {
     private CostTrackingService costTracker;
 
     private BedrockInsightService service;
+    private Metrics.Capture metricsCapture;
 
     @BeforeEach
     void setUp() {
         ObjectMapper objectMapper = JsonMapper.builder().build();
+        metricsCapture = Metrics.forTesting();
         service = new BedrockInsightService(
                 bedrock,
                 objectMapper,
                 new FinancialInsightPrompt(),
                 new RuleBasedInsightGenerator(1.0, 0.4),
                 new RuleBasedGroupInsightGenerator(1.0, 0.4),
-                costTracker);
+                costTracker,
+                metricsCapture.metrics());
         ReflectionTestUtils.setField(service, "modelId", "test-model");
         ReflectionTestUtils.setField(service, "maxTokens", 512);
     }
@@ -190,6 +194,71 @@ class BedrockInsightServiceTest {
 
         assertThat(response.source()).isEqualTo("RULE_BASED");
         verify(bedrock, never()).invokeModel(any(InvokeModelRequest.class));
+    }
+
+    @Test
+    void ruleBasedFallbackEmitsInsightGeneratedWithRuleBasedMode() {
+        when(costTracker.isBreakerOpen()).thenReturn(true);
+
+        service.generate(request("RELIANCE.NS", "5.0"));
+
+        assertThat(metricsCapture.records())
+                .anySatisfy(r -> assertThat(r).contains("InsightGenerated").contains("RULE_BASED"));
+    }
+
+    @Test
+    void successfulBedrockCallEmitsTokenCountMetrics() {
+        when(bedrock.invokeModel(any(InvokeModelRequest.class))).thenReturn(modelResponse(VALID));
+
+        service.generate(request("RELIANCE.NS", "3.2"));
+
+        assertThat(metricsCapture.records()).anySatisfy(r -> assertThat(r).contains("BedrockInputTokens"));
+        assertThat(metricsCapture.records()).anySatisfy(r -> assertThat(r).contains("BedrockOutputTokens"));
+        assertThat(metricsCapture.records())
+                .anySatisfy(r -> assertThat(r).contains("InsightGenerated").contains("BEDROCK"));
+        assertThat(metricsCapture.records()).anySatisfy(r -> assertThat(r).contains("BedrockLatencyMillis"));
+    }
+
+    @Test
+    void throttleEmitsBedrockErrorWithBoundedReason() {
+        when(bedrock.invokeModel(any(InvokeModelRequest.class)))
+                .thenThrow(ThrottlingException.builder().message("slow down").build());
+
+        service.generate(request("INFY.NS", "0.1"));
+
+        assertThat(metricsCapture.records())
+                .anySatisfy(r -> assertThat(r).contains("BedrockError").contains("ThrottlingException"));
+    }
+
+    @Test
+    void openCircuitBreakerEmitsBedrockErrorWithCostBreakerReason() {
+        when(costTracker.isBreakerOpen()).thenReturn(true);
+
+        service.generate(request("RELIANCE.NS", "5.0"));
+
+        assertThat(metricsCapture.records())
+                .anySatisfy(r -> assertThat(r).contains("BedrockError").contains("cost_breaker_open"));
+    }
+
+    @Test
+    void groupOpenCircuitBreakerEmitsBedrockErrorWithCostBreakerReason() {
+        when(costTracker.isBreakerOpen()).thenReturn(true);
+
+        service.generateForGroup(groupContext(), "corr-2");
+
+        assertThat(metricsCapture.records())
+                .anySatisfy(r -> assertThat(r).contains("BedrockError").contains("cost_breaker_open"));
+    }
+
+    @Test
+    void validGroupInsightEmitsInsightGeneratedWithBedrockMode() {
+        when(bedrock.invokeModel(any(InvokeModelRequest.class))).thenReturn(modelResponse(VALID));
+
+        service.generateForGroup(groupContext(), "corr-2");
+
+        assertThat(metricsCapture.records())
+                .anySatisfy(r -> assertThat(r).contains("InsightGenerated").contains("BEDROCK"));
+        assertThat(metricsCapture.records()).anySatisfy(r -> assertThat(r).contains("BedrockLatencyMillis"));
     }
 
     private static GroupInsightContext groupContext() {

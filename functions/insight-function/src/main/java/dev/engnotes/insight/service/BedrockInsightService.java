@@ -8,6 +8,7 @@ import dev.engnotes.insight.model.InsightResponse;
 import dev.engnotes.insight.model.Signal;
 import dev.engnotes.insight.model.StructuredInsight;
 import dev.engnotes.insight.service.prompt.FinancialInsightPrompt;
+import dev.engnotes.observability.Metrics;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -71,6 +72,7 @@ public class BedrockInsightService {
     private final RuleBasedInsightGenerator fallback;
     private final RuleBasedGroupInsightGenerator groupFallback;
     private final CostTrackingService costTracker;
+    private final Metrics metrics;
 
     @Value("${BEDROCK_MODEL_ID:global.anthropic.claude-sonnet-4-6}")
     private String modelId;
@@ -84,13 +86,15 @@ public class BedrockInsightService {
             FinancialInsightPrompt prompt,
             RuleBasedInsightGenerator fallback,
             RuleBasedGroupInsightGenerator groupFallback,
-            CostTrackingService costTracker) {
+            CostTrackingService costTracker,
+            Metrics metrics) {
         this.bedrock = bedrock;
         this.objectMapper = objectMapper;
         this.prompt = prompt;
         this.fallback = fallback;
         this.groupFallback = groupFallback;
         this.costTracker = costTracker;
+        this.metrics = metrics;
     }
 
     public InsightResponse generate(InsightRequest data) {
@@ -108,12 +112,14 @@ public class BedrockInsightService {
                     "Cost circuit breaker open, skipping Bedrock for rule-based fallback. ticker={} correlationId={}",
                     ticker,
                     data.getCorrelationId());
+            metrics.count("BedrockError", "reason", "cost_breaker_open");
         }
         Optional<StructuredInsight> bedrockResult =
                 breakerOpen ? Optional.empty() : tryBedrock(ticker, data.getCorrelationId(), prompt.promptText(data));
         boolean fromBedrock = bedrockResult.isPresent();
         StructuredInsight insight = bedrockResult.orElseGet(() -> fallback.generate(data));
         String source = fromBedrock ? SOURCE_BEDROCK : SOURCE_RULE_BASED;
+        long elapsedMs = System.currentTimeMillis() - startMs;
 
         log.info(
                 "Insight ready. ticker={} source={} signal={} confidence={} latencyMs={} correlationId={}",
@@ -121,8 +127,10 @@ public class BedrockInsightService {
                 source,
                 insight.signal(),
                 insight.confidence(),
-                System.currentTimeMillis() - startMs,
+                elapsedMs,
                 data.getCorrelationId());
+        metrics.count("InsightGenerated", "mode", source);
+        metrics.duration("BedrockLatencyMillis", elapsedMs);
 
         return toResponse(data, insight, source);
     }
@@ -143,12 +151,14 @@ public class BedrockInsightService {
                     "Cost circuit breaker open, skipping Bedrock for rule-based group fallback. groupId={} correlationId={}",
                     groupId,
                     correlationId);
+            metrics.count("BedrockError", "reason", "cost_breaker_open");
         }
         Optional<StructuredInsight> bedrockResult =
                 breakerOpen ? Optional.empty() : tryBedrock(groupId, correlationId, prompt.groupPromptText(context));
         boolean fromBedrock = bedrockResult.isPresent();
         StructuredInsight insight = bedrockResult.orElseGet(() -> groupFallback.generate(context));
         String source = fromBedrock ? SOURCE_BEDROCK : SOURCE_RULE_BASED;
+        long elapsedMs = System.currentTimeMillis() - startMs;
 
         log.info(
                 "Group insight ready. groupId={} source={} signal={} confidence={} latencyMs={} correlationId={}",
@@ -156,8 +166,10 @@ public class BedrockInsightService {
                 source,
                 insight.signal(),
                 insight.confidence(),
-                System.currentTimeMillis() - startMs,
+                elapsedMs,
                 correlationId);
+        metrics.count("InsightGenerated", "mode", source);
+        metrics.duration("BedrockLatencyMillis", elapsedMs);
 
         return new GroupInsightResponse(
                 groupId,
@@ -201,6 +213,7 @@ public class BedrockInsightService {
                         "Bedrock unavailable, using rule-based fallback. label={} error={}",
                         logLabel,
                         e.getClass().getSimpleName());
+                metrics.count("BedrockError", "reason", e.getClass().getSimpleName());
                 return Optional.empty();
             } catch (IllegalArgumentException e) {
                 log.warn(
@@ -209,9 +222,11 @@ public class BedrockInsightService {
                         attempt,
                         MAX_ATTEMPTS,
                         e.getMessage());
+                metrics.count("BedrockError", "reason", e.getClass().getSimpleName());
                 // fall through to retry
             } catch (Exception e) {
                 log.warn("Bedrock call failed, using rule-based fallback. label={} error={}", logLabel, e.toString());
+                metrics.count("BedrockError", "reason", e.getClass().getSimpleName());
                 return Optional.empty();
             }
         }
@@ -286,6 +301,8 @@ public class BedrockInsightService {
         } catch (Exception e) {
             log.warn("Could not read Bedrock token usage, recording zero. label={}", logLabel);
         }
+        metrics.count("BedrockInputTokens", inputTokens);
+        metrics.count("BedrockOutputTokens", outputTokens);
         costTracker.record(correlationId, inputTokens, outputTokens);
     }
 
