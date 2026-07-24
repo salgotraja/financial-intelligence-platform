@@ -16,6 +16,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Covers {@code portfolio} LIST against real DynamoDB (LocalStack): a seeded {@code HOLDING#} item
@@ -25,11 +27,20 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 @SpringBootTest
 class PortfolioValuationIT extends AbstractLocalStackIT {
 
+    private static final ObjectMapper MAPPER =
+            JsonMapper.builder().findAndAddModules().build();
+
+    // The portfolio bean takes the raw JSON body (String) and deserializes it itself so a malformed
+    // body maps to a 400, not a 500; ITs serialize the request the same way API Gateway does.
     @Autowired
-    Function<PortfolioRequest, PortfolioResponse> portfolio;
+    Function<String, PortfolioResponse> portfolio;
 
     @Autowired
     DynamoDbClient dynamoDbClient;
+
+    private static String json(PortfolioRequest request) {
+        return MAPPER.writeValueAsString(request);
+    }
 
     private void grantConsent(String sub) {
         dynamoDbClient.putItem(PutItemRequest.builder()
@@ -103,8 +114,8 @@ class PortfolioValuationIT extends AbstractLocalStackIT {
         seedHolding("owner-ts", "RELIANCE.NS");
         seedTsPoint("RELIANCE.NS", "2026-07-23T10:00:00Z", "120");
 
-        PortfolioResponse response =
-                portfolio.apply(new PortfolioRequest(PortfolioOperation.LIST, null, null, "owner-ts", "corr-it-1"));
+        PortfolioResponse response = portfolio.apply(
+                json(new PortfolioRequest(PortfolioOperation.LIST, null, null, "owner-ts", "corr-it-1")));
 
         assertThat(response.portfolio().holdings()).hasSize(1);
         var view = response.portfolio().holdings().get(0);
@@ -118,8 +129,8 @@ class PortfolioValuationIT extends AbstractLocalStackIT {
         seedHolding("owner-day", "TCS.NS");
         seedDayRollup("TCS.NS", "2026-07-22", "118.5");
 
-        PortfolioResponse response =
-                portfolio.apply(new PortfolioRequest(PortfolioOperation.LIST, null, null, "owner-day", "corr-it-2"));
+        PortfolioResponse response = portfolio.apply(
+                json(new PortfolioRequest(PortfolioOperation.LIST, null, null, "owner-day", "corr-it-2")));
 
         assertThat(response.portfolio().holdings()).hasSize(1);
         var view = response.portfolio().holdings().get(0);

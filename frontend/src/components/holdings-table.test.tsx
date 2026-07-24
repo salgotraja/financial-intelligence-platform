@@ -68,15 +68,31 @@ describe('HoldingsTable', () => {
     render(<HoldingsTable holdings={[holding()]} onRefresh={onRefresh} />)
 
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }))
+    const dateInput = screen.getByLabelText(/RELIANCE\.NS buy date, lot 1/i)
+    await userEvent.type(dateInput, '2020-08-01')
     const qtyInput = screen.getByLabelText(/RELIANCE\.NS qty, lot 1/i)
     await userEvent.clear(qtyInput)
     await userEvent.type(qtyInput, '15')
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
 
     await waitFor(() => expect(saveHolding).toHaveBeenCalledWith('RELIANCE.NS', [
-      { buyDate: '', qty: 15, price: 2400 },
+      { buyDate: '2020-08-01', qty: 15, price: 2400 },
     ]))
     await waitFor(() => expect(onRefresh).toHaveBeenCalled())
+  })
+
+  it('blocks an edit save when the buy date is empty and shows an inline error', async () => {
+    render(<HoldingsTable holdings={[holding()]} onRefresh={onRefresh} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }))
+    const qtyInput = screen.getByLabelText(/RELIANCE\.NS qty, lot 1/i)
+    await userEvent.clear(qtyInput)
+    await userEvent.type(qtyInput, '15')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(document.querySelector('.text-destructive')).not.toBeNull())
+    expect(document.querySelector('.text-destructive')).toHaveTextContent(/buy date/i)
+    expect(saveHolding).not.toHaveBeenCalled()
   })
 
   it('adds and removes lots in the editor', async () => {
@@ -135,6 +151,7 @@ describe('HoldingsTable', () => {
     render(<HoldingsTable holdings={[holding()]} onRefresh={onRefresh} />)
 
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }))
+    await userEvent.type(screen.getByLabelText(/RELIANCE\.NS buy date, lot 1/i), '2020-08-01')
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
 
     await waitFor(() => expect(screen.getByText(/held or in conflict/i)).toBeInTheDocument())
