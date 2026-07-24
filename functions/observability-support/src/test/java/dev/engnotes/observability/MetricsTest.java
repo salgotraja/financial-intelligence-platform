@@ -3,13 +3,9 @@ package dev.engnotes.observability;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
-import software.amazon.cloudwatchlogs.emf.environment.Environment;
 import software.amazon.cloudwatchlogs.emf.logger.MetricsLogger;
-import software.amazon.cloudwatchlogs.emf.model.MetricsContext;
 import software.amazon.cloudwatchlogs.emf.model.Unit;
-import software.amazon.cloudwatchlogs.emf.sinks.ISink;
 
 class MetricsTest {
 
@@ -112,51 +108,5 @@ class MetricsTest {
         // Null identity must be a silent no-op, not an NPE.
         metrics.property("userId", null);
         metrics.count("NoOpCheck");
-    }
-
-    private static final class CapturingEnvironment implements Environment {
-        private MetricsContext captured;
-
-        @Override
-        public boolean probe() {
-            return true;
-        }
-
-        @Override
-        public String getName() {
-            return "test-service";
-        }
-
-        @Override
-        public String getType() {
-            return "test-type";
-        }
-
-        @Override
-        public String getLogGroupName() {
-            return "test-log-group";
-        }
-
-        @Override
-        public void configureContext(MetricsContext context) {}
-
-        @Override
-        public ISink getSink() {
-            return new ISink() {
-                @Override
-                public void accept(MetricsContext context) {
-                    captured = context;
-                }
-
-                @Override
-                public CompletableFuture<Void> shutdown() {
-                    return CompletableFuture.completedFuture(null);
-                }
-            };
-        }
-
-        String serializedRecord() throws Exception {
-            return String.join("\n", captured.serialize());
-        }
     }
 }
