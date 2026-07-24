@@ -28,3 +28,21 @@ export const KNOWN_TICKERS = [
   '^BSESN',
   '^NSEBANK',
 ] as const
+
+const TICKER_FORMAT = /^[A-Z0-9.^-]{1,15}$/
+const NSE_BSE_SUFFIX = /\.(NS|BO)$/
+
+/**
+ * Validates a holding ticker for the add-holding form. Mirrors the backend TickerValidator format
+ * regex, and additionally requires a resolvable NSE (.NS) / BSE (.BO) suffix or a `^`-prefixed index
+ * (the backend regex alone accepts non-resolvable suffixes like `.MS`). Returns null when valid,
+ * else a short inline message. Normalizes (trim + uppercase) before validating.
+ */
+export function validateHoldingTicker(raw: string): string | null {
+  const value = raw.trim().toUpperCase()
+  if (!value) return 'Enter a ticker (required).'
+  if (!TICKER_FORMAT.test(value)) return 'Use letters, digits, and . ^ - only (max 15 chars).'
+  if (value.startsWith('^')) return null
+  if (!NSE_BSE_SUFFIX.test(value)) return 'Use the NSE (.NS) or BSE (.BO) suffix, e.g. TCS.NS.'
+  return null
+}

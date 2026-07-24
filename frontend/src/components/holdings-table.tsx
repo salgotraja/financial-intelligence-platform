@@ -13,6 +13,7 @@ import {
   type LotInput,
 } from '@/lib/api'
 import { formatMoney, formatPercent, formatTimestamp } from '@/lib/format'
+import { SUGGESTED_TICKERS, validateHoldingTicker } from '@/lib/tickers'
 
 const emptyLot = (): LotInput => ({ buyDate: '', qty: 0, price: 0 })
 
@@ -20,6 +21,7 @@ const mutationErrorMessage = (err: unknown): string => {
   if (err instanceof ApiError) {
     if (err.kind === 'conflict') return 'That ticker is held or in conflict; please retry.'
     if (err.kind === 'consent-required') return 'Consent is required before you can edit holdings.'
+    if (err.kind === 'server') return 'Something went wrong on our end. Please try again in a moment.'
     return err.message
   }
   return 'Request failed.'
@@ -40,6 +42,13 @@ const LotEditor = ({
 
   return (
     <div className="space-y-2">
+      {lots.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="w-36">Buy date</span>
+          <span className="w-24">Quantity</span>
+          <span className="w-28">Buy price (₹)</span>
+        </div>
+      )}
       {lots.map((lot, i) => (
         <div key={i} className="flex flex-wrap items-center gap-2">
           <Input
@@ -238,7 +247,28 @@ export const HoldingsTable = ({
   const onAdd = async (event: FormEvent) => {
     event.preventDefault()
     const ticker = newTicker.trim().toUpperCase()
-    if (!ticker) return
+    const problems: string[] = []
+    const tickerErr = validateHoldingTicker(ticker)
+    if (tickerErr) problems.push(tickerErr)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const floor = new Date('1996-01-01')
+    newLots.forEach((lot, i) => {
+      const n = i + 1
+      if (!lot.buyDate) problems.push(`Lot ${n}: enter a buy date.`)
+      else {
+        const d = new Date(lot.buyDate)
+        if (Number.isNaN(d.getTime())) problems.push(`Lot ${n}: enter a valid buy date.`)
+        else if (d > today) problems.push(`Lot ${n}: buy date can't be in the future.`)
+        else if (d < floor) problems.push(`Lot ${n}: buy date can't be before 1996.`)
+      }
+      if (!(lot.qty > 0)) problems.push(`Lot ${n}: quantity must be greater than 0.`)
+      if (!(lot.price > 0)) problems.push(`Lot ${n}: enter the buy price per share (greater than 0).`)
+    })
+    if (problems.length > 0) {
+      setError(problems.join(' '))
+      return
+    }
     setBusy(true)
     try {
       await saveHolding(ticker, newLots)
@@ -327,13 +357,31 @@ export const HoldingsTable = ({
         )}
         {addingNew && (
           <form onSubmit={(e) => void onAdd(e)} className="space-y-3 rounded-md border border-border p-3">
-            <Input
-              value={newTicker}
-              onChange={(e) => setNewTicker(e.target.value)}
-              placeholder="RELIANCE.NS"
-              aria-label="New holding ticker"
-              className="w-40 font-mono"
-            />
+            <div className="space-y-1">
+              <label htmlFor="new-holding-ticker" className="text-xs font-medium">
+                Ticker
+              </label>
+              <Input
+                id="new-holding-ticker"
+                list="holding-ticker-suggestions"
+                value={newTicker}
+                onChange={(e) => setNewTicker(e.target.value)}
+                placeholder="RELIANCE.NS"
+                aria-label="New holding ticker"
+                className="w-40 font-mono"
+              />
+              <datalist id="holding-ticker-suggestions">
+                {SUGGESTED_TICKERS.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+              <p className="text-xs text-muted-foreground">
+                NSE symbol — the .NS suffix is required (e.g. RELIANCE.NS, TCS.NS). BSE uses .BO.
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              A holding is one or more buy lots; the average cost is computed for you.
+            </p>
             <LotEditor lots={newLots} onChange={setNewLots} idPrefix="new holding" />
             <Button type="submit" size="sm" disabled={busy}>
               Save holding
