@@ -97,14 +97,10 @@ public class QueryHandler {
                 MarketDataResponse response = marketDataQuery.findRecentPoints(ticker);
 
                 if (response.found() && !response.points().isEmpty()) {
-                    Instant newestTs =
-                            Instant.parse(response.points().getFirst().timestamp());
-                    metrics.gauge(
-                            "DataFreshnessSeconds",
-                            DataFreshness.ageSeconds(newestTs, Instant.now()),
-                            Unit.SECONDS,
-                            "ticker",
-                            ticker);
+                    var age = DataFreshness.ageSecondsSafe(
+                            response.points().getFirst().timestamp(), Instant.now());
+                    age.ifPresent(
+                            seconds -> metrics.gauge("DataFreshnessSeconds", seconds, Unit.SECONDS, "ticker", ticker));
                 }
                 if (!response.found()) {
                     metrics.count("EmptyResult", "route", "market-data");

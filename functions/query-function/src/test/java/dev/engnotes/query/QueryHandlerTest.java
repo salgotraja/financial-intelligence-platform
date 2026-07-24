@@ -128,6 +128,25 @@ class QueryHandlerTest {
     }
 
     @Test
+    void serveMarketDataSkipsFreshnessMetricAndDoesNotThrowForMalformedTimestamp() {
+        var expected = new MarketDataResponse(
+                "RELIANCE.NS",
+                List.of(new MarketDataPoint("not-a-timestamp", null, null, null, null, null, null, null)),
+                true,
+                List.of(),
+                null,
+                null);
+        when(marketDataQuery.findRecentPoints("RELIANCE.NS")).thenReturn(expected);
+
+        var actual = new QueryHandler()
+                .serveMarketData(marketDataQuery, capture.metrics())
+                .apply(new QueryRequest("RELIANCE.NS", "corr-2"));
+
+        assertThat(actual).isEqualTo(expected);
+        assertThat(capture.records()).noneSatisfy(record -> assertThat(record).contains("\"DataFreshnessSeconds\""));
+    }
+
+    @Test
     void serveMarketDataEmitsEmptyResultWhenNotFound() {
         MarketDataResponse notFound = MarketDataResponse.notFound("RELIANCE.NS");
         when(marketDataQuery.findRecentPoints("RELIANCE.NS")).thenReturn(notFound);
