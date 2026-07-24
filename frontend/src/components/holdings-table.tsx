@@ -259,7 +259,8 @@ export const HoldingsTable = ({
       if (!lot.buyDate) problems.push(`Lot ${n}: enter a buy date.`)
       else {
         const d = new Date(lot.buyDate)
-        if (d > today) problems.push(`Lot ${n}: buy date can't be in the future.`)
+        if (Number.isNaN(d.getTime())) problems.push(`Lot ${n}: enter a valid buy date.`)
+        else if (d > today) problems.push(`Lot ${n}: buy date can't be in the future.`)
         else if (d < floor) problems.push(`Lot ${n}: buy date can't be before 1996.`)
       }
       if (!(lot.qty > 0)) problems.push(`Lot ${n}: quantity must be greater than 0.`)

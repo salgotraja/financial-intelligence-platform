@@ -203,6 +203,39 @@ describe('HoldingsTable', () => {
       expect(saveHolding).not.toHaveBeenCalled()
     })
 
+    it('blocks submit for a zero quantity', async () => {
+      await openAddForm()
+      await userEvent.type(screen.getByLabelText(/new holding ticker/i), 'TCS.NS')
+      await fillNewLot({ date: '2020-08-01', qty: '0', price: '3800' })
+      await userEvent.click(screen.getByRole('button', { name: /save holding/i }))
+
+      await waitFor(() => expect(document.querySelector('.text-destructive')).not.toBeNull())
+      expect(document.querySelector('.text-destructive')).toHaveTextContent(/quantity/i)
+      expect(saveHolding).not.toHaveBeenCalled()
+    })
+
+    it('blocks submit for a future buy date', async () => {
+      await openAddForm()
+      await userEvent.type(screen.getByLabelText(/new holding ticker/i), 'TCS.NS')
+      await fillNewLot({ date: '2099-01-01', qty: '100', price: '3800' })
+      await userEvent.click(screen.getByRole('button', { name: /save holding/i }))
+
+      await waitFor(() => expect(document.querySelector('.text-destructive')).not.toBeNull())
+      expect(document.querySelector('.text-destructive')).toHaveTextContent(/future/i)
+      expect(saveHolding).not.toHaveBeenCalled()
+    })
+
+    it('blocks submit for a pre-1996 buy date', async () => {
+      await openAddForm()
+      await userEvent.type(screen.getByLabelText(/new holding ticker/i), 'TCS.NS')
+      await fillNewLot({ date: '1990-01-01', qty: '100', price: '3800' })
+      await userEvent.click(screen.getByRole('button', { name: /save holding/i }))
+
+      await waitFor(() => expect(document.querySelector('.text-destructive')).not.toBeNull())
+      expect(document.querySelector('.text-destructive')).toHaveTextContent(/before 1996|1996/i)
+      expect(saveHolding).not.toHaveBeenCalled()
+    })
+
     it('submits a valid holding', async () => {
       saveHolding.mockResolvedValue({ status: 'ok', ticker: 'TCS.NS', portfolio: null, history: null })
       await openAddForm()
