@@ -3,6 +3,7 @@ package dev.engnotes.query;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import dev.engnotes.observability.Metrics;
 import dev.engnotes.query.model.DailyMarketDataRequest;
 import dev.engnotes.query.model.DailyMarketDataResponse;
 import dev.engnotes.query.model.DailyPoint;
@@ -21,6 +22,7 @@ import dev.engnotes.query.service.InsightFeedQuery;
 import dev.engnotes.query.service.InsightQuery;
 import dev.engnotes.query.service.MarketDataQuery;
 import dev.engnotes.query.service.StoryQuery;
+import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,6 +50,8 @@ class QueryHandlerTest {
     @Mock
     private DeepAnalysisService deepAnalysisService;
 
+    private final Metrics.Capture capture = Metrics.forTesting();
+
     @Test
     void serveInsightDelegatesToInsightQuery() {
         QueryResponse expected = new QueryResponse(
@@ -63,10 +67,25 @@ class QueryHandlerTest {
                 true);
         when(insightQuery.findLatestInsight("RELIANCE.NS")).thenReturn(expected);
 
-        QueryResponse actual =
-                new QueryHandler().serveInsight(insightQuery).apply(new QueryRequest("RELIANCE.NS", "corr-1"));
+        QueryResponse actual = new QueryHandler()
+                .serveInsight(insightQuery, capture.metrics())
+                .apply(new QueryRequest("RELIANCE.NS", "corr-1"));
 
         assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveInsightEmitsEmptyResultWhenNotFound() {
+        QueryResponse notFound = QueryResponse.notFound("RELIANCE.NS");
+        when(insightQuery.findLatestInsight("RELIANCE.NS")).thenReturn(notFound);
+
+        new QueryHandler()
+                .serveInsight(insightQuery, capture.metrics())
+                .apply(new QueryRequest("RELIANCE.NS", "corr-1"));
+
+        assertThat(capture.records())
+                .anySatisfy(
+                        record -> assertThat(record).contains("\"EmptyResult\"").contains("\"route\":\"insight\""));
     }
 
     @Test
@@ -80,10 +99,46 @@ class QueryHandlerTest {
                 null);
         when(marketDataQuery.findRecentPoints("RELIANCE.NS")).thenReturn(expected);
 
-        var actual =
-                new QueryHandler().serveMarketData(marketDataQuery).apply(new QueryRequest("RELIANCE.NS", "corr-2"));
+        var actual = new QueryHandler()
+                .serveMarketData(marketDataQuery, capture.metrics())
+                .apply(new QueryRequest("RELIANCE.NS", "corr-2"));
 
         assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveMarketDataEmitsDataFreshnessSecondsForNewestPoint() {
+        Instant newest = Instant.now().minusSeconds(45);
+        var expected = new MarketDataResponse(
+                "RELIANCE.NS",
+                List.of(new MarketDataPoint(newest.toString(), null, null, null, null, null, null, null)),
+                true,
+                List.of(),
+                null,
+                null);
+        when(marketDataQuery.findRecentPoints("RELIANCE.NS")).thenReturn(expected);
+
+        new QueryHandler()
+                .serveMarketData(marketDataQuery, capture.metrics())
+                .apply(new QueryRequest("RELIANCE.NS", "corr-2"));
+
+        assertThat(capture.records())
+                .anySatisfy(record ->
+                        assertThat(record).contains("\"DataFreshnessSeconds\"").contains("\"ticker\":\"RELIANCE.NS\""));
+    }
+
+    @Test
+    void serveMarketDataEmitsEmptyResultWhenNotFound() {
+        MarketDataResponse notFound = MarketDataResponse.notFound("RELIANCE.NS");
+        when(marketDataQuery.findRecentPoints("RELIANCE.NS")).thenReturn(notFound);
+
+        new QueryHandler()
+                .serveMarketData(marketDataQuery, capture.metrics())
+                .apply(new QueryRequest("RELIANCE.NS", "corr-2"));
+
+        assertThat(capture.records())
+                .anySatisfy(
+                        record -> assertThat(record).contains("\"EmptyResult\"").contains("\"route\":\"market-data\""));
     }
 
     @Test
@@ -93,10 +148,24 @@ class QueryHandlerTest {
         when(dailyMarketDataQuery.findDailyPoints("RELIANCE.NS", "30")).thenReturn(expected);
 
         var actual = new QueryHandler()
-                .serveDailyMarketData(dailyMarketDataQuery)
+                .serveDailyMarketData(dailyMarketDataQuery, capture.metrics())
                 .apply(new DailyMarketDataRequest("RELIANCE.NS", "30", "corr-4"));
 
         assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveDailyMarketDataEmitsEmptyResultWhenNotFound() {
+        DailyMarketDataResponse notFound = DailyMarketDataResponse.notFound("RELIANCE.NS");
+        when(dailyMarketDataQuery.findDailyPoints("RELIANCE.NS", "30")).thenReturn(notFound);
+
+        new QueryHandler()
+                .serveDailyMarketData(dailyMarketDataQuery, capture.metrics())
+                .apply(new DailyMarketDataRequest("RELIANCE.NS", "30", "corr-4"));
+
+        assertThat(capture.records())
+                .anySatisfy(record ->
+                        assertThat(record).contains("\"EmptyResult\"").contains("\"route\":\"daily-market-data\""));
     }
 
     @Test
@@ -105,9 +174,24 @@ class QueryHandlerTest {
                 "RELIANCE.NS", "a composed story", "2026-07-14T10:00:00Z", "RULE_BASED", new StoryInputs(7, 1), true);
         when(storyQuery.story("RELIANCE.NS")).thenReturn(expected);
 
-        var actual = new QueryHandler().serveStory(storyQuery).apply(new QueryRequest("RELIANCE.NS", "corr-5"));
+        var actual = new QueryHandler()
+                .serveStory(storyQuery, capture.metrics())
+                .apply(new QueryRequest("RELIANCE.NS", "corr-5"));
 
         assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveStoryEmitsEmptyResultWhenNotFound() {
+        var notFound = new StoryResponse(
+                "RELIANCE.NS", "no story", "2026-07-14T10:00:00Z", "RULE_BASED", new StoryInputs(0, 0), false);
+        when(storyQuery.story("RELIANCE.NS")).thenReturn(notFound);
+
+        new QueryHandler().serveStory(storyQuery, capture.metrics()).apply(new QueryRequest("RELIANCE.NS", "corr-5"));
+
+        assertThat(capture.records())
+                .anySatisfy(
+                        record -> assertThat(record).contains("\"EmptyResult\"").contains("\"route\":\"story\""));
     }
 
     @Test
@@ -116,10 +200,24 @@ class QueryHandlerTest {
         when(deepAnalysisService.analyze("RELIANCE.NS")).thenReturn(expected);
 
         DeepAnalysisResponse actual = new QueryHandler()
-                .serveDeepAnalysis(deepAnalysisService)
+                .serveDeepAnalysis(deepAnalysisService, capture.metrics())
                 .apply(new QueryRequest("RELIANCE.NS", "corr-6"));
 
         assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveDeepAnalysisEmitsEmptyResultWhenNotFound() {
+        DeepAnalysisResponse notFound = DeepAnalysisResponse.notFound("RELIANCE.NS", "2026-07-17T10:00:00Z");
+        when(deepAnalysisService.analyze("RELIANCE.NS")).thenReturn(notFound);
+
+        new QueryHandler()
+                .serveDeepAnalysis(deepAnalysisService, capture.metrics())
+                .apply(new QueryRequest("RELIANCE.NS", "corr-6"));
+
+        assertThat(capture.records())
+                .anySatisfy(record ->
+                        assertThat(record).contains("\"EmptyResult\"").contains("\"route\":\"deep-analysis\""));
     }
 
     @Test
@@ -128,9 +226,23 @@ class QueryHandlerTest {
         when(insightFeedQuery.feed("user-123")).thenReturn(expected);
 
         InsightFeedResponse actual = new QueryHandler()
-                .serveInsightFeed(insightFeedQuery)
+                .serveInsightFeed(insightFeedQuery, capture.metrics())
                 .apply(new InsightFeedRequest("user-123", "corr-3"));
 
         assertThat(actual).isEqualTo(expected);
+    }
+
+    @Test
+    void serveInsightFeedEmitsEmptyResultWhenNotFound() {
+        InsightFeedResponse notFound = InsightFeedResponse.empty();
+        when(insightFeedQuery.feed("user-123")).thenReturn(notFound);
+
+        new QueryHandler()
+                .serveInsightFeed(insightFeedQuery, capture.metrics())
+                .apply(new InsightFeedRequest("user-123", "corr-3"));
+
+        assertThat(capture.records())
+                .anySatisfy(record ->
+                        assertThat(record).contains("\"EmptyResult\"").contains("\"route\":\"insight-feed\""));
     }
 }
