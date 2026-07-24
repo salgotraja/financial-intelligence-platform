@@ -18,6 +18,7 @@
 
     <modules>
         <module>integration-test-support</module>
+        <module>functions/observability-support</module>
         <module>functions/ingestion-function</module>
         <module>functions/insight-function</module>
         <module>functions/query-function</module>
@@ -53,6 +54,7 @@
         <aws-lambda-events.version>3.16.1</aws-lambda-events.version>
         <java-jwt.version>4.5.2</java-jwt.version>
         <jwks-rsa.version>0.24.1</jwks-rsa.version>
+        <aws-embedded-metrics.version>4.2.0</aws-embedded-metrics.version>
 
         <!-- JaCoCo 0.8.15: first line with official Java 25 (bytecode 69) support is 0.8.14. -->
         <jacoco.version>0.8.15</jacoco.version>
@@ -131,6 +133,14 @@
                 <groupId>com.auth0</groupId>
                 <artifactId>jwks-rsa</artifactId>
                 <version>${jwks-rsa.version}</version>
+            </dependency>
+
+            <!-- CloudWatch Embedded Metric Format: emits structured metrics from Lambda logs
+                 without a synchronous CloudWatch API call. See observability-support. -->
+            <dependency>
+                <groupId>software.amazon.cloudwatchlogs</groupId>
+                <artifactId>aws-embedded-metrics</artifactId>
+                <version>${aws-embedded-metrics.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
