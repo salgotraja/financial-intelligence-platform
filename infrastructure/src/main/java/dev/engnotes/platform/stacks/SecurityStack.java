@@ -131,7 +131,7 @@ public class SecurityStack extends Stack {
 
         LogGroup.Builder.create(this, "PostConfirmationFnLogs")
                 .logGroupName("/aws/lambda/" + postConfirmationFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -176,7 +176,7 @@ public class SecurityStack extends Stack {
 
         LogGroup.Builder.create(this, "PreAuthenticationFnLogs")
                 .logGroupName("/aws/lambda/" + preAuthenticationFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
