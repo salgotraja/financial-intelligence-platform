@@ -107,7 +107,8 @@ class MetricsTest {
 
     @Test
     void propertyIgnoresNullValue() {
-        Metrics metrics = Metrics.forFunction("test-fn");
+        CapturingEnvironment environment = new CapturingEnvironment();
+        Metrics metrics = Metrics.forFunction("test-fn", () -> new MetricsLogger(environment));
         // Null identity must be a silent no-op, not an NPE.
         metrics.property("userId", null);
         metrics.count("NoOpCheck");
