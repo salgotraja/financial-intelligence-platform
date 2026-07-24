@@ -54,6 +54,12 @@
             <artifactId>aws-lambda-java-events</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>dev.engnotes.observability</groupId>
+            <artifactId>observability-support</artifactId>
+            <version>0.0.1-SNAPSHOT</version>
+        </dependency>
+
         <!-- AWS SDK v2 (versions managed by the BOM in the root pom) -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>

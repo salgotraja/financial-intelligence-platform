@@ -6,6 +6,8 @@ import dev.engnotes.consent.model.ConsentResponse;
 import dev.engnotes.consent.model.LoginGate;
 import dev.engnotes.consent.service.ConsentStoreService;
 import dev.engnotes.consent.service.UserWatchlistPurgeService;
+import dev.engnotes.observability.Metrics;
+import dev.engnotes.observability.RequestContext;
 import java.util.Map;
 import java.util.function.Function;
 import org.slf4j.Logger;
@@ -40,8 +42,17 @@ public class ConsentHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ConsentHandler.class);
 
+    static final String MODULE_LABEL = "financial-consent";
+
     public static void main(String[] args) {
         SpringApplication.run(ConsentHandler.class, args);
+    }
+
+    // Declared for consistency across functions and future use; consent-function emits no metric
+    // (ConsentBlocked is owned by watchlist-function to avoid double-counting).
+    @Bean
+    public Metrics metrics() {
+        return Metrics.forFunction(MODULE_LABEL);
     }
 
     @Bean
@@ -50,31 +61,34 @@ public class ConsentHandler {
             UserWatchlistPurgeService purge,
             @Value("${DEFAULT_OWNER_SUB:dev-user}") String defaultOwnerSub) {
         return request -> {
-            String sub = (request.sub() != null && !request.sub().isBlank()) ? request.sub() : defaultOwnerSub;
-            log.info(
-                    "Consent request. operation={} sub={} correlationId={}",
-                    request.operation(),
-                    sub,
-                    request.correlationId());
+            try (var ctx = RequestContext.begin(MODULE_LABEL, request.correlationId())) {
+                String sub = (request.sub() != null && !request.sub().isBlank()) ? request.sub() : defaultOwnerSub;
+                ctx.withUser(sub);
+                log.info(
+                        "Consent request. operation={} sub={} correlationId={}",
+                        request.operation(),
+                        sub,
+                        request.correlationId());
 
-            return switch (request.operation()) {
-                case GRANT ->
-                    ConsentResponse.of(
-                            "granted",
-                            store.grant(
-                                    sub,
-                                    request.version(),
-                                    request.purpose(),
-                                    request.sourceIp(),
-                                    request.correlationId()));
-                case VIEW -> ConsentResponse.of("ok", store.read(sub));
-                case WITHDRAW -> {
-                    // Flip consent first so the watchlist gate blocks concurrent ADDs, then purge.
-                    ConsentRecord record = store.withdraw(sub, request.sourceIp(), request.correlationId());
-                    purge.purge(sub);
-                    yield ConsentResponse.of("withdrawn", record);
-                }
-            };
+                return switch (request.operation()) {
+                    case GRANT ->
+                        ConsentResponse.of(
+                                "granted",
+                                store.grant(
+                                        sub,
+                                        request.version(),
+                                        request.purpose(),
+                                        request.sourceIp(),
+                                        request.correlationId()));
+                    case VIEW -> ConsentResponse.of("ok", store.read(sub));
+                    case WITHDRAW -> {
+                        // Flip consent first so the watchlist gate blocks concurrent ADDs, then purge.
+                        ConsentRecord record = store.withdraw(sub, request.sourceIp(), request.correlationId());
+                        purge.purge(sub);
+                        yield ConsentResponse.of("withdrawn", record);
+                    }
+                };
+            }
         };
     }
 
@@ -85,12 +99,15 @@ public class ConsentHandler {
     @Bean
     public Function<Map<String, Object>, Map<String, Object>> postConfirmation(ConsentStoreService store) {
         return event -> {
-            String sub = userAttribute(event, "sub");
-            log.info("PostConfirmation seeding consent. sub={} userName={}", sub, event.get("userName"));
-            if (sub != null && !sub.isBlank()) {
-                store.seedDefaultDeny(sub);
+            try (var ctx = RequestContext.begin(MODULE_LABEL, null)) {
+                String sub = userAttribute(event, "sub");
+                ctx.withUser(sub);
+                log.info("PostConfirmation seeding consent. sub={} userName={}", sub, event.get("userName"));
+                if (sub != null && !sub.isBlank()) {
+                    store.seedDefaultDeny(sub);
+                }
+                return event;
             }
-            return event;
         };
     }
 
@@ -99,22 +116,25 @@ public class ConsentHandler {
     @Bean
     public Function<Map<String, Object>, Map<String, Object>> preAuthentication(ConsentStoreService store) {
         return event -> {
-            String sub = userAttribute(event, "sub");
-            log.info("PreAuthentication consent gate. sub={} userName={}", sub, event.get("userName"));
-            if (sub == null || sub.isBlank()) {
+            try (var ctx = RequestContext.begin(MODULE_LABEL, null)) {
+                String sub = userAttribute(event, "sub");
+                ctx.withUser(sub);
+                log.info("PreAuthentication consent gate. sub={} userName={}", sub, event.get("userName"));
+                if (sub == null || sub.isBlank()) {
+                    return event;
+                }
+                LoginGate gate = store.gateLogin(sub, "login");
+                switch (gate) {
+                    case WITHDRAWN ->
+                        throw new IllegalStateException(
+                                "Login denied: consent has been withdrawn. Contact support to restore access.");
+                    case RECONSENT_REQUIRED ->
+                        throw new IllegalStateException(
+                                "Login denied: our privacy policy has changed. Please re-consent to continue.");
+                    case ALLOWED -> {}
+                }
                 return event;
             }
-            LoginGate gate = store.gateLogin(sub, "login");
-            switch (gate) {
-                case WITHDRAWN ->
-                    throw new IllegalStateException(
-                            "Login denied: consent has been withdrawn. Contact support to restore access.");
-                case RECONSENT_REQUIRED ->
-                    throw new IllegalStateException(
-                            "Login denied: our privacy policy has changed. Please re-consent to continue.");
-                case ALLOWED -> {}
-            }
-            return event;
         };
     }
 
