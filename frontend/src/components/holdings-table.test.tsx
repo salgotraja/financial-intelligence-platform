@@ -257,7 +257,7 @@ describe('HoldingsTable', () => {
       await userEvent.click(screen.getByRole('button', { name: /delete reliance\.ns/i }))
 
       await waitFor(() =>
-        expect(screen.getByText(/check the ticker.*buy price/i)).toBeInTheDocument(),
+        expect(screen.getByText(/something went wrong on our end/i)).toBeInTheDocument(),
       )
     })
   })

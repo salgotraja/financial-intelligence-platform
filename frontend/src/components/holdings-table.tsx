@@ -21,8 +21,7 @@ const mutationErrorMessage = (err: unknown): string => {
   if (err instanceof ApiError) {
     if (err.kind === 'conflict') return 'That ticker is held or in conflict; please retry.'
     if (err.kind === 'consent-required') return 'Consent is required before you can edit holdings.'
-    if (err.kind === 'server')
-      return 'Couldn’t save this holding. Check the ticker (NSE .NS / BSE .BO) and the buy price, then try again.'
+    if (err.kind === 'server') return 'Something went wrong on our end. Please try again in a moment.'
     return err.message
   }
   return 'Request failed.'
