@@ -34,5 +34,13 @@
             <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <!-- slf4j-api alone ships a no-op MDCAdapter (values are never actually stored);
+                 logback-classic provides a real one so RequestContextTest can observe MDC state.
+                 Version is managed by spring-boot-starter-parent. -->
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
