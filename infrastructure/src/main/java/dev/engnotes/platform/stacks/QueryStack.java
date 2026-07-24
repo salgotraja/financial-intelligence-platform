@@ -89,7 +89,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "QueryFnLogs")
                 .logGroupName("/aws/lambda/" + queryFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -116,7 +116,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "MarketDataFnLogs")
                 .logGroupName("/aws/lambda/" + marketDataFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -147,7 +147,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "DailyMarketDataFnLogs")
                 .logGroupName("/aws/lambda/" + dailyMarketDataFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -177,7 +177,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "StoriesFnLogs")
                 .logGroupName("/aws/lambda/" + storiesFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -202,7 +202,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "AnalysisFnLogs")
                 .logGroupName("/aws/lambda/" + analysisFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -234,7 +234,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "InsightsFeedFnLogs")
                 .logGroupName("/aws/lambda/" + insightsFeedFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -270,7 +270,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "WatchlistFnLogs")
                 .logGroupName("/aws/lambda/" + watchlistFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -299,7 +299,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "PortfolioFnLogs")
                 .logGroupName("/aws/lambda/" + portfolioFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -339,7 +339,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "ConsentFnLogs")
                 .logGroupName("/aws/lambda/" + consentFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -382,7 +382,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "DsrFnLogs")
                 .logGroupName("/aws/lambda/" + dsrFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -418,7 +418,7 @@ public class QueryStack extends Stack {
 
         LogGroup.Builder.create(this, "AuthorizerFnLogs")
                 .logGroupName("/aws/lambda/" + authorizerFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -503,7 +503,7 @@ public class QueryStack extends Stack {
         // API Gateway
         var apiGwLogs = LogGroup.Builder.create(this, "ApiGwAccessLogs")
                 .logGroupName("/aws/apigateway/financial-platform-" + env)
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 

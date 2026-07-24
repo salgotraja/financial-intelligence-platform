@@ -154,7 +154,7 @@ public class IngestionStack extends Stack {
 
         LogGroup.Builder.create(this, "FetchMarketDataLogs")
                 .logGroupName("/aws/lambda/" + fetchMarketDataFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -207,7 +207,7 @@ public class IngestionStack extends Stack {
 
         LogGroup.Builder.create(this, "GenerateInsightLogs")
                 .logGroupName("/aws/lambda/" + generateInsightFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -257,7 +257,7 @@ public class IngestionStack extends Stack {
 
         LogGroup.Builder.create(this, "ComputeCorrelationsLogs")
                 .logGroupName("/aws/lambda/" + computeCorrelationsFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -311,7 +311,7 @@ public class IngestionStack extends Stack {
 
         LogGroup.Builder.create(this, "HistoryBackfillLogs")
                 .logGroupName("/aws/lambda/" + historyBackfillFn.getFunctionName())
-                .retention(RetentionDays.ONE_MONTH)
+                .retention(RetentionDays.TWO_WEEKS)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -498,7 +498,7 @@ public class IngestionStack extends Stack {
                                 "StateMachineLogs",
                                 LogGroupProps.builder()
                                         .logGroupName("/aws/states/financial-ingestion-" + env)
-                                        .retention(RetentionDays.ONE_MONTH)
+                                        .retention(RetentionDays.TWO_WEEKS)
                                         .removalPolicy(RemovalPolicy.DESTROY)
                                         .build()))
                         .level(LogLevel.ERROR)
