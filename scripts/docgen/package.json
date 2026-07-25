@@ -1,0 +1,16 @@
+{
+  "name": "docgen",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generates docs/learning-guide.html from docs/LEARNING-GUIDE.md",
+  "scripts": {
+    "test": "node --test",
+    "docs:build": "node generate.mjs",
+    "docs:check": "node generate.mjs --check"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0",
+    "highlight.js": "^11.10.0"
+  }
+}
