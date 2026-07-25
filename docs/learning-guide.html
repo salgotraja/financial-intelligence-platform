@@ -2078,7 +2078,7 @@ before Marketplace will even evaluate the agreement or the quota. That supersede
 Marketplace-agreement read above and an earlier 0-tokens/day-quota read: each was a genuine symptom
 of the same underlying gap (no payment method), not an independent root cause. First-party Nova
 models are entitled in this account but daily-token-throttled, so they are not a working substitute
-either. See <a href="http://USER-GUIDE.md">USER-GUIDE.md</a> &quot;Exercising the insight (Bedrock) leg&quot; and &quot;Lambda concurrency (account
+either. See USER-GUIDE.md &quot;Exercising the insight (Bedrock) leg&quot; and &quot;Lambda concurrency (account
 quota)&quot;.</p>
 <p><strong>Resolved 2026-07-16:</strong> the payment instrument was fixed and the Marketplace agreement for
 <code>anthropic.claude-sonnet-4-6</code> then completed (<code>create-foundation-model-agreement</code>,
@@ -2738,7 +2738,7 @@ either function's own logs; the only place the cause is visible is the <strong>A
 log</strong>, which names the throttling explicitly. If every authorized route and every WebSocket
 handshake fail at once with clean application logs, check account concurrency before suspecting a
 code regression. Code: <code>IngestionStack.java</code> (<code>FanOutTickers.maxConcurrency</code>). See
-<a href="http://USER-GUIDE.md">USER-GUIDE.md</a> &quot;Lambda concurrency (account quota)&quot;.</li>
+USER-GUIDE.md &quot;Lambda concurrency (account quota)&quot;.</li>
 </ul>
 <h3 id="13-8-a-new-hosting-origin-must-be-trusted-in-three-separate-places-not-one">13.8 A new hosting origin must be trusted in three separate places, not one</h3>
 <ul>
@@ -2764,14 +2764,14 @@ added explicitly before a prod hosting deploy).</li>
 CORS, and the WebSocket API are three independent trust boundaries that happen to gate the same
 browser tab, and each one has to be told about the origin separately. <code>cdk diff</code> will happily show
 a clean update to just the stack you touched; it will not tell you the other two stacks were never
-updated. See <a href="http://USER-GUIDE.md">USER-GUIDE.md</a> &quot;Amplify Hosting: LIVE&quot;.</li>
+updated. See USER-GUIDE.md &quot;Amplify Hosting: LIVE&quot;.</li>
 </ul>
 <h3 id="13-9-a-response-cache-with-no-per-user-key-can-leak-across-users-and-silently-breaks-mutation-then-refetch-uis">13.9 A response cache with no per-user key can leak across users, and silently breaks mutation-then-refetch UIs</h3>
 <ul>
 <li><strong>Symptom (live, 2026-07-13):</strong> two related bugs from one root cause. In review: <code>/watchlist</code>,
 <code>/user/consent</code>, <code>/user/export</code> sit behind the QueryStack's 60s stage cache with no cache key
 beyond the request itself — a second user's <code>GET /watchlist</code> within the same 60s window could be
-served the first user's cached response (flagged, not fixed this cycle; see <a href="http://STATUS.md">STATUS.md</a>). In the
+served the first user's cached response (flagged, not fixed this cycle; see STATUS.md). In the
 frontend: after <code>POST /watchlist</code> (add a ticker), the dashboard's refetch of <code>GET /watchlist</code> kept
 returning the pre-mutation list for up to 60s — the mutation landed, but the read was served stale.</li>
 <li><strong>Cause:</strong> API Gateway's stage cache keys on whatever you tell it to (see 13.2 — a path parameter
@@ -3166,7 +3166,7 @@ Section 6 subsection that teaches it.</p>
 <h3 id="14-1-frontend-architecture-not-a-cdk-stack">14.1 Frontend architecture (not a CDK stack)</h3>
 <p>The frontend (<code>frontend/</code>, Next.js 16) is deliberately not built as a CDK stack — it is a client of the
 platform, not an AWS resource defined in <code>FinancialPlatformApp.java</code> — even though it is now hosted on
-AWS (Amplify Hosting, live at <a href="https://main.db53oxbwuxc6z.amplifyapp.com">https://main.db53oxbwuxc6z.amplifyapp.com</a>; see <a href="http://USER-GUIDE.md">USER-GUIDE.md</a> &quot;Amplify
+AWS (Amplify Hosting, live at https://main.db53oxbwuxc6z.amplifyapp.com; see USER-GUIDE.md &quot;Amplify
 Hosting: LIVE&quot; for the exact <code>aws amplify</code> command sequence, not repeated here). Five ideas explain
 how it is put together:</p>
 <ul>
@@ -3182,7 +3182,7 @@ instead of only serving pre-rendered HTML.</li>
 <li><strong>Auto-build-on-push.</strong> The <code>main</code> branch was created with <code>--enable-auto-build</code>, so every push to
 <code>main</code> (a merge, or a direct push) triggers a new Amplify build and release with no manual
 <code>start-job</code> step — the same &quot;push triggers deploy&quot; shape as the GitHub Actions CDK pipeline
-(Section &quot;CI/CD pipeline&quot; in <a href="http://USER-GUIDE.md">USER-GUIDE.md</a>), except here the trigger and the build both live inside
+(Section &quot;CI/CD pipeline&quot; in USER-GUIDE.md), except here the trigger and the build both live inside
 Amplify rather than in a workflow file.</li>
 <li><strong>SSR shell, client-side data fetch.</strong> Every route renders its static shell on the server (or at
 build time — <code>/</code>, <code>/dashboard</code>, <code>/privacy</code> are pre-rendered; <code>/ticker/[symbol]</code> is server-rendered
@@ -3200,7 +3200,7 @@ subsequent REST call (<code>lib/api.ts</code> → <code>apiFetch</code>) and Web
 follows, Section 9.1) fresh off <code>fetchAuthSession()</code> on each call, so Amplify's own silent-refresh
 handles token expiry transparently; the app never caches a token itself. <code>cognito:groups</code> off that
 same token (<code>lib/auth.ts</code> → <code>parseGroups</code>) drives the readers/premium/admins UI gating described in
-<a href="http://USER-GUIDE.md">USER-GUIDE.md</a>'s &quot;Frontend (Next.js)&quot; section — the same claim, the same groups, as the backend
+USER-GUIDE.md's &quot;Frontend (Next.js)&quot; section — the same claim, the same groups, as the backend
 policy in Section 10.2, read twice by two different layers for two different purposes (UX vs
 enforcement).</li>
 <li><strong>WebSocket reconnect (retired with the push path, ADR 0005; kept as the reconnect lesson).</strong>
@@ -3372,7 +3372,7 @@ the two Spring references: <a href="https://docs.spring.io/spring-boot/index.htm
 <code>USER-GUIDE.md</code>. For the authoritative design and the &quot;why&quot; behind each decision, see <code>docs/spec.md</code>.</em></p>
 
 </section>
-      <p class="source-note">Generated from <a href="LEARNING-GUIDE.md">LEARNING-GUIDE.md</a>. The HTML adds navigation, responsive presentation, current-state context, and repository-backed examples; the Markdown source remains unchanged.</p>
+      <p class="source-note">Generated from the platform's Markdown learning guide. The HTML adds navigation, responsive presentation, current-state context, and repository-backed examples.</p>
     </article></main>
   </div>
   <script>

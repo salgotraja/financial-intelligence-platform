@@ -34,3 +34,21 @@ test("a broken include fails the render loudly", () => {
   const md = "```java include=fixtures/Sample.java region=ghost\n```\n";
   assert.throws(() => renderBody(md, { repoRoot }), /ghost/);
 });
+
+test("links to .md files are stripped (text kept, no <a href=...md>)", () => {
+  const html = renderBody("See [the user guide](USER-GUIDE.md) and [spec](./docs/spec.md#top).\n", { repoRoot });
+  assert.ok(!/href="[^"]*\.md/i.test(html), "no .md href should remain");
+  assert.ok(html.includes("the user guide"), "link text is preserved");
+  assert.ok(html.includes("spec"), "second link text preserved");
+});
+
+test("bare .md filenames are not auto-linked (linkify off)", () => {
+  const html = renderBody("Refer to USER-GUIDE.md for commands.\n", { repoRoot });
+  assert.ok(!/href="[^"]*\.md/i.test(html), "no auto-linked .md");
+  assert.ok(html.includes("USER-GUIDE.md"), "filename remains as text");
+});
+
+test("non-md links are left intact", () => {
+  const html = renderBody("[AWS](https://aws.amazon.com/lambda).\n", { repoRoot });
+  assert.ok(html.includes('href="https://aws.amazon.com/lambda"'));
+});
