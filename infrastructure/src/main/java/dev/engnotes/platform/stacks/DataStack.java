@@ -107,6 +107,7 @@ public class DataStack extends Stack {
                 .build());
         // end::platform-table[]
 
+        // tag::audit-table[]
         // Append-only consent audit table (spec sub-project B). Separate from the single table so the
         // app role can hold PutItem only (no Update/Delete) for tamper-evidence. RETAIN in every env
         // (audit records must survive stack deletion); PITR on; no TTL (events never expire). Reused
@@ -129,6 +130,7 @@ public class DataStack extends Stack {
                         .build())
                 .removalPolicy(RemovalPolicy.RETAIN)
                 .build();
+        // end::audit-table[]
 
         // S3 Data Lake - raw market data archived from DynamoDB, partitioned for Athena.
         this.dataLakeBucket = Bucket.Builder.create(this, "DataLakeBucket")

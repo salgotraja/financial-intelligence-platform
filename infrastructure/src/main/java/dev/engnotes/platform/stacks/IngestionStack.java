@@ -59,6 +59,7 @@ public class IngestionStack extends Stack {
         // Deploy the table/key (data) before this stack.
         this.addDependency(data);
 
+        // tag::ingestion-dlq[]
         // == Dead Letter Queue ==
         // The catch path publishes failed executions here; the EventBridge target
         // also lands start-failures here. In prod a Lambda subscriber pages on-call.
@@ -68,6 +69,7 @@ public class IngestionStack extends Stack {
                 .encryptionMasterKey(data.getEncryptionKey())
                 .retentionPeriod(Duration.days(14))
                 .build();
+        // end::ingestion-dlq[]
 
         // == IAM Role for ingestion Lambdas ==
         // Single shared role, least privilege via specific resource ARNs (no wildcards).
@@ -491,6 +493,7 @@ public class IngestionStack extends Stack {
 
         Chain pipelineChain = Chain.start(triggerType);
 
+        // tag::ingestion-state-machine[]
         StateMachine stateMachine = StateMachine.Builder.create(this, "IngestionStateMachine")
                 .stateMachineName("financial-ingestion-pipeline-" + env)
                 .definitionBody(DefinitionBody.fromChainable(pipelineChain))
@@ -510,6 +513,7 @@ public class IngestionStack extends Stack {
                         .build())
                 .build();
         this.stateMachine = stateMachine;
+        // end::ingestion-state-machine[]
 
         // == Symptom alarms (P2/TICKET -> warning topic) ==
         // Ingestion is async/batch, so these page no one in real time; they open a ticket to act today.

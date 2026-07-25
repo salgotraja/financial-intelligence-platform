@@ -16,6 +16,7 @@ import java.util.Map;
 final class OrderedMap {
     private OrderedMap() {}
 
+    // tag::ordered-map-of[]
     @SafeVarargs
     static <K, V> Map<K, V> of(Map.Entry<K, V>... entries) {
         var map = new LinkedHashMap<K, V>();
@@ -24,6 +25,7 @@ final class OrderedMap {
         }
         return map;
     }
+    // end::ordered-map-of[]
 
     /**
      * Same as {@link #of(Map.Entry[])}, seeded with {@code base}'s entries first (in {@code base}'s

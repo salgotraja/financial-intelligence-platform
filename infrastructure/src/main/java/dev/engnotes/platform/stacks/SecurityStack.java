@@ -41,6 +41,7 @@ public class SecurityStack extends Stack {
 
         boolean prod = env.equals("prod");
 
+        // tag::user-pool[]
         this.userPool = UserPool.Builder.create(this, "UserPool")
                 .userPoolName("financial-platform-users-" + env)
                 .selfSignUpEnabled(true)
@@ -92,6 +93,7 @@ public class SecurityStack extends Stack {
                     .groupName(group)
                     .build();
         }
+        // end::user-pool[]
 
         // tag::cognito-post-confirmation[]
         // PostConfirmation trigger: seeds default-deny consent + ACCOUNT_CREATED audit at signup

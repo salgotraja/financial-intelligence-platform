@@ -799,6 +799,31 @@ Billing &gt; Budgets.</li>
 operational data is <code>DESTROY</code> (throwaway, clean teardown), while the audit table is <code>RETAIN</code>
 everywhere because compliance records must outlive the stack.</li>
 </ul>
+<p>The audit table is the concrete <code>RETAIN</code>-everywhere example: a separate table so the write role can
+be scoped to <code>PutItem</code> only.</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// Append-only consent audit table (spec sub-project B). Separate from the single table so the</span>
+<span class="hljs-comment">// app role can hold PutItem only (no Update/Delete) for tamper-evidence. RETAIN in every env</span>
+<span class="hljs-comment">// (audit records must survive stack deletion); PITR on; no TTL (events never expire). Reused</span>
+<span class="hljs-comment">// by sub-project C (right-to-access / erasure logging).</span>
+<span class="hljs-built_in">this</span>.auditTable = Table.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;AuditTable&quot;</span>)
+        .tableName(<span class="hljs-string">&quot;financial-platform-audit-&quot;</span> + env)
+        .partitionKey(Attribute.builder()
+                .name(<span class="hljs-string">&quot;PK&quot;</span>)
+                .type(AttributeType.STRING)
+                .build())
+        .sortKey(Attribute.builder()
+                .name(<span class="hljs-string">&quot;SK&quot;</span>)
+                .type(AttributeType.STRING)
+                .build())
+        .billingMode(BillingMode.PAY_PER_REQUEST)
+        .encryption(TableEncryption.CUSTOMER_MANAGED)
+        .encryptionKey(encryptionKey)
+        .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder()
+                .pointInTimeRecoveryEnabled(<span class="hljs-literal">true</span>)
+                .build())
+        .removalPolicy(RemovalPolicy.RETAIN)
+        .build();
+</code></pre>
 <h3 id="5-2-network-stack-removed-kept-as-history">5.2 Network stack (removed, kept as history)</h3>
 <ul>
 <li><strong>Status:</strong> removed 2026-07-19 per ADR 0004; the platform now runs entirely outside a VPC.</li>
@@ -841,6 +866,59 @@ user is in becomes a JWT claim (<code>cognito:groups</code>), and that claim is 
 enforces (Section 10.2). MFA, password policy, and data-minimised attributes are all configured here
 as code, not clicked in later. Full concept in <a href="#67-amazon-cognito">6.7</a>.</li>
 </ul>
+<p>The user pool and its three groups, defined as code rather than clicked into the console:</p>
+<pre><code class="hljs language-java"><span class="hljs-built_in">this</span>.userPool = UserPool.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;UserPool&quot;</span>)
+        .userPoolName(<span class="hljs-string">&quot;financial-platform-users-&quot;</span> + env)
+        .selfSignUpEnabled(<span class="hljs-literal">true</span>)
+        .signInAliases(SignInAliases.builder().email(<span class="hljs-literal">true</span>).build())
+        .autoVerify(AutoVerifiedAttrs.builder().email(<span class="hljs-literal">true</span>).build())
+        .standardAttributes(StandardAttributes.builder()
+                .email(StandardAttribute.builder()
+                        .required(<span class="hljs-literal">true</span>)
+                        .mutable(<span class="hljs-literal">true</span>)
+                        .build())
+                .fullname(StandardAttribute.builder()
+                        .required(<span class="hljs-literal">false</span>)
+                        .mutable(<span class="hljs-literal">true</span>)
+                        .build())
+                .phoneNumber(StandardAttribute.builder()
+                        .required(<span class="hljs-literal">false</span>)
+                        .mutable(<span class="hljs-literal">true</span>)
+                        .build())
+                .build())
+        .customAttributes(OrderedMap.of(
+                Map.entry(
+                        <span class="hljs-string">&quot;consent_given&quot;</span>,
+                        StringAttribute.Builder.create().mutable(<span class="hljs-literal">true</span>).build()),
+                Map.entry(
+                        <span class="hljs-string">&quot;consent_timestamp&quot;</span>,
+                        StringAttribute.Builder.create().mutable(<span class="hljs-literal">true</span>).build()),
+                Map.entry(
+                        <span class="hljs-string">&quot;consent_version&quot;</span>,
+                        StringAttribute.Builder.create().mutable(<span class="hljs-literal">true</span>).build()),
+                Map.entry(
+                        <span class="hljs-string">&quot;processing_purpose&quot;</span>,
+                        StringAttribute.Builder.create().mutable(<span class="hljs-literal">true</span>).build())))
+        .passwordPolicy(PasswordPolicy.builder()
+                .minLength(<span class="hljs-number">12</span>)
+                .requireLowercase(<span class="hljs-literal">true</span>)
+                .requireUppercase(<span class="hljs-literal">true</span>)
+                .requireDigits(<span class="hljs-literal">true</span>)
+                .requireSymbols(<span class="hljs-literal">true</span>)
+                .build())
+        .mfa(prod ? Mfa.REQUIRED : Mfa.OPTIONAL)
+        .mfaSecondFactor(MfaSecondFactor.builder().otp(<span class="hljs-literal">true</span>).sms(<span class="hljs-literal">false</span>).build())
+        .accountRecovery(AccountRecovery.EMAIL_ONLY)
+        .removalPolicy(RemovalPolicy.RETAIN)
+        .build();
+
+<span class="hljs-keyword">for</span> (String group : List.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)) {
+    CfnUserPoolGroup.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;Group-&quot;</span> + group)
+            .userPoolId(userPool.getUserPoolId())
+            .groupName(group)
+            .build();
+}
+</code></pre>
 <h3 id="5-4-ingestion-stack-the-write-path">5.4 Ingestion stack (the write path)</h3>
 <ul>
 <li><strong>Purpose:</strong> the entire scheduled write pipeline (hops 1-6).</li>
@@ -866,6 +944,39 @@ functions; SQS &gt; <code>financial-ingestion-dlq-dev</code>; CloudWatch &gt; Al
 retry, bounded concurrency, isolated failures, and a clean DLQ story. And the anomaly-gate Choice
 state is the cost control that keeps Bedrock off the boring 99% of runs.</li>
 </ul>
+<p>The DLQ every catch path (execution-level and per-item) publishes to:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// == Dead Letter Queue ==</span>
+<span class="hljs-comment">// The catch path publishes failed executions here; the EventBridge target</span>
+<span class="hljs-comment">// also lands start-failures here. In prod a Lambda subscriber pages on-call.</span>
+<span class="hljs-built_in">this</span>.dlq = Queue.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;IngestionDLQ&quot;</span>)
+        .queueName(<span class="hljs-string">&quot;financial-ingestion-dlq-&quot;</span> + env)
+        .encryption(QueueEncryption.KMS)
+        .encryptionMasterKey(data.getEncryptionKey())
+        .retentionPeriod(Duration.days(<span class="hljs-number">14</span>))
+        .build();
+</code></pre>
+<p>The top-level state machine assembly that wires the chain built above into a Standard workflow with
+<code>ERROR</code>-level execution logging:</p>
+<pre><code class="hljs language-java"><span class="hljs-type">StateMachine</span> <span class="hljs-variable">stateMachine</span> <span class="hljs-operator">=</span> StateMachine.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;IngestionStateMachine&quot;</span>)
+        .stateMachineName(<span class="hljs-string">&quot;financial-ingestion-pipeline-&quot;</span> + env)
+        .definitionBody(DefinitionBody.fromChainable(pipelineChain))
+        .tracingEnabled(<span class="hljs-literal">true</span>)
+        .stateMachineType(StateMachineType.STANDARD)
+        .logs(LogOptions.builder()
+                .destination(<span class="hljs-keyword">new</span> <span class="hljs-title class_">LogGroup</span>(
+                        <span class="hljs-built_in">this</span>,
+                        <span class="hljs-string">&quot;StateMachineLogs&quot;</span>,
+                        LogGroupProps.builder()
+                                .logGroupName(<span class="hljs-string">&quot;/aws/states/financial-ingestion-&quot;</span> + env)
+                                .retention(RetentionDays.TWO_WEEKS)
+                                .removalPolicy(RemovalPolicy.DESTROY)
+                                .build()))
+                .level(LogLevel.ERROR)
+                .includeExecutionData(<span class="hljs-literal">true</span>)
+                .build())
+        .build();
+<span class="hljs-built_in">this</span>.stateMachine = stateMachine;
+</code></pre>
 <h3 id="5-5-query-stack-the-read-path-and-the-observability">5.5 Query stack (the read path and the observability)</h3>
 <ul>
 <li><strong>Purpose:</strong> the user-facing API, all API-serving Lambdas, and the platform dashboard/alarms.</li>
@@ -891,6 +1002,38 @@ CloudWatch &gt; Dashboards &gt; <code>financial-platform-dev</code>; CloudWatch 
 read-only DynamoDB access, the API caches responses for 60 seconds, and generation (the Ingestion
 stack) is a different deploy unit entirely.</li>
 </ul>
+<p>The custom token authorizer, invoked via the <code>live</code> alias built above so SnapStart engages, with its
+5-minute results cache:</p>
+<pre><code class="hljs language-java"><span class="hljs-type">var</span> <span class="hljs-variable">apiAuthorizer</span> <span class="hljs-operator">=</span> TokenAuthorizer.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;ApiAuthorizer&quot;</span>)
+        .authorizerName(<span class="hljs-string">&quot;financial-cognito-authorizer-&quot;</span> + env)
+        .handler(authorizerFnAlias)
+        .identitySource(<span class="hljs-string">&quot;method.request.header.Authorization&quot;</span>)
+        .resultsCacheTtl(Duration.minutes(<span class="hljs-number">5</span>))
+        .build();
+</code></pre>
+<p>The REST API itself: stage config, the 60s response cache, access logging, and the default CORS
+preflight:</p>
+<pre><code class="hljs language-java"><span class="hljs-type">var</span> <span class="hljs-variable">api</span> <span class="hljs-operator">=</span> RestApi.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;FinancialApi&quot;</span>)
+        .restApiName(<span class="hljs-string">&quot;financial-intelligence-api-&quot;</span> + env)
+        .description(<span class="hljs-string">&quot;Financial Intelligence Platform API&quot;</span>)
+        .deployOptions(StageOptions.builder()
+                .stageName(env)
+                .tracingEnabled(<span class="hljs-literal">true</span>)
+                .dataTraceEnabled(!env.equals(<span class="hljs-string">&quot;prod&quot;</span>)) <span class="hljs-comment">// disable in prod (PII risk)</span>
+                .loggingLevel(MethodLoggingLevel.INFO)
+                .accessLogDestination(<span class="hljs-keyword">new</span> <span class="hljs-title class_">LogGroupLogDestination</span>(apiGwLogs))
+                .accessLogFormat(AccessLogFormat.jsonWithStandardFields())
+                <span class="hljs-comment">// Cache: 60s TTL reduces DynamoDB reads for popular tickers</span>
+                .cachingEnabled(<span class="hljs-literal">true</span>)
+                .cacheTtl(Duration.seconds(<span class="hljs-number">60</span>))
+                .cacheClusterEnabled(<span class="hljs-literal">true</span>)
+                .build())
+        .defaultCorsPreflightOptions(CorsOptions.builder()
+                .allowOrigins(List.of(allowOrigin))
+                .allowMethods(List.of(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;POST&quot;</span>, <span class="hljs-string">&quot;DELETE&quot;</span>, <span class="hljs-string">&quot;OPTIONS&quot;</span>))
+                .build())
+        .build();
+</code></pre>
 <p><strong>Routes on the API (all in <code>QueryStack.java</code>):</strong></p>
 <table>
 <thead>
@@ -3158,6 +3301,30 @@ class of defect is invisible until the first real deploy — the fifth real-AWS-
 project has surfaced. When a 500 appears with a <em>mapped</em> error body but the Lambda log is clean,
 read the integration response config, not the handler.</li>
 </ul>
+<p>The fixed integration-response mapping, with the <code>)+$</code> (not <code>)*$</code>) that requires a non-empty error
+message before the 500 pattern can match:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> List&lt;IntegrationResponse&gt; <span class="hljs-title function_">errorAwareIntegrationResponses</span><span class="hljs-params">(String allowOrigin)</span> {
+    <span class="hljs-keyword">return</span> List.of(
+            IntegrationResponse.builder()
+                    .statusCode(<span class="hljs-string">&quot;200&quot;</span>)
+                    .responseParameters(Map.of(CORS_HEADER, <span class="hljs-string">&quot;&#x27;&quot;</span> + allowOrigin + <span class="hljs-string">&quot;&#x27;&quot;</span>))
+                    .build(),
+            IntegrationResponse.builder()
+                    .statusCode(<span class="hljs-string">&quot;400&quot;</span>)
+                    .selectionPattern(<span class="hljs-string">&quot;.*(&quot;</span> + CLIENT_ERROR_PATTERN + <span class="hljs-string">&quot;).*&quot;</span>)
+                    .responseParameters(Map.of(CORS_HEADER, <span class="hljs-string">&quot;&#x27;&quot;</span> + allowOrigin + <span class="hljs-string">&quot;&#x27;&quot;</span>))
+                    .responseTemplates(Map.of(
+                            <span class="hljs-string">&quot;application/json&quot;</span>,
+                            <span class="hljs-string">&quot;{\&quot;error\&quot;:\&quot;$util.escapeJavaScript($input.path(&#x27;$.errorMessage&#x27;))\&quot;}&quot;</span>))
+                    .build(),
+            IntegrationResponse.builder()
+                    .statusCode(<span class="hljs-string">&quot;500&quot;</span>)
+                    .selectionPattern(<span class="hljs-string">&quot;^((?!&quot;</span> + CLIENT_ERROR_PATTERN + <span class="hljs-string">&quot;)(.|\\n))+$&quot;</span>)
+                    .responseParameters(Map.of(CORS_HEADER, <span class="hljs-string">&quot;&#x27;&quot;</span> + allowOrigin + <span class="hljs-string">&quot;&#x27;&quot;</span>))
+                    .responseTemplates(Map.of(<span class="hljs-string">&quot;application/json&quot;</span>, <span class="hljs-string">&quot;{\&quot;error\&quot;:\&quot;internal error\&quot;}&quot;</span>))
+                    .build());
+}
+</code></pre>
 <h3 id="13-7-a-shared-account-level-lambda-concurrency-quota-can-starve-unrelated-lambdas-at-once">13.7 A shared account-level Lambda concurrency quota can starve unrelated Lambdas at once</h3>
 <ul>
 <li><strong>Symptom (live, 2026-07-12 late):</strong> during an 8-ticker ingestion burst, every authorized REST
@@ -3208,6 +3375,21 @@ browser tab, and each one has to be told about the origin separately. <code>cdk 
 a clean update to just the stack you touched; it will not tell you the other two stacks were never
 updated. See USER-GUIDE.md &quot;Amplify Hosting: LIVE&quot;.</li>
 </ul>
+<p>CORS on the two default Gateway Responses, needed because an authorizer 401/403 or an unmapped 5XX
+short-circuits before any integration (and its CORS headers) ever runs:</p>
+<pre><code class="hljs language-java">api.addGatewayResponse(
+        <span class="hljs-string">&quot;Default4xxCors&quot;</span>,
+        GatewayResponseOptions.builder()
+                .type(ResponseType.DEFAULT_4_XX)
+                .responseHeaders(Map.of(<span class="hljs-string">&quot;Access-Control-Allow-Origin&quot;</span>, <span class="hljs-string">&quot;&#x27;&quot;</span> + allowOrigin + <span class="hljs-string">&quot;&#x27;&quot;</span>))
+                .build());
+api.addGatewayResponse(
+        <span class="hljs-string">&quot;Default5xxCors&quot;</span>,
+        GatewayResponseOptions.builder()
+                .type(ResponseType.DEFAULT_5_XX)
+                .responseHeaders(Map.of(<span class="hljs-string">&quot;Access-Control-Allow-Origin&quot;</span>, <span class="hljs-string">&quot;&#x27;&quot;</span> + allowOrigin + <span class="hljs-string">&quot;&#x27;&quot;</span>))
+                .build());
+</code></pre>
 <h3 id="13-9-a-response-cache-with-no-per-user-key-can-leak-across-users-and-silently-breaks-mutation-then-refetch-uis">13.9 A response cache with no per-user key can leak across users, and silently breaks mutation-then-refetch UIs</h3>
 <ul>
 <li><strong>Symptom (live, 2026-07-13):</strong> two related bugs from one root cause. In review: <code>/watchlist</code>,
@@ -3234,6 +3416,29 @@ depending on the read at all (optimistic update from the mutation's own response
 <code>frontend/src/hooks/use-async-data.ts</code> (<code>mutate</code>); <code>QueryStack.java</code> (cache-key gap, open). See
 also 13.2.</li>
 </ul>
+<p><code>GET /watchlist</code> after the fix: <code>Authorization</code> declared as a <code>cacheKeyParameters</code> entry so the 60s
+stage cache serves each caller's own list, not whoever's request populated the cache first:</p>
+<pre><code class="hljs language-java">watchlistResource.addMethod(
+        <span class="hljs-string">&quot;GET&quot;</span>,
+        LambdaIntegration.Builder.create(watchlistFnAlias)
+                .proxy(<span class="hljs-literal">false</span>)
+                .requestTemplates(Map.of(
+                        <span class="hljs-string">&quot;application/json&quot;</span>,
+                        <span class="hljs-string">&quot;{ \&quot;operation\&quot;: \&quot;LIST\&quot;,&quot;</span>
+                                + <span class="hljs-string">&quot;  \&quot;ownerSub\&quot;: \&quot;$context.authorizer.sub\&quot;,&quot;</span>
+                                + <span class="hljs-string">&quot;  \&quot;correlationId\&quot;: \&quot;$context.requestId\&quot; }&quot;</span>))
+                <span class="hljs-comment">// Authorization must be a cache key, else the 60s stage cache serves one</span>
+                <span class="hljs-comment">// caller&#x27;s list to every other caller for up to 60s.</span>
+                .cacheKeyParameters(List.of(<span class="hljs-string">&quot;method.request.header.Authorization&quot;</span>))
+                .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+                .build(),
+        MethodOptions.builder()
+                .authorizer(apiAuthorizer)
+                .authorizationType(AuthorizationType.CUSTOM)
+                .requestParameters(Map.of(<span class="hljs-string">&quot;method.request.header.Authorization&quot;</span>, <span class="hljs-literal">true</span>))
+                .methodResponses(standardMethodResponses())
+                .build());
+</code></pre>
 <h3 id="13-10-the-next-js-app-router-does-not-remount-a-page-on-a-dynamic-segment-only-navigation">13.10 The Next.js App Router does not remount a page on a dynamic-segment-only navigation</h3>
 <ul>
 <li><strong>Symptom (live, 2026-07-13):</strong> navigating from <code>/ticker/RELIANCE.NS</code> to <code>/ticker/TCS.NS</code> (e.g.
@@ -3318,6 +3523,17 @@ processes, exactly what a fresh <code>cdk synth</code> or a CI run is. Use an in
 sites, and keep <code>cdk diff</code> on a deployed clean tree as a determinism smoke test. Code:
 <code>infrastructure/src/main/java/dev/engnotes/platform/stacks/OrderedMap.java</code>.</li>
 </ul>
+<p>The <code>OrderedMap.of</code> fix: a <code>LinkedHashMap</code> under the same varargs <code>Map.of</code>-style call shape, with a
+fail-fast duplicate-key check to preserve <code>Map.of</code>'s contract:</p>
+<pre><code class="hljs language-java"><span class="hljs-meta">@SafeVarargs</span>
+<span class="hljs-keyword">static</span> &lt;K, V&gt; Map&lt;K, V&gt; <span class="hljs-title function_">of</span><span class="hljs-params">(Map.Entry&lt;K, V&gt;... entries)</span> {
+    <span class="hljs-type">var</span> <span class="hljs-variable">map</span> <span class="hljs-operator">=</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">LinkedHashMap</span>&lt;K, V&gt;();
+    <span class="hljs-keyword">for</span> (<span class="hljs-keyword">var</span> entry : entries) {
+        putUnique(map, entry);
+    }
+    <span class="hljs-keyword">return</span> map;
+}
+</code></pre>
 <h3 id="13-14-a-test-that-reads-the-wall-clock-passes-or-fails-on-the-hour-it-happens-to-run">13.14 A test that reads the wall clock passes or fails on the hour it happens to run</h3>
 <ul>
 <li><strong>Symptom (live, 2026-07-15):</strong> the first real CI run after the billing unlock failed on
