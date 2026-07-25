@@ -1200,6 +1200,81 @@ public class QueryStack extends Stack {
                 .build();
         api5xxRateAlarm.addAlarmAction(new SnsAction(data.getCriticalTopic()));
 
+        // == Business alarms (non-paging; dashboard-visible only) ==
+        // Conservative posture: no SNS action, NOT_BREACHING on missing data. These become pager-wired
+        // later once data volume justifies it. See the observability design Plan-3 amendment.
+
+        // Stale market data: serve-time freshness age exceeds ~15 min during a session.
+        var dataFreshnessAlarm = Alarm.Builder.create(this, "DataFreshnessAlarm")
+                .alarmName("financial-data-freshness-" + env)
+                .alarmDescription("[P3/non-paging] Market data is stale.\n"
+                        + "Symptom: DataFreshnessSeconds (serve-time age) max > 900s for 15 min.\n"
+                        + "Likely causes: ingestion schedule disabled, Yahoo fetch failing, no recent writes.\n"
+                        + "First action: check the Ingestion executions + Business rows on the dashboard.")
+                .metric(MathExpression.Builder.create()
+                        .expression(
+                                "MAX(SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"DataFreshnessSeconds\"', 'Maximum', 300))")
+                        .label("DataFreshnessSeconds")
+                        .usingMetrics(Map.of())
+                        .period(Duration.minutes(5))
+                        .build())
+                .threshold(900)
+                .evaluationPeriods(3)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build();
+
+        // Bedrock errors sustained (breaker trips, throttles, model errors).
+        var bedrockErrorAlarm = Alarm.Builder.create(this, "BedrockErrorAlarm")
+                .alarmName("financial-bedrock-error-" + env)
+                .alarmDescription("[P3/non-paging] Bedrock insight generation is failing.\n"
+                        + "Symptom: BedrockError sum >= 5 over 15 min.\n"
+                        + "Likely causes: cost breaker open, model throttle, 0-token quota, model error.\n"
+                        + "First action: check the Business row (Bedrock token cost) + insight-function logs.")
+                .metric(MathExpression.Builder.create()
+                        .expression(
+                                "SUM(SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"BedrockError\"', 'Sum', 300))")
+                        .label("BedrockError")
+                        .usingMetrics(Map.of())
+                        .period(Duration.minutes(5))
+                        .build())
+                .threshold(5)
+                .evaluationPeriods(3)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build();
+
+        // Auth-denial spike (possible misconfig or probing).
+        var authDeniedAlarm = Alarm.Builder.create(this, "AuthDeniedAlarm")
+                .alarmName("financial-auth-denied-" + env)
+                .alarmDescription("[P3/non-paging] Elevated authorization denials.\n"
+                        + "Symptom: AuthDenied sum >= 20 over 15 min.\n"
+                        + "Likely causes: authorizer misconfig, expired tokens, credential probing.\n"
+                        + "First action: check the Business row (Auth denials by reason) + authorizer logs.")
+                .metric(MathExpression.Builder.create()
+                        .expression(
+                                "SUM(SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"AuthDenied\"', 'Sum', 300))")
+                        .label("AuthDenied")
+                        .usingMetrics(Map.of())
+                        .period(Duration.minutes(5))
+                        .build())
+                .threshold(20)
+                .evaluationPeriods(3)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build();
+
+        // == PlatformHealth composite ==
+        // Single health rollup of the two existing P1 pagers. Conservative posture: the composite ORs
+        // only the pager-grade alarms; the non-paging business alarms are deliberately excluded from the
+        // pager path (they are dashboard-visible only). Wired to the same critical SNS topic as the P1s.
+        var platformHealth = CompositeAlarm.Builder.create(this, "PlatformHealthAlarm")
+                .compositeAlarmName("financial-platform-health-" + env)
+                .alarmDescription("[P1] Platform health rollup: fires when API latency OR 5XX-rate P1 breaches.")
+                .alarmRule(AlarmRule.anyOf(p99LatencyAlarm, api5xxRateAlarm))
+                .build();
+        platformHealth.addAlarmAction(new SnsAction(data.getCriticalTopic()));
+
         // == Platform dashboard ==
         // One pane aggregating user-facing symptoms (API, Lambda) and diagnostic causes (ingestion,
         // data). Built here in the DAG-sink stack so every widget uses real construct refs.
@@ -1352,13 +1427,87 @@ public class QueryStack extends Stack {
                         .width(12)
                         .build());
 
+        // == Business row ==
+        // Plan-2 EMF metrics (namespace FinancialPlatform) are emitted with the aws-embedded-metrics
+        // default dimension set plus optional custom dimensions, so we graph them with dimension-agnostic
+        // SEARCH expressions on metric name rather than exact-dimension Metric refs. Cache hit/miss comes
+        // from native API Gateway metrics (the Lambda never runs on a cache hit, so it cannot emit them).
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("Insights generated (by mode)")
+                        .left(List.of(MathExpression.Builder.create()
+                                .expression(
+                                        "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"InsightGenerated\"', 'Sum', 300)")
+                                .label("InsightGenerated")
+                                .usingMetrics(Map.of())
+                                .period(Duration.minutes(5))
+                                .build()))
+                        .width(8)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("Data freshness (serve-time age, max)")
+                        .left(List.of(MathExpression.Builder.create()
+                                .expression(
+                                        "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"DataFreshnessSeconds\"', 'Maximum', 300)")
+                                .label("DataFreshnessSeconds")
+                                .usingMetrics(Map.of())
+                                .period(Duration.minutes(5))
+                                .build()))
+                        .width(8)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("Bedrock token cost (in/out)")
+                        .left(List.of(
+                                MathExpression.Builder.create()
+                                        .expression(
+                                                "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"BedrockInputTokens\"', 'Sum', 300)")
+                                        .label("BedrockInputTokens")
+                                        .usingMetrics(Map.of())
+                                        .period(Duration.minutes(5))
+                                        .build(),
+                                MathExpression.Builder.create()
+                                        .expression(
+                                                "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"BedrockOutputTokens\"', 'Sum', 300)")
+                                        .label("BedrockOutputTokens")
+                                        .usingMetrics(Map.of())
+                                        .period(Duration.minutes(5))
+                                        .build()))
+                        .width(8)
+                        .build());
+
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("Auth denials (by reason)")
+                        .left(List.of(MathExpression.Builder.create()
+                                .expression(
+                                        "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"AuthDenied\"', 'Sum', 300)")
+                                .label("AuthDenied")
+                                .usingMetrics(Map.of())
+                                .period(Duration.minutes(5))
+                                .build()))
+                        .width(12)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("API Gateway cache hit / miss")
+                        .left(List.of(
+                                api.metricCacheHitCount(
+                                        MetricOptions.builder().statistic("Sum").build()),
+                                api.metricCacheMissCount(
+                                        MetricOptions.builder().statistic("Sum").build())))
+                        .width(12)
+                        .build());
+
         dashboard.addWidgets(AlarmStatusWidget.Builder.create()
-                .title("Alarms (P1 + P2)")
+                .title("Alarms (health + P1 + P2 + business)")
                 .alarms(List.of(
+                        platformHealth,
                         p99LatencyAlarm,
                         api5xxRateAlarm,
                         ingestion.getPipelineFailedAlarm(),
-                        ingestion.getDlqDepthAlarm()))
+                        ingestion.getDlqDepthAlarm(),
+                        dataFreshnessAlarm,
+                        bedrockErrorAlarm,
+                        authDeniedAlarm))
                 .width(24)
                 .build());
 

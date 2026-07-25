@@ -3,6 +3,7 @@ package dev.engnotes.platform.stacks;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -180,6 +181,23 @@ class QueryStackTest {
     @Test
     void hasPlatformDashboard() {
         synth().resourceCountIs("AWS::CloudWatch::Dashboard", 1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void dashboardGraphsBusinessMetricsViaSearch() {
+        var dashboards = synth().findResources("AWS::CloudWatch::Dashboard");
+        assertEquals(1, dashboards.size(), "expected exactly one dashboard");
+        var body = dashboards.values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .map(p -> String.valueOf(p.get("DashboardBody")))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(body.contains("InsightGenerated"), "business row graphs InsightGenerated");
+        assertTrue(body.contains("DataFreshnessSeconds"), "business row graphs DataFreshnessSeconds");
+        assertTrue(body.contains("BedrockInputTokens"), "business row graphs Bedrock token cost");
+        assertTrue(body.contains("AuthDenied"), "business row graphs AuthDenied");
+        assertTrue(body.contains("FinancialPlatform"), "business row targets the FinancialPlatform namespace");
     }
 
     // API Gateway evaluates selection patterns against an EMPTY errorMessage on successful
@@ -990,5 +1008,83 @@ class QueryStackTest {
                             && responseParameters.containsKey("gatewayresponse.header.Access-Control-Allow-Origin"),
                     "expected Access-Control-Allow-Origin on gateway response " + props);
         }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void businessAlarmsAreNonPagingWithMissingDataNotBreaching() {
+        var alarms = synth().findResources("AWS::CloudWatch::Alarm");
+        var businessNames =
+                List.of("financial-data-freshness-dev", "financial-bedrock-error-dev", "financial-auth-denied-dev");
+        for (var name : businessNames) {
+            var match = alarms.values().stream()
+                    .map(r -> (Map<String, Object>) r.get("Properties"))
+                    .filter(p -> name.equals(p.get("AlarmName")))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("missing business alarm " + name));
+            assertEquals("notBreaching", match.get("TreatMissingData"), name + " must not breach on missing data");
+            assertNull(match.get("AlarmActions"), name + " must be non-paging (no SNS action)");
+        }
+    }
+
+    // CloudWatch rejects a bare SEARCH() as an alarm metric at deploy time: SEARCH returns multiple
+    // time series and an alarm can only watch one. CDK synth does not catch this (found in review),
+    // so each business alarm's MathExpression must wrap SEARCH in a single-series aggregation
+    // (MAX/SUM). This guards against a regression back to a bare SEARCH expression.
+    @Test
+    @SuppressWarnings("unchecked")
+    void businessAlarmSearchExpressionsAreAggregated() {
+        var alarms = synth().findResources("AWS::CloudWatch::Alarm");
+        var businessNames =
+                List.of("financial-data-freshness-dev", "financial-bedrock-error-dev", "financial-auth-denied-dev");
+        for (var name : businessNames) {
+            var props = alarms.values().stream()
+                    .map(r -> (Map<String, Object>) r.get("Properties"))
+                    .filter(p -> name.equals(p.get("AlarmName")))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("missing business alarm " + name));
+            var metrics = (List<Map<String, Object>>) props.get("Metrics");
+            assertNotNull(metrics, name + " must carry a Metrics array");
+            var aggregatedSearchExpressions = metrics.stream()
+                    .map(m -> (String) m.get("Expression"))
+                    .filter(Objects::nonNull)
+                    .filter(expr -> expr.contains("SEARCH(") && (expr.startsWith("MAX(") || expr.startsWith("SUM(")))
+                    .toList();
+            assertEquals(
+                    1,
+                    aggregatedSearchExpressions.size(),
+                    name + " must have exactly one MAX(SEARCH(...)) or SUM(SEARCH(...)) expression, found: " + metrics);
+        }
+    }
+
+    @Test
+    void platformHealthCompositeAlarmPagesCriticalTopic() {
+        synth().hasResourceProperties(
+                        "AWS::CloudWatch::CompositeAlarm",
+                        Match.objectLike(Map.of(
+                                "AlarmName", "financial-platform-health-dev", "AlarmActions", Match.anyValue())));
+    }
+
+    // Pins the core non-paging guarantee: the composite ORs only the two P1 pagers
+    // (p99LatencyAlarm, api5xxRateAlarm), never the non-paging business alarms. Counts ALARM(...)
+    // occurrences in the stringified AlarmRule (an Fn::Join structure) rather than hardcoding
+    // logical IDs, so adding a third alarm to the rule breaks this test without needing an update
+    // for unrelated construct-id churn.
+    @Test
+    @SuppressWarnings("unchecked")
+    void platformHealthCompositeAlarmRuleReferencesExactlyTwoAlarms() {
+        var composites = synth().findResources("AWS::CloudWatch::CompositeAlarm");
+        var props = composites.values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .filter(p -> "financial-platform-health-dev".equals(p.get("AlarmName")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing PlatformHealthAlarm"));
+        var alarmRule = String.valueOf(props.get("AlarmRule"));
+        var alarmOccurrences = Pattern.compile(Pattern.quote("ALARM("))
+                .matcher(alarmRule)
+                .results()
+                .count();
+        assertEquals(
+                2, alarmOccurrences, "composite AlarmRule must reference exactly the two P1 pagers, got: " + alarmRule);
     }
 }
