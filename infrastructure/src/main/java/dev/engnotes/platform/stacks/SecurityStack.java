@@ -24,9 +24,12 @@ import software.constructs.Construct;
 /**
  * Security Stack - the identity half of the platform (spec sections 3, 11).
  *
- * <p>Holds the Cognito user pool, groups, app client, and Hosted UI domain. The pool is stateful
- * (real users), so this stack is persistent (RETAIN) and must NOT be in the teardown set alongside
- * Network/Ingestion/Query. MFA is env-gated (OPTIONAL in dev, REQUIRED in prod), TOTP only.
+ * <p>Holds the Cognito user pool, groups, app client, and Hosted UI domain. The stack itself is
+ * ephemeral: {@code scripts/teardown.sh} destroys it along with Ingestion/Query, keeping only Data.
+ * The user pool is stateful (real users) and has a fixed name with RemovalPolicy.RETAIN, so it
+ * survives that teardown orphaned rather than being deleted, and a later redeploy can collide with
+ * it (already-exists) unless the orphaned pool is handled first. MFA is env-gated (OPTIONAL in dev,
+ * REQUIRED in prod), TOTP only.
  */
 public class SecurityStack extends Stack {
 

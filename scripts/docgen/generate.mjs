@@ -15,9 +15,9 @@ const HTML_PATH = join(repoRoot, "docs", "learning-guide.html");
 export function assertNoMarkdownReferences(html) {
   // Cheap linear check first: a bare `.md\b` scan has no greedy prefix, so it stays fast even on the
   // multi-MB base64 data URIs of embedded diagrams (a greedy `[\w./-]*\.md` prefix would backtrack
-  // catastrophically over base64 runs). Only on an actual hit do we extract the filename for the error.
-  if (!/\.md\b/.test(html)) return;
-  const matches = [...html.matchAll(/[A-Za-z0-9._/-]{0,80}?\.md\b/g)].map((m) => m[0].replace(/^[^A-Za-z0-9]+/, ""));
+  // catastrophically over base64 runs). Case-insensitive so `.MD`/`.Md` cannot slip through.
+  if (!/\.md\b/i.test(html)) return;
+  const matches = [...html.matchAll(/[A-Za-z0-9._/-]{0,80}?\.md\b/gi)].map((m) => m[0].replace(/^[^A-Za-z0-9]+/, ""));
   const unique = [...new Set(matches)].sort();
   throw new Error(
     `learning-guide.html references ${matches.length} markdown file(s) - inline the content or ` +
@@ -34,11 +34,14 @@ function embedTemplateAssets(html) {
 // House style forbids em-dashes (and en-dashes used as dashes). They keep creeping back into prose,
 // so the build enforces their absence: use commas, colons, or a restructured sentence instead.
 export function assertNoEmDashes(html) {
-  const matches = [...html.matchAll(/.{0,30}[—–].{0,30}/g)].map((m) => m[0]);
+  // Catch the literal characters AND their HTML entities (decimal + hex + named), so an
+  // &mdash; / &#8212; / &#x2014; cannot render a dash while evading a literal-only check.
+  const dash = /[—–]|&mdash;|&ndash;|&#8212;|&#8211;|&#x201[34];/gi;
+  const matches = [...html.matchAll(dash)].map((m) => m[0]);
   if (matches.length > 0) {
     throw new Error(
-      `learning-guide.html contains ${matches.length} em/en-dash(es) - replace with commas/colons. ` +
-        `First: "${matches[0].replace(/\s+/g, " ")}"`
+      `learning-guide.html contains ${matches.length} em/en-dash(es) (incl. entities) - use commas/colons. ` +
+        `First form: "${matches[0]}"`
     );
   }
 }

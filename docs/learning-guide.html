@@ -505,7 +505,7 @@ detects statistically unusual moves, asks a Bedrock LLM to explain the interesti
 those insights, and serves them to authenticated users through a cached REST API. It treats
 personal data (which stocks a user watches is personal) as a first-class compliance concern under
 India's Digital Personal Data Protection Act (DPDP): consent gating, per-group authorization, data
-export, data erasure, and an immutable audit trail.</p>
+export, data erasure, and a tamper-evident, append-only audit trail.</p>
 <p>One-line data flow:</p>
 <blockquote>
 <p><strong>EventBridge schedule -&gt; Step Functions -&gt; fetch market data (Yahoo Finance) -&gt; store hot in
@@ -528,10 +528,13 @@ interesting, generates an insight, and stores it. This is the entire <strong>Ing
 <li>The <strong>read path</strong> (a &quot;query&quot; side): a user calls an API, a Lambda reads the stored insight, and
 returns it. This is the <strong>Query stack</strong>.</li>
 </ul>
-<p>The two never touch at runtime. They are literally different CloudFormation stacks with different
-IAM roles. The write side holds read-write DynamoDB grants and can invoke Bedrock; the read side
-holds a read-only DynamoDB grant and cannot. Between them sits DynamoDB, which is the only shared
-surface: the write path appends <code>INSIGHT#</code> items, the read path queries the newest one.</p>
+<p>The normal read endpoints never touch the write side at runtime, and they are literally different
+CloudFormation stacks with different IAM roles: the write side holds read-write DynamoDB grants and
+can invoke Bedrock, the read side holds a read-only DynamoDB grant and cannot. For those routes
+DynamoDB is the only shared surface: the write path appends <code>INSIGHT#</code> items, the read path queries
+the newest one. One route breaks that isolation deliberately: <code>POST /ingest/{ticker}</code> (in the Query
+stack) directly starts the Ingestion Step Functions state machine via <code>StartExecution</code>, so an
+on-demand ingest call does reach across into the write path synchronously (Section 6.6).</p>
 <blockquote>
 <p><strong>Why this matters:</strong> decoupling read from write is what keeps the user-facing latency low and
 predictable <em>regardless of what the write path is doing</em>. A slow Bedrock call or a burst of
@@ -549,9 +552,10 @@ user-facing request, and <code>DELETE /user/account</code> runs the full erasure
 inline in the same request/response cycle. These are still CQRS commands, gated by the same
 consent check and the erasure lease (Section 10.1, Section 10.3) as every other write, but they
 do not run through the Ingestion stack or Step Functions: they are synchronous, low-latency,
-user-initiated writes that happen to share IAM roles and deploy unit with the read path. Keep
-this distinct from the scheduled write path when reasoning about latency, IAM scope, or where a
-given write actually happens.</p>
+user-initiated writes that happen to share the Query stack's deployment unit with the read path,
+though each route group (query, watchlist, consent, DSR) has its own, separately scoped IAM role
+(Section 6.13). Keep this distinct from the scheduled write path when reasoning about latency, IAM
+scope, or where a given write actually happens.</p>
 </blockquote>
 <blockquote>
 <p><strong>Further reading:</strong> Martin Fowler on <a href="https://martinfowler.com/bliki/CQRS.html">CQRS</a>; AWS on
@@ -596,16 +600,17 @@ scoped to NSE market hours:</p>
                 .build()))
         .build();
 </code></pre>
-<p>This is what the rule looks like when it is doing its job, real execution list captured 2026-07-12
-with the schedule enabled, one run every 5 minutes, all green:</p>
+<p>This is what the rule looks like when it is doing its job, an illustrative execution list with the
+schedule enabled, one run every 5 minutes, all green, on a weekday inside the dev cron window
+(<code>cron(*/5 3-9 ? * MON-FRI *)</code> UTC, roughly 08:30-15:25 IST, Monday to Friday):</p>
 <pre><code class="hljs">$ aws stepfunctions list-executions --state-machine-arn &quot;$SM_ARN&quot; --max-results 6 \
     --query 'executions[].{status:status,start:startDate}' --output table
-|  2026-07-12T04:40:12+05:30 |  SUCCEEDED  |
-|  2026-07-12T04:35:12+05:30 |  SUCCEEDED  |
-|  2026-07-12T04:30:12+05:30 |  SUCCEEDED  |
-|  2026-07-12T04:25:12+05:30 |  SUCCEEDED  |
-|  2026-07-12T04:20:12+05:30 |  SUCCEEDED  |
-|  2026-07-12T04:15:12+05:30 |  SUCCEEDED  |
+|  2026-07-13T09:20:12+05:30 |  SUCCEEDED  |
+|  2026-07-13T09:15:12+05:30 |  SUCCEEDED  |
+|  2026-07-13T09:10:12+05:30 |  SUCCEEDED  |
+|  2026-07-13T09:05:12+05:30 |  SUCCEEDED  |
+|  2026-07-13T09:00:12+05:30 |  SUCCEEDED  |
+|  2026-07-13T08:55:12+05:30 |  SUCCEEDED  |
 </code></pre>
 <p>Each of those runs wrote one <code>TS#</code> row per ticker (Section 7.5 shows them landing in the RELIANCE.NS
 partition at the same 5-minute cadence).</p>
@@ -614,24 +619,27 @@ partition at the same 5-minute cadence).</p>
 the <code>WATCHSET</code> partition in DynamoDB (Section 7.1), read at the start of each run. That means you
 can change what gets ingested by writing to the database, with no change to the schedule.</p>
 </blockquote>
-<p><strong>Run it: flip the schedule on or off, and confirm the state.</strong> A fresh deploy leaves all three
-schedule rules disabled deliberately (Section 5.4), so live data only flows once you enable them.</p>
+<p><strong>Run it: flip the schedule on or off, and confirm the state.</strong> A fresh CDK deploy creates all three
+schedule rules ENABLED (<code>IngestionStack.java</code> does not pass <code>enabled(false)</code>); disabling them is a
+deliberate operational step (<code>aws events disable-rule</code>, Section 13.5) taken to pause spend off-hours,
+not a deploy-time default.</p>
 <pre><code class="hljs language-bash"><span class="hljs-comment"># turn the pipeline on: session ingest, closing capture, correlation grouping</span>
-aws events enable-rule --name financial-market-data-schedule-dev
-aws events enable-rule --name financial-market-data-close-schedule-dev
-aws events enable-rule --name financial-correlations-schedule-dev
+aws events enable-rule --region ap-south-1 --name financial-market-data-schedule-dev
+aws events enable-rule --region ap-south-1 --name financial-market-data-close-schedule-dev
+aws events enable-rule --region ap-south-1 --name financial-correlations-schedule-dev
 
 <span class="hljs-comment"># turn it back off (pause spend without a teardown)</span>
-aws events disable-rule --name financial-market-data-schedule-dev
-aws events disable-rule --name financial-market-data-close-schedule-dev
-aws events disable-rule --name financial-correlations-schedule-dev
+aws events disable-rule --region ap-south-1 --name financial-market-data-schedule-dev
+aws events disable-rule --region ap-south-1 --name financial-market-data-close-schedule-dev
+aws events disable-rule --region ap-south-1 --name financial-correlations-schedule-dev
 
 <span class="hljs-comment"># confirm current state (Enabled / Disabled) and the schedule expression for any rule</span>
-aws events describe-rule --name financial-market-data-schedule-dev \
+aws events describe-rule --region ap-south-1 --name financial-market-data-schedule-dev \
   --query <span class="hljs-string">&#x27;{state:State,sched:ScheduleExpression}&#x27;</span>
 
 <span class="hljs-comment"># list every rule in the account with its state, at a glance</span>
-aws events list-rules --query <span class="hljs-string">&quot;Rules[?contains(Name,&#x27;financial&#x27;)].{name:Name,state:State}&quot;</span> --output table
+aws events list-rules --region ap-south-1 \
+  --query <span class="hljs-string">&quot;Rules[?contains(Name,&#x27;financial&#x27;)].{name:Name,state:State}&quot;</span> --output table
 </code></pre>
 <h3 id="4-2-hop-2-the-orchestrator-wakes-up-step-functions">4.2 Hop 2: the orchestrator wakes up (Step Functions)</h3>
 <p>The rule's target is a Step Functions <strong>state machine</strong>. It first decides whether this is a
@@ -683,21 +691,31 @@ an insight regardless of whether the move is statistically anomalous. Scheduled 
 <span class="hljs-built_in">this</span>.stateMachine = stateMachine;
 </code></pre>
 <p><strong>Run it: start an execution on demand and inspect it.</strong> Do not wait for the schedule to see a run,
-trigger one now and follow it with the same commands you would use to debug a failure.</p>
-<pre><code class="hljs language-bash">SM_ARN=$(aws stepfunctions list-state-machines \
+trigger one now and follow it with the same commands you would use to debug a failure. Use
+<code>&quot;source&quot;:&quot;eventbridge-schedule&quot;</code> to exercise the real scheduled path, the one <code>IngestionHandler</code>
+gates on <code>MarketHours.isMarketOpen</code>: off-hours it no-ops (<code>dataSource&quot;:&quot;market-closed&quot;</code>, nothing
+written, no provider call). Any other source, including <code>&quot;manual&quot;</code>, bypasses that gate entirely and
+always fetches, so a manual run off-hours still writes data and spends provider quota; use it
+deliberately, not as a stand-in for the scheduled path.</p>
+<pre><code class="hljs language-bash">SM_ARN=$(aws stepfunctions list-state-machines --region ap-south-1 \
   --query <span class="hljs-string">&quot;stateMachines[?name==&#x27;financial-ingestion-pipeline-dev&#x27;].stateMachineArn&quot;</span> --output text)
 
-<span class="hljs-comment"># start a run (mirrors what the EventBridge target sends)</span>
-EXEC_ARN=$(aws stepfunctions start-execution --state-machine-arn <span class="hljs-string">&quot;<span class="hljs-variable">$SM_ARN</span>&quot;</span> \
-  --input <span class="hljs-string">&#x27;{&quot;source&quot;:&quot;manual&quot;}&#x27;</span> --query executionArn --output text)
+<span class="hljs-comment"># start a run that exercises the real, market-hours-gated scheduled path (no-ops off-hours)</span>
+EXEC_ARN=$(aws stepfunctions start-execution --region ap-south-1 --state-machine-arn <span class="hljs-string">&quot;<span class="hljs-variable">$SM_ARN</span>&quot;</span> \
+  --input <span class="hljs-string">&#x27;{&quot;source&quot;:&quot;eventbridge-schedule&quot;}&#x27;</span> --query executionArn --output text)
+
+<span class="hljs-comment"># start a run that bypasses the gate and always fetches, off-hours included (burns provider quota)</span>
+<span class="hljs-comment"># EXEC_ARN=$(aws stepfunctions start-execution --region ap-south-1 --state-machine-arn &quot;$SM_ARN&quot; \</span>
+<span class="hljs-comment">#   --input &#x27;{&quot;source&quot;:&quot;manual&quot;}&#x27; --query executionArn --output text)</span>
 
 <span class="hljs-comment"># recent executions and their status</span>
-aws stepfunctions list-executions --state-machine-arn <span class="hljs-string">&quot;<span class="hljs-variable">$SM_ARN</span>&quot;</span> --max-results 5 \
+aws stepfunctions list-executions --region ap-south-1 --state-machine-arn <span class="hljs-string">&quot;<span class="hljs-variable">$SM_ARN</span>&quot;</span> --max-results 5 \
   --query <span class="hljs-string">&#x27;executions[].{name:name,status:status,start:startDate}&#x27;</span> --output table
 
 <span class="hljs-comment"># this run&#x27;s outcome, and (once it finishes) which states failed, if any</span>
-aws stepfunctions describe-execution --execution-arn <span class="hljs-string">&quot;<span class="hljs-variable">$EXEC_ARN</span>&quot;</span> --query <span class="hljs-string">&#x27;{status:status,stop:stopDate}&#x27;</span>
-aws stepfunctions get-execution-history --execution-arn <span class="hljs-string">&quot;<span class="hljs-variable">$EXEC_ARN</span>&quot;</span> --reverse-order \
+aws stepfunctions describe-execution --region ap-south-1 --execution-arn <span class="hljs-string">&quot;<span class="hljs-variable">$EXEC_ARN</span>&quot;</span> \
+  --query <span class="hljs-string">&#x27;{status:status,stop:stopDate}&#x27;</span>
+aws stepfunctions get-execution-history --region ap-south-1 --execution-arn <span class="hljs-string">&quot;<span class="hljs-variable">$EXEC_ARN</span>&quot;</span> --reverse-order \
   --query <span class="hljs-string">&quot;events[?contains(type, &#x27;Failed&#x27;)].{type:type,ts:timestamp}&quot;</span> --output table
 </code></pre>
 <h3 id="4-3-hop-3-fan-out-one-ticker-at-a-time-distributed-map">4.3 Hop 3: fan out one ticker at a time (Distributed Map)</h3>
@@ -765,9 +783,10 @@ aws stepfunctions describe-map-run --map-run-arn <span class="hljs-string">&quot
 <h3 id="4-4-hop-4-fetch-and-store-lambda-to-dynamodb-s3">4.4 Hop 4: fetch and store (Lambda to DynamoDB + S3)</h3>
 <p>The map iteration invokes the fetch Lambda for RELIANCE.NS. It validates the ticker at the trust
 boundary, calls the market-data provider (Yahoo Finance primary, Alpha Vantage failover), parses the
-quote null-safely, and dual-writes: a hot data point into DynamoDB (with a 24h TTL so it
-self-expires) and the full record into the S3 lake (date-partitioned for Athena). It also updates the
-per-ticker running statistics (the <code>BASELINE</code> item) used for anomaly detection.</p>
+quote null-safely, and writes it three ways: a hot data point into DynamoDB (with a 24h TTL so it
+self-expires), the full record into the S3 lake (date-partitioned for Athena), and an upsert into
+that day's <code>DAY#yyyy-MM-dd</code> daily rollup item in DynamoDB (<code>DailyRollupService</code>, Section 7.1). It
+also updates the per-ticker running statistics (the <code>BASELINE</code> item) used for anomaly detection.</p>
 <ul>
 <li><strong>Service / concept:</strong> Lambda (<a href="#61-aws-lambda-and-snapstart">6.1</a>), DynamoDB
 (<a href="#64-dynamodb-single-table-design">6.4</a>), S3 (<a href="#611-s3-the-data-lake">6.11</a>).</li>
@@ -802,7 +821,7 @@ aws dynamodb query --table-name financial-platform-dev \
 check closes URL-injection, S3 key/tag-injection, and log-forging in a single place. This is the
 &quot;validate at the trust boundary&quot; principle in action.</p>
 </blockquote>
-<p>The dual write's S3 leg: the date-partitioned lake key that makes the bucket Athena-ready:</p>
+<p>The triple write's S3 leg: the date-partitioned lake key that makes the bucket Athena-ready:</p>
 <pre><code class="hljs language-java"><span class="hljs-keyword">private</span> <span class="hljs-keyword">void</span> <span class="hljs-title function_">storeToS3</span><span class="hljs-params">(MarketDataResponse data, String timestamp, String correlationId)</span> {
     <span class="hljs-type">Instant</span> <span class="hljs-variable">now</span> <span class="hljs-operator">=</span> Instant.now();
 
@@ -953,9 +972,13 @@ curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hl
 <hr>
 <h2 id="5-the-stacks-four-live-two-retired">5. The stacks (four live, two retired)</h2>
 <p>Open <strong>CloudFormation &gt; Stacks</strong> in ap-south-1 and you will see the deploy units. They are split
-deliberately: <strong>Data and Security are persistent</strong> (they hold real data and identities, never torn
-down), while <strong>Ingestion and Query are ephemeral</strong> (torn down between work sessions to stop paying
-for idle resources; historically the NAT gateway, removed with the VPC per ADR 0004). Two more
+deliberately: <strong>Data is persistent</strong> (it holds the real data, never torn down), while <strong>Security,
+Ingestion, and Query are ephemeral</strong> (<code>scripts/teardown.sh</code> destroys all three between work sessions
+to stop paying for idle resources, keeping only Data; historically the NAT gateway, removed with the
+VPC per ADR 0004). Security's own resources are mostly stateless infrastructure-as-code, but the
+Cognito user pool inside it uses a fixed, env-derived name and a <code>RETAIN</code> removal policy, so
+re-creating the Security stack after a teardown can hit an already-exists error on that pool name
+(Section 13.5). Two more
 stacks existed historically and are kept below as teaching material: Network (retired 2026-07-19
 era by ADR 0004) and Realtime (retired 2026-07-19 by ADR 0005, WebSocket push replaced with 60s
 frontend polling). The wiring lives in <code>FinancialPlatformApp.java</code>.</p>
@@ -1041,7 +1064,7 @@ would change before committing to a <code>cdk deploy</code>.</p>
 <tr>
 <td>Security</td>
 <td><code>FinancialPlatform-Security-dev</code></td>
-<td>Persistent</td>
+<td>Ephemeral</td>
 <td>Data</td>
 </tr>
 <tr>
@@ -1076,13 +1099,21 @@ a USD 5 budget. The costly resources (historically the NAT gateway ~$1/day and t
 interface endpoint, both gone since ADR 0004; prod
 provisioned concurrency) all live in the ephemeral stacks; you can <code>cdk destroy</code> them nightly and
 rebuild in one command without ever risking the data. See the operator runbook's &quot;Cost control&quot;
-section for the exact <code>cdk destroy</code> / <code>cdk deploy</code> commands. Cross-stack references are wired as CloudFormation
-exports (each stack's <code>CfnOutput</code> with an <code>exportName</code>), which is how the ephemeral stacks find the
-persistent table, key, and user pool.</p>
+section for the exact <code>cdk destroy</code> / <code>cdk deploy</code> commands. Cross-stack references are wired as
+direct CDK construct references, not CloudFormation output imports: <code>FinancialPlatformApp.java</code>
+constructs <code>DataStack</code> and <code>SecurityStack</code> first and passes those stack objects straight into the
+<code>IngestionStack</code> and <code>QueryStack</code> constructors, which then call methods on them (for example
+<code>data.getPlatformTable()</code>) directly. Each stack's <code>CfnOutput</code>/<code>exportName</code> pairs do exist, but they
+are there for operators and scripts (<code>scripts/deploy-ephemeral.sh</code> reads the API endpoint output),
+not for wiring one stack to another.</p>
 </blockquote>
-<h3 id="5-1-data-stack-the-only-stack-that-holds-your-data">5.1 Data stack (the only stack that holds your data)</h3>
+<h3 id="5-1-data-stack-the-durable-data-stack">5.1 Data stack (the durable data stack)</h3>
 <ul>
-<li><strong>Purpose:</strong> everything stateful that must survive teardown. It costs almost nothing at rest.</li>
+<li><strong>Purpose:</strong> everything stateful that must survive teardown. It costs almost nothing at rest. It
+is the only stack that is never a <code>teardown.sh</code> target; Security is torn down along with
+Ingestion and Query, but its Cognito user pool has its own <code>RETAIN</code> removal policy and so
+survives the stack's own destruction as an orphaned resource (Section 13.5), which is a
+different thing from Data's stack-level persistence.</li>
 <li><strong>Code:</strong> <code>DataStack.java</code>.</li>
 <li><strong>AWS resources (real names, env=dev):</strong>
 <ul>
@@ -1159,8 +1190,10 @@ and routing detail preserved in <a href="#610-vpc-nat-and-endpoints">6.10</a>.</
 </ul>
 <h3 id="5-3-security-stack-identity">5.3 Security stack (identity)</h3>
 <ul>
-<li><strong>Purpose:</strong> who can log in, and the consent-seeding trigger. Persistent because it holds real
-users.</li>
+<li><strong>Purpose:</strong> who can log in, and the consent-seeding trigger. Ephemeral like Ingestion and Query,
+<code>scripts/teardown.sh</code> destroys it along with them, keeping only Data; the Cognito user pool's fixed
+name and <code>RETAIN</code> policy is what makes re-creating this stack after a teardown its own gotcha
+(Section 13.5), not stack-level persistence.</li>
 <li><strong>Code:</strong> <code>SecurityStack.java</code>.</li>
 <li><strong>AWS resources:</strong>
 <ul>
@@ -1176,11 +1209,15 @@ authorization-code grant with openid/email/profile scopes).</li>
 <li>A PostConfirmation Lambda <code>financial-postconfirmation-dev</code> (packaged from the consent function's
 JAR, bean <code>postConfirmation</code>) that seeds a default-deny consent record and an <code>ACCOUNT_CREATED</code>
 audit event when a user signs up.</li>
+<li>A PreAuthentication Lambda <code>financial-preauthentication-dev</code> (same consent-function JAR, bean
+<code>preAuthentication</code>) that gates every login: it throws to deny <code>WITHDRAWN</code> consent or consent
+given under a stale policy version, and allows <code>PENDING</code> (never consented) and current-version
+<code>GIVEN</code> through.</li>
 </ul>
 </li>
 <li><strong>Console:</strong> Cognito &gt; User pools &gt; <code>financial-platform-users-dev</code>. Look at Groups, Sign-up
 experience &gt; Custom attributes, App integration &gt; App clients, and User pool properties &gt; Lambda
-triggers (the PostConfirmation hook).</li>
+triggers (the PostConfirmation and PreAuthentication hooks).</li>
 <li><strong>Lesson: the identity provider is also the policy anchor.</strong> Cognito is not just login. The group a
 user is in becomes a JWT claim (<code>cognito:groups</code>), and that claim is what the API authorizer
 enforces (Section 10.2). MFA, password policy, and data-minimised attributes are all configured here
@@ -1268,8 +1305,9 @@ grants.</li>
 <li>SQS dead-letter queue <code>financial-ingestion-dlq-dev</code> (KMS-encrypted, 14-day retention).</li>
 <li>Two CloudWatch alarms: <code>financial-ingestion-pipeline-failed-dev</code> and
 <code>financial-ingestion-dlq-depth-dev</code> (both P2, notify the warnings SNS topic).</li>
-<li>A deploy-time custom resource (<code>WatchsetSeed</code>) that seeds the <code>WATCHSET</code> (<code>RELIANCE.NS</code>, <code>TCS.NS</code>,
-<code>INFY.NS</code>, <code>HDFCBANK.NS</code>, <code>^NSEI</code>) until the watchlist write path maintains it.</li>
+<li>A deploy-time custom resource (<code>WatchsetSeed</code>) that seeds the <code>WATCHSET</code> with seven tickers
+(<code>RELIANCE.NS</code>, <code>TCS.NS</code>, <code>INFY.NS</code>, <code>HDFCBANK.NS</code>, <code>^NSEI</code>, <code>^BSESN</code>, <code>^NSEBANK</code>) until the
+watchlist write path maintains it.</li>
 </ul>
 </li>
 <li><strong>Console:</strong> Step Functions &gt; <code>financial-ingestion-pipeline-dev</code> (the graph); Lambda &gt; the four
@@ -1338,8 +1376,10 @@ jar, one <code>SPRING_CLOUD_FUNCTION_DEFINITION</code> bean each: <code>serveIns
 jar, beans <code>watchlist</code> and <code>portfolio</code>); and <code>financial-consent-dev</code>, <code>financial-dsr-dev</code>,
 <code>financial-authorizer-dev</code> (their own jars, one bean each). Sharing a jar across functions keeps
 the build to three Maven modules while still deploying eleven independently-scaled,
-independently-monitored Lambdas. Query and authorizer are invoked via <code>live</code> aliases;
-provisioned concurrency (2) is prod-only. IAM roles are scoped per jar group, not per function:
+independently-monitored Lambdas. Every Lambda in this stack is invoked via a <code>live</code> alias and
+every one is SnapStart-enabled; <code>QueryStack.java</code> deliberately configures no provisioned
+concurrency anywhere, in any env, because AWS rejects it on the same version/alias as SnapStart
+(Section 6.1). IAM roles are scoped per jar group, not per function:
 the six query-function-jar Lambdas share one read-only role, watchlist and portfolio share
 another, and consent, DSR, and authorizer each get their own dedicated role (DSR alone can call
 Cognito).</li>
@@ -1632,7 +1672,7 @@ milliseconds. In the code, every function sets <code>snapStart(SnapStartConf.ON_
 <tr>
 <td>Alias</td>
 <td><code>live</code>, on <code>getCurrentVersion()</code></td>
-<td>e.g. <code>FetchMarketDataAlias</code>, <code>QueryFnAlias</code>, <code>AuthorizerFnAlias</code></td>
+<td>every API and ingestion execution-path function, e.g. <code>FetchMarketDataAlias</code>, <code>QueryFnAlias</code>, <code>AuthorizerFnAlias</code>; the two Security-stack Cognito triggers (<code>PostConfirmationFn</code>, <code>PreAuthenticationFn</code>) are attached to the user pool directly, with no alias</td>
 </tr>
 <tr>
 <td>Memory</td>
@@ -1663,12 +1703,13 @@ SnapStart engage.</p>
 caching plus per-restore) but adds a constraint (publish + alias) and a subtlety around snapshot
 state: anything cached at init time is frozen, Lambda auto-patches snapshots and periodically
 re-runs init to apply runtime updates, and uniqueness/network-connection state needs CRaC runtime
-hooks. Provisioned concurrency eliminates cold starts entirely but bills even when idle, so it is
-prod-only here (<code>QueryFnAlias.provisionedConcurrentExecutions(2)</code> inside the <code>env.equals(&quot;prod&quot;)</code>
-guard). <strong>Latent prod bug:</strong> SnapStart does not support provisioned concurrency on the same
-function version, that prod-only PC sits on the very alias SnapStart needs, so the first real
-prod deploy will fail; one of the two must go (untested because prod has never been deployed,
-exactly the real-AWS-only defect class this guide catalogs).</p>
+hooks. Provisioned concurrency eliminates cold starts entirely but bills even when idle, and AWS
+rejects it on the same version/alias as SnapStart. <strong>Resolved historical gotcha:</strong> an earlier
+revision of <code>QueryStack.java</code> configured <code>provisionedConcurrentExecutions(2)</code> on the prod alias of
+the query and authorizer Lambdas, which sat on the very alias SnapStart needs and would have failed
+the first real prod deploy. The current <code>QueryStack.java</code> carries this as an explicit decision
+instead: no alias in this stack, in any env, configures provisioned concurrency, precisely because
+it is incompatible with SnapStart, and every Lambda here is SnapStart-enabled.</p>
 </blockquote>
 <p>The query Lambda's <code>live</code> alias is published from <code>getCurrentVersion()</code>, the exact indirection SnapStart requires:</p>
 <pre><code class="hljs language-java"><span class="hljs-comment">// Invoke the query Lambda via a published-version alias so SnapStart engages; invoking</span>
@@ -1706,13 +1747,13 @@ stream, with an adapter bridging the platform's event shape to your function. On
 <tbody>
 <tr>
 <td>ingestion-function</td>
-<td><code>fetchMarketData</code></td>
-<td><code>Function&lt;MarketDataRequest, MarketDataResponse&gt;</code></td>
+<td><code>fetchMarketData</code>, <code>backfillDailyHistory</code></td>
+<td><code>Function&lt;MarketDataRequest, MarketDataResponse&gt;</code>, <code>Function&lt;Map&lt;String, Object&gt;, Map&lt;String, Object&gt;&gt;</code></td>
 </tr>
 <tr>
 <td>insight-function</td>
-<td><code>generateInsight</code></td>
-<td><code>Function&lt;InsightRequest, InsightResponse&gt;</code></td>
+<td><code>generateInsight</code>, <code>computeCorrelations</code></td>
+<td><code>Function&lt;InsightRequest, InsightResponse&gt;</code>, <code>Function&lt;CorrelationRequest, CorrelationResponse&gt;</code></td>
 </tr>
 <tr>
 <td>query-function</td>
@@ -1731,8 +1772,8 @@ stream, with an adapter bridging the platform's event shape to your function. On
 </tr>
 <tr>
 <td>consent-function</td>
-<td><code>consent</code> and <code>postConfirmation</code></td>
-<td>API op-switched / Cognito trigger</td>
+<td><code>consent</code>, <code>postConfirmation</code>, <code>preAuthentication</code></td>
+<td>API op-switched / two Cognito triggers</td>
 </tr>
 <tr>
 <td>dsr-function</td>
@@ -1959,8 +2000,10 @@ platformTable.addGlobalSecondaryIndex(GlobalSecondaryIndexProps.builder()
 <blockquote>
 <p><strong>Why single-table?</strong> It trades up-front modelling effort for one physical table, predictable
 single-partition reads, no cross-table joins, and one thing to secure, back up, and monitor. It is
-also why the right-to-erasure cascade is cheap: all of a user's personal data is under <code>USER#{sub}</code>,
-so erasure is one prefix query and a batch delete (Section 10.3), no extra index.</p>
+also why the right-to-erasure cascade is cheap: all of a user's personal data on the platform table
+is under <code>USER#{sub}</code>, so erasure is one prefix query and a batch delete (Section 10.3), no extra
+index. The separate audit table's <code>USER#{sub}</code> rows are the documented DPDP retention exception, not
+erased (Section 10.4).</p>
 </blockquote>
 <blockquote>
 <p><strong>Tradeoff:</strong> it is harder to read at a glance (one table with several item shapes) and it demands
@@ -2089,13 +2132,15 @@ aws stepfunctions list-executions --state-machine-arn <span class="hljs-string">
 <p><strong>What it is.</strong> EventBridge is a serverless event bus and scheduler. Rules match events (or a
 cron/rate schedule) and route them to targets, with optional input transformation, retries, and a
 dead-letter queue for undeliverable events.</p>
-<p><strong>How this platform uses it.</strong> One scheduled rule, <code>financial-market-data-schedule-dev</code>, starts the
-ingestion state machine. Dev is <code>cron(*/5 3-9 ? * MON-FRI *)</code> (every 5 minutes); prod is
-<code>cron(*/1 3-9 ? * MON-FRI *)</code> (every minute); both are scoped to 03:00-09:59 UTC on weekdays
+<p><strong>How this platform uses it.</strong> Three scheduled rules drive the ingestion state machine. The main one,
+<code>financial-market-data-schedule-dev</code>, is <code>cron(*/5 3-9 ? * MON-FRI *)</code> in dev (every 5 minutes) and
+<code>cron(*/1 3-9 ? * MON-FRI *)</code> in prod (every minute); both are scoped to 03:00-09:59 UTC on weekdays
 (~08:30-15:29 IST, the NSE session plus margin), which saves roughly 75% of invocations versus
-24/7. A sibling <code>MarketDataCloseSchedule</code> rule fires once more just after close to capture the
-closing prints, and a third rule, <code>CorrelationsSchedule</code>, runs correlation grouping on
-<code>cron(0/15 3-9 ? * MON-FRI *)</code> in the same market-hours envelope. The target carries a fixed input
+24/7. A sibling <code>MarketDataCloseSchedule</code> rule captures the closing prints just after close: it fires
+twice in dev (<code>cron(0,5 10 ? * MON-FRI *)</code>, minutes 0 and 5) and six times in prod
+(<code>cron(0-5 10 ? * MON-FRI *)</code>, every minute from 0 through 5), not once. A third rule,
+<code>CorrelationsSchedule</code>, runs correlation grouping on <code>cron(0/15 3-9 ? * MON-FRI *)</code> in the same
+market-hours envelope, in both envs. The two market-data rules' target carries a fixed input
 <code>{&quot;source&quot;:&quot;eventbridge-schedule&quot;}</code>, a DLQ, and <code>retryAttempts(2)</code>.</p>
 <p>The <code>MarketDataSchedule</code> rule, with its market-hours cron expressions for dev and prod:</p>
 <pre><code class="hljs language-java">Rule.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;MarketDataSchedule&quot;</span>)
@@ -2608,7 +2653,10 @@ take it as a constructor argument:</p>
 <span class="hljs-keyword">new</span> <span class="hljs-title class_">QueryStack</span>(app, <span class="hljs-string">&quot;FinancialPlatform-Query-&quot;</span> + env, props, env, network, data, ingestion, security);
 </code></pre>
 <p><strong>Step 4: deploy, verify, and tear down.</strong> Run it, confirm the NAT and endpoints exist, then destroy
-the Network stack so the NAT stops billing:</p>
+the Network stack so the NAT stops billing. Note that Steps 1-3 above show only the <code>.vpc(...)</code> calls;
+actually reproducing this requires the matching constructor-signature changes in <code>IngestionStack.java</code>
+and <code>QueryStack.java</code> (both need to accept and thread through the <code>NetworkStack</code> reference) and the
+corresponding wiring in <code>FinancialPlatformApp.java</code>, not just the Lambda-level <code>.vpc()</code> snippets:</p>
 <pre><code class="hljs language-bash"><span class="hljs-comment"># see what the VPC adds before paying for it</span>
 <span class="hljs-built_in">cd</span> infrastructure &amp;&amp; cdk diff FinancialPlatform-Network-dev --context <span class="hljs-built_in">env</span>=dev
 
@@ -2620,11 +2668,21 @@ aws ec2 describe-nat-gateways --region ap-south-1 --filter Name=state,Values=ava
 aws ec2 describe-vpc-endpoints --region ap-south-1 --query <span class="hljs-string">&#x27;VpcEndpoints[].[ServiceName,VpcEndpointType]&#x27;</span> --output table
 <span class="hljs-comment"># confirm a Lambda is now VPC-attached (VpcConfig should list subnets + a security group)</span>
 aws lambda get-function-configuration --function-name financial-fetch-market-data-dev --region ap-south-1 --query <span class="hljs-string">&#x27;VpcConfig&#x27;</span>
+</code></pre>
+<p><strong>Tearing down again is not a single command.</strong> <code>cdk destroy FinancialPlatform-Network-dev</code> fails
+outright while Ingestion and Query still import the VPC: CloudFormation refuses to delete a resource
+that another stack's cross-stack export still references. To actually remove the VPC, revert the
+Lambda <code>.vpc(...)</code>/<code>.vpcSubnets(...)</code> attachments from Step 2, revert the constructor-signature and
+<code>FinancialPlatformApp.java</code> wiring changes from Step 3, redeploy Ingestion and Query so they no
+longer import anything from the Network stack, and only then destroy Network:</p>
+<pre><code class="hljs language-bash"><span class="hljs-comment"># after reverting the .vpc() attachments and the Network-stack wiring, redeploy so the import drops</span>
+cdk deploy FinancialPlatform-Ingestion-dev FinancialPlatform-Query-dev --context <span class="hljs-built_in">env</span>=dev
 
-<span class="hljs-comment"># IMPORTANT: destroy the network stack when done. The NAT cannot be stopped, only destroyed,</span>
-<span class="hljs-comment"># and it is the dominant cost (~$1/day). Leaving it up runs ~$30+/month.</span>
+<span class="hljs-comment"># only now will this succeed</span>
 cdk destroy FinancialPlatform-Network-dev --context <span class="hljs-built_in">env</span>=dev
 </code></pre>
+<p>Skipping the detach step and leaving the Network stack up leaves the NAT gateway billing at roughly
+$1/day (~$30+/month) with no working <code>cdk destroy</code> path until you do the detach.</p>
 <p><strong>Gotchas worth knowing.</strong> SnapStart still works inside a VPC, but the first invocation after an ENI
 is created pays a one-time attach delay. A NAT gateway cannot be paused; scheduling it means
 destroy-and-recreate, which is exactly the treadmill ADR 0004 removed. Each interface endpoint bills
@@ -2640,7 +2698,7 @@ teaches nothing at thirty dollars a month.</p>
 lifecycle rules transition or expire objects; encryption, versioning, and public-access blocks are
 per-bucket.</p>
 <p><strong>How this platform uses it.</strong> The <code>DataLakeBucket</code> (<code>financial-platform-datalake-dev-&lt;account&gt;</code>) is
-the cold tier of the dual-write: <code>MarketDataStoreService.storeToS3</code> writes the full quote as JSON under
+the cold tier of the store: <code>MarketDataStoreService.storeToS3</code> writes the full quote as JSON under
 a date-and-ticker-partitioned key, <code>yyyy/MM/dd/{ticker}/HH-mm-ss.json</code> (the ticker's dots become
 underscores). The bucket is versioned, KMS-encrypted, all public access blocked, SSL enforced, and
 transitions to Intelligent-Tiering after 30 days. Objects are tagged <code>ticker=...&amp;env=...</code> for cost
@@ -2699,7 +2757,11 @@ request logs a <code>correlationId</code> you can grep across services. <code>Qu
 <code>financial-platform-dev</code>, aggregating API latency (p50/p90/p99), request/4XX/5XX counts, Lambda
 errors/throttles/duration/concurrency, ingestion executions, DLQ depth/age, DynamoDB
 capacity/throttles, and a Business row (insights generated, serve-time data-freshness age, Bedrock
-token cost, auth denials, API Gateway cache hit/miss), ending in an alarm-status widget.</p>
+token cost, auth denials, API Gateway cache hit/miss), ending in an alarm-status widget. The Lambda
+error/throttle/duration widgets only cover the ten Query-stack functions built in that stack (query,
+market-data, daily market-data, insights-feed, stories, analysis, watchlist, consent, DSR,
+authorizer); this is not a whole-fleet view; the portfolio Lambda, every Ingestion-stack function, and
+the two Security-stack Cognito triggers are not wired into it.</p>
 <p><strong>Alarms follow a symptom-based, tiered model:</strong></p>
 <table>
 <thead>
@@ -2882,8 +2944,15 @@ aws logs <span class="hljs-built_in">tail</span> /aws/lambda/financial-query-dev
 <h3 id="6-13-iam-least-privilege">6.13 IAM least-privilege</h3>
 <p><strong>What it is.</strong> IAM controls who (a principal) can do what (an action) to which resource. Least
 privilege means each principal holds only the permissions its job requires, scoped to specific
-resource ARNs, with no wildcards.</p>
-<p><strong>How this platform uses it.</strong> Every Lambda has its own role, granted exactly what it needs:</p>
+resource ARNs, with a small number of deliberate, bounded wildcards rather than none at all: the
+Bedrock grant below needs a region wildcard on the foundation-model ARN because a global inference
+profile can route to any region, and the Secrets Manager grant is scoped to the <code>financial-platform/*</code>
+name prefix, not a single secret.</p>
+<p><strong>How this platform uses it.</strong> Most Lambdas have their own dedicated least-privilege role, but not
+every function: the fetch-market-data, generate-insight, and history-backfill functions share one
+<code>ingestionRole</code>, while the correlations function gets its own dedicated role scoped to table
+read/write only, deliberately excluding the shared role's Bedrock, Secrets Manager, and S3 grants
+(Section 5.4). Elsewhere each function is granted exactly what it needs:</p>
 <table>
 <thead>
 <tr>
@@ -2893,8 +2962,12 @@ resource ARNs, with no wildcards.</p>
 </thead>
 <tbody>
 <tr>
-<td>ingestion (shared fetch+insight)</td>
+<td>ingestion (shared fetch+insight+history-backfill)</td>
 <td>read-write the platform table; write the S3 lake; KMS encrypt/decrypt; <code>bedrock:InvokeModel</code> on the profile + foundation-model ARNs; Secrets Manager on <code>financial-platform/*</code></td>
+</tr>
+<tr>
+<td>correlations (dedicated)</td>
+<td>read-write the platform table; KMS encrypt/decrypt only</td>
 </tr>
 <tr>
 <td>query</td>
@@ -2937,10 +3010,13 @@ ingestionRole.addToPolicy(PolicyStatement.Builder.create()
 </code></pre>
 <blockquote>
 <p><strong>Why this matters (the compliance guarantee):</strong> the audit table is tamper-evident not because of
-application code but because <em>no role can do anything except <code>PutItem</code></em> on it. The query Lambda cannot
-corrupt data because its role is read-only. The high-privilege Cognito delete lives on the DSR role
-alone, isolated from consent. Enforce invariants at the IAM boundary, where a future bug in a service
-method cannot bypass them.</p>
+application code but because <em>no role holds <code>Delete</code> or <code>Update</code> on it</em>. The consent function and the
+Cognito PostConfirmation and PreAuthentication triggers are the <code>PutItem</code>-only writers; the DSR role
+additionally holds <code>Query</code>, needed so the right-to-access
+export can read a subject's own trail back out. The query Lambda cannot corrupt data because its
+role is read-only. The high-privilege Cognito delete lives on the DSR role alone, isolated from
+consent. Enforce invariants at the IAM boundary, where a future bug in a service method cannot
+bypass them.</p>
 </blockquote>
 <p><strong>Run it:</strong> see exactly what a role can and cannot do (swap the role for any function's execution role):</p>
 <pre><code class="hljs language-bash">aws iam list-role-policies --role-name &lt;role-name&gt;
@@ -3015,6 +3091,12 @@ there is one table where the key patterns tell the entities apart. Concept and r
 <td><code>GROUPSET</code></td>
 <td><code>GROUP#&lt;groupId&gt;</code></td>
 <td>insight Lambda (<code>CorrelationStoreService</code>)</td>
+</tr>
+<tr>
+<td>Ticker-to-group reverse lookup</td>
+<td><code>TICKER#RELIANCE.NS</code></td>
+<td><code>GROUP</code></td>
+<td>insight Lambda (<code>CorrelationStoreService</code>); lets the query Lambda find a ticker's group without scanning <code>GROUPSET</code></td>
 </tr>
 <tr>
 <td>Bedrock daily total</td>
@@ -3093,6 +3175,7 @@ returnM2    = 15.416435714285713                (N)  sum of squared deviations
 volumeCount = 14                                (N)
 volumeMean  = 5407418.571428572                 (N)
 volumeM2    = 227423588051571.4                 (N)
+version     = 14                                (N)  optimistic-lock counter, incremented on every write
 updatedAt   = &quot;2026-07-11T23:10:13.442333760Z&quot;  (S)
 </code></pre>
 <p>Section 8.2 does the arithmetic on exactly these numbers to show why the anomaly gate was <em>not</em>
@@ -3113,7 +3196,7 @@ drivers       = [&quot;anomaly: return z=219.00;&quot;,
                  &quot;change percent: 2.1900&quot;,
                  &quot;volume: 8411540&quot;]                      (L of S)
 source        = &quot;RULE_BASED&quot;                             (S)  BEDROCK | RULE_BASED
-modelId       = &quot;global.anthropic.claude-sonnet-4-5-20250929-v1:0&quot;  (S)
+modelId       = &quot;global.anthropic.claude-sonnet-4-6&quot;  (S)
 promptVersion = &quot;v2&quot;                                     (S)
 correlationId = &quot;&lt;execName&gt;#RELIANCE.NS&quot;                 (S)  if present
 ttl           = 1784414110                               (N)  epoch seconds, ~7 days out
@@ -3133,14 +3216,18 @@ whole trick of single-table design: model your access patterns as key prefixes s
 query on one partition. The ticker is validated against <code>^[A-Z0-9.^-]{1,15}$</code> in <code>InsightQuery</code> before
 it reaches the key expression, so a malformed value is rejected at the trust boundary.</p>
 <h3 id="7-4-the-audit-table">7.4 The audit table</h3>
-<p><code>financial-platform-audit-dev</code> is a <strong>separate</strong> table, keyed <code>PK=USER#&lt;sub&gt;</code>, <code>SK=EVENT#&lt;iso8601&gt;#&lt;seq&gt;</code>.
+<p><code>financial-platform-audit-dev</code> is a <strong>separate</strong> table holding two record families: per-user operational rows keyed <code>PK=USER#&lt;sub&gt;</code>, <code>SK=EVENT#&lt;iso8601&gt;#&lt;seq&gt;</code> (raw <code>sub</code>), and a hashed compliance family keyed <code>PK=AUDIT#{ERASURE|ACCESS}#&lt;date&gt;</code>, <code>SK={occurredAt}#{correlationId}</code> (no raw <code>sub</code>); see Section 10.4.
 Items carry <code>eventType</code> (e.g. <code>ACCOUNT_CREATED</code>, <code>CONSENT_GRANTED</code>, <code>CONSENT_WITHDRAWN</code>, <code>DATA_EXPORTED</code>,
 <code>ACCOUNT_ERASED</code>), <code>actorSub</code> (the caller, recorded distinctly from the subject so admin-on-behalf
 actions are attributable), and optional <code>version</code>, <code>purpose</code>, <code>sourceIp</code>. It is <code>RETAIN</code> in every
-environment, deletion-protected, and has no TTL. Crucially, the application roles hold <code>PutItem</code> only
-(Section 6.13), which is what makes it append-only and tamper-evident. It is separate from the
-operational table precisely because its retention (permanent, immutable) and access policy differ
-fundamentally from the TTL'd operational data.</p>
+environment and has no TTL. Crucially, no application role holds update or delete on the audit table (the writers are <code>PutItem</code>-only; the DSR role also has <code>Query</code> to read the trail for the export path, Section 6.13), which
+is what makes it append-only and tamper-resistant: each event gets a distinct key, so there is no
+update/delete path to rewrite history through the application. That said, <code>DsrAuditService</code> issues a
+plain <code>PutItem</code> with no condition expression, so a same-key overwrite is technically possible, and the
+table does not use DynamoDB's separate deletion-protection setting, only the <code>RETAIN</code> removal policy;
+call it tamper-resistant, not absolutely immutable. It is separate from the operational table
+precisely because its retention (permanent, append-only) and access policy differ fundamentally from
+the TTL'd operational data.</p>
 <h3 id="7-5-browsing-it-and-the-empty-table-surprise">7.5 Browsing it, and the empty-table surprise</h3>
 <p>DynamoDB (ap-south-1) &gt; Tables &gt; <code>financial-platform-dev</code> &gt; <strong>Explore table items</strong>. Add a filter on
 <code>PK</code> equal to <code>TICKER#RELIANCE.NS</code> and you will see that one ticker's market points, baseline, and
@@ -3206,9 +3293,9 @@ attempts, 2s base, 2x backoff, full jitter) owns retry and backoff at the state 
 layer therefore adds <em>source failover</em> (Yahoo -&gt; Alpha Vantage) rather than duplicating in-Lambda
 retry, which would compound with the outer retry.</p>
 </blockquote>
-<p>The store is a dual write (<code>MarketDataStoreService</code>): DynamoDB hot point with a conditional put
-(<code>attribute_not_exists(PK) AND attribute_not_exists(SK)</code>) for idempotency and a 24h TTL, plus the S3
-cold object (Section 6.11).</p>
+<p>The store is a triple write (<code>MarketDataStoreService</code>): the DynamoDB hot point with a conditional put
+(<code>attribute_not_exists(PK) AND attribute_not_exists(SK)</code>) for idempotency and a 24h TTL, the S3 cold
+object (Section 6.11), and an upsert into the <code>DAY#</code> daily rollup item (<code>DailyRollupService</code>).</p>
 <h3 id="8-2-the-anomaly-gate-and-welford-s-algorithm">8.2 The anomaly gate and Welford's algorithm</h3>
 <p><code>AnomalyDetectionService.evaluate</code> reads the <code>BASELINE</code> item (strong-consistent), computes z-scores for
 the new return and volume against the <em>prior</em> baseline, folds the new observations in, writes the
@@ -3304,7 +3391,7 @@ aws dynamodb get-item --table-name financial-platform-dev --region ap-south-1 \
 <h3 id="8-3-insight-bedrock-with-forced-tool-use">8.3 Insight: Bedrock with forced tool use</h3>
 <p><code>InsightHandler</code> (bean <code>generateInsight</code>) calls <code>BedrockInsightService.generate</code> then
 <code>InsightStoreService.store</code>. The Bedrock call mechanics are in <a href="#68-amazon-bedrock">6.8</a>: <code>InvokeModel</code>
-on the global Sonnet 4.5 profile, a single forced <code>emit_insight</code> tool whose schema pins the four output
+on the global Sonnet 4.6 profile, a single forced <code>emit_insight</code> tool whose schema pins the four output
 fields, parsed and validated by the <code>StructuredInsight</code> record, retried once on invalid output. Cost is
 recorded <em>before</em> validation, because tokens are billed whether or not the output parses.</p>
 <p>The stored insight item and its attributes are in Section 7.2. The <code>source</code> attribute is the honest
@@ -3646,7 +3733,7 @@ window. The scheduled Lambdas call it and no-op cleanly (<code>stored=false</cod
 no provider call, no write) when it returns false.</li>
 </ul>
 <p>The guard is gated on the request source, not applied blindly: only <code>source=eventbridge-schedule</code>
-requests (both ingest rules and the correlation rule set this via the state machine input) are
+requests (the ingest rules set this via the state machine input; the correlation rule sets it directly on its Lambda target) are
 short-circuited. <code>POST /ingest/{ticker}</code> sends <code>source=on-demand</code>, which never matches, so a manual
 fetch or backfill works on a holiday or after hours. The frontend mirrors the exact same holiday list
 in <code>frontend/src/lib/market-hours.ts</code> so the LIVE/CLOSED badge and polling cadence agree with the
@@ -3781,8 +3868,11 @@ already owns:</p>
 </code></pre>
 <hr>
 <h2 id="9-the-read-path-in-depth">9. The read path in depth</h2>
-<p>The read path is the Query stack at runtime: API Gateway -&gt; authorizer Lambda -&gt; (cache) -&gt; query
-Lambda -&gt; DynamoDB. It is entirely read-only and Bedrock-free (CQRS, Section 3).</p>
+<p>The read path is one flow through the Query stack at runtime: API Gateway -&gt; authorizer Lambda -&gt;
+(cache) -&gt; query Lambda -&gt; DynamoDB. That flow is entirely read-only and Bedrock-free (CQRS,
+Section 3). The Query stack itself is broader than this one path, though: it also hosts the
+user-mutation Lambdas, watchlist, portfolio, consent, and DSR, covered in Section 10, which write to
+DynamoDB and are a separate path from the read-only one this section describes.</p>
 <h3 id="9-1-the-custom-lambda-authorizer">9.1 The custom Lambda authorizer</h3>
 <p><code>AuthorizerHandler</code> (bean <code>authorize</code>) is invoked by API Gateway before any protected method. It:</p>
 <ol>
@@ -3868,7 +3958,7 @@ $ curl -s -H &quot;Authorization: Bearer $ACCESS_TOKEN&quot; &quot;$API_URL/insi
  &quot;confidence&quot;:0.4,&quot;rationale&quot;:&quot;Rule-based fallback insight for RELIANCE.NS: BULLISH on a move
  of 2.1900%. Generated from static thresholds because the model was unavailable.&quot;,
  &quot;drivers&quot;:[&quot;anomaly: return z=219.00;&quot;,&quot;change percent: 2.1900&quot;,&quot;volume: 8411540&quot;],
- &quot;source&quot;:&quot;RULE_BASED&quot;,&quot;insightText&quot;:&quot;...&quot;,&quot;modelId&quot;:&quot;global.anthropic.claude-sonnet-4-5-20250929-v1:0&quot;,
+ &quot;source&quot;:&quot;RULE_BASED&quot;,&quot;insightText&quot;:&quot;...&quot;,&quot;modelId&quot;:&quot;global.anthropic.claude-sonnet-4-6&quot;,
  &quot;found&quot;:true}
 </code></pre>
 <p>Compare the response with the raw DynamoDB item in Section 7.2: <code>QueryResponse</code> is that item minus
@@ -4007,7 +4097,7 @@ volume trend) plus a 52-week band, entirely on read: pure arithmetic over <code>
 writing an <code>ANALYSIS#</code> item, the same shape as <code>BASELINE</code> or the correlation <code>GROUP#</code> items
 elsewhere in this table. It was not needed here, and the reason is the projection, not the math.
 <code>DailyMarketDataQuery.findDailyPoints</code> reads up to 260 <code>DAY#</code> rows with a <code>projectionExpression</code>
-that names only the six attributes <code>DeepAnalysisService</code> reads (<code>day</code>, <code>SK</code>, <code>open</code>, <code>high</code>, <code>low</code>,
+that names only the eight attributes the read path needs (<code>day</code>, <code>SK</code>, <code>open</code>, <code>high</code>, <code>low</code>,
 <code>close</code>, <code>previousClose</code>, <code>volume</code>) and deliberately <strong>excludes <code>series</code></strong>, the live rollup's
 per-minute intraday-price list (<code>DailyRollupService</code>, Section 8.8) that dominates a
 <code>DAY#</code> item's size. Projecting it out turns a year of daily rows, which would run to roughly 2.8 MB
@@ -4191,8 +4281,15 @@ a lot whose count in <code>newLots</code> drops below its count in <code>oldLots
 an outright removal) is what flags the mutation. A pure addition, every old lot still present at least
 as many times as before, returns <code>false</code>. This is what lets <code>PortfolioHandler</code> bump
 <code>lastLotMutation</code> (the time-machine curve floor) only on an edit or a sell, never on a routine &quot;I
-bought more&quot; addition.</p>
+bought more&quot; addition. Mutation detection only decides where the curve's <em>floor</em> sits; it does not
+gate which buys get a marker (<code>PortfolioHistoryService.buildHistory</code>) - every lot whose <code>buyDate</code>
+falls within <code>[floor, today]</code> gets a <code>BuyMarker</code>, whether or not that particular buy was the one that
+moved the floor.</p>
 </blockquote>
+<p><code>PortfolioHistoryService</code> also overlays a normalised NIFTY 50 benchmark (<code>^NSEI</code>'s own <code>DAY#</code> rollups)
+on the same curve, rebased to the portfolio's value on the first day both series have data, so the two
+lines are visually comparable despite having wildly different absolute scales; <code>beatBenchmarkPct</code>
+summarises whether the portfolio outperformed that rebased benchmark over the window.</p>
 <p>Every lot's <code>buyDate</code> is validated against an injectable clock, never <code>LocalDate.now()</code> with no
 argument (the same testability rule Section 13.14's flaky-clock lesson exists to enforce):</p>
 <pre><code class="hljs language-java"><span class="hljs-comment">/** Each lot&#x27;s buyDate must not be in the future (per {<span class="hljs-doctag">@code</span> clock}) and not before the NSE electronic era floor. */</span>
@@ -4217,10 +4314,12 @@ argument (the same testability rule Section 13.14's flaky-clock lesson exists to
 <span class="hljs-comment"># -&gt; {&quot;status&quot;:&quot;ok&quot;, ..., &quot;portfolio&quot;:{&quot;holdings&quot;:[{&quot;ticker&quot;:&quot;RELIANCE.NS&quot;,&quot;qty&quot;:10,&quot;avgCost&quot;:2450.5,...}]}}</span>
 
 curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/portfolio&quot;</span> | jq <span class="hljs-string">&#x27;.portfolio | {asOf, totalValue, totalPnl}&#x27;</span>
-<span class="hljs-comment"># -&gt; asOf is the latest market-data timestamp behind the valuation, totalPnl is ltp-vs-avgCost summed across holdings</span>
+<span class="hljs-comment"># -&gt; asOf is the OLDEST non-null per-holding timestamp (a deliberate simplification, ValuationService),</span>
+<span class="hljs-comment">#    not the freshest; totalPnl is ltp-vs-avgCost summed across holdings</span>
 
 curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/portfolio/history&quot;</span> | jq <span class="hljs-string">&#x27;.history.points[-1]&#x27;</span>
-<span class="hljs-comment"># -&gt; the most recent day on the value curve; .history.markers carries one entry per buy that moved the floor</span>
+<span class="hljs-comment"># -&gt; the most recent day on the value curve; .history.markers carries one entry per lot bought within</span>
+<span class="hljs-comment">#    [floor, today], not only the lots that moved the floor; .history.benchmark is the rebased ^NSEI overlay</span>
 </code></pre>
 <hr>
 <h2 id="10-the-compliance-layer-dpdp">10. The compliance layer (DPDP)</h2>
@@ -4247,9 +4346,10 @@ false (fail closed).</li>
 purges the watchlist. A concurrent watchlist <code>ADD</code> must observe that flip, so the gate reads
 strong-consistent and denies on an absent record, a false flag, or any read error. Order matters: the
 handler flips consent first (so the gate blocks concurrent adds) <em>then</em> purges. Purge deletes each
-<code>USER#&lt;sub&gt;/WATCH#{ticker}</code> and its <code>WATCHSET/TICKER#{ticker}</code> mirror. The purge itself is
-<code>UserWatchlistPurgeService</code>, draining <code>UnprocessedItems</code> through the same <code>DynamoBatch</code> batch-delete
-pattern that the erasure cascade in Section 10.3 reuses.</p>
+<code>USER#&lt;sub&gt;/WATCH#{ticker}</code>, its <code>WATCHSET/TICKER#{ticker}</code> mirror, and every
+<code>USER#&lt;sub&gt;/HOLDING#{ticker}</code> portfolio item too (<code>UserWatchlistPurgeService</code>, despite the class
+name), draining <code>UnprocessedItems</code> through the same <code>DynamoBatch</code> batch-delete pattern that the
+erasure cascade in Section 10.3 reuses.</p>
 </blockquote>
 <p><strong>Login gate (preAuthentication).</strong> Consent now also gates login through a Cognito <code>preAuthentication</code>
 trigger (bean <code>preAuthentication</code>, <code>ConsentStoreService.gateLogin</code>). It reads the same <code>CONSENT</code> record
@@ -4422,18 +4522,23 @@ consent record + watchlist + portfolio holdings + audit trail (<code>UserDataExp
 a <code>DATA_EXPORTED</code> audit event.</li>
 <li><strong>Erasure</strong> (<code>DELETE /user/account</code>, operation <code>ERASE</code>): a <strong>synchronous cascade</strong> inside the DSR
 Lambda (<code>ErasureService</code>; the Step Functions workflow was collapsed 2026-07-19): acquire the
-<code>deletion_pending</code> lease on <code>USER#&lt;sub&gt;/PROFILE</code> (so the ingest and insight write paths skip the
-user mid-erasure), capture the subject's email, delete the subject's <code>USER#&lt;sub&gt;/CONSENT</code> + every
-<code>USER#&lt;sub&gt;/WATCH#{ticker}</code> + each <code>WATCHSET/TICKER#{ticker}</code> mirror, run an S3 tagged-object
-safeguard pass (a no-op today, the lake holds no personal data), call Cognito <code>AdminDeleteUser</code>,
+<code>deletion_pending</code> lease on <code>USER#&lt;sub&gt;/PROFILE</code> (this fences <em>new</em> user-data mutations for that
+subject: a fresh consent grant, a watchlist addition, a portfolio holding creation, all check the
+lease and refuse while it holds; the scheduled ingestion and insight-generation write paths are
+unaffected, since they write market-wide data keyed by ticker, not by user), capture the subject's
+email, delete the subject's <code>USER#&lt;sub&gt;/CONSENT</code> + every <code>USER#&lt;sub&gt;/WATCH#{ticker}</code> + each
+<code>WATCHSET/TICKER#{ticker}</code> mirror + every <code>USER#&lt;sub&gt;/HOLDING#{ticker}</code> portfolio item, run an S3
+tagged-object safeguard pass (a no-op today, the lake holds no personal data), call Cognito
+<code>AdminDeleteUser</code>,
 send an SES confirmation email, then clear the lease and write the erasure audit. The lease is a
 DynamoDB conditional write (succeed only if the flag is absent, false, or older than 5 minutes):
 a concurrent duplicate <code>DELETE</code> gets an <code>inProgress</code> response and no second cascade, and a
 crashed cascade's stale lease is taken over by the next request. The route returns 200 with the
 completed <code>ErasureResult</code>. <code>ErasureService</code> and <code>UserErasureService</code> orchestrate the cascade itself;
-three smaller collaborators do the specific side effects: <code>Hashing</code> (the SHA-256 digest that
-pseudonymizes the subject's <code>sub</code> in audit records so the append-only table stays useful after the
-user is gone), <code>CognitoUserService</code> (wraps the <code>AdminDeleteUser</code> call), and <code>ErasureEmailService</code>
+three smaller collaborators do the specific side effects: <code>Hashing</code> (the SHA-256 digest that produces
+a non-reversible subject id for the permanent erasure record, so that record proves the erasure
+happened without storing a raw identifier; the existing per-user audit rows keep their raw <code>sub</code>),
+<code>CognitoUserService</code> (wraps the <code>AdminDeleteUser</code> call), and <code>ErasureEmailService</code>
 (sends the SES confirmation and reports <code>emailSent</code> honestly).</li>
 </ul>
 <p>The conditional-write lease that fences a cascade against concurrent duplicates and stale crashes:</p>
@@ -4493,9 +4598,11 @@ the erasure. Keying all personal data under <code>USER#&lt;sub&gt;</code> is wha
 query, the design payoff from Section 6.4.</p>
 </blockquote>
 <h3 id="10-4-the-append-only-audit-table-dual-scheme">10.4 The append-only audit table (dual scheme)</h3>
-<p>Every consent change, export, and erasure writes an immutable event to <code>financial-platform-audit-dev</code>.
-The app roles hold <code>PutItem</code> only (no update/delete), the table is <code>RETAIN</code> in every environment,
-deletion-protected, and has no TTL. That IAM-enforced append-only property is the compliance proof.</p>
+<p>Every consent change, export, and erasure writes an event to <code>financial-platform-audit-dev</code>. The app
+no role holds update or delete (the writers are <code>PutItem</code>-only; the DSR role also has <code>Query</code> for the export path), the table is <code>RETAIN</code> in every environment, and has no
+TTL. That IAM-enforced append-only property, distinct keys per event, is the compliance proof; it is
+tamper-resistant rather than absolutely immutable (Section 7.4 has the caveats: no condition
+expression on the write, and no separate DynamoDB deletion-protection setting).</p>
 <p>The table now carries <strong>two record shapes</strong>, written at the same boundaries (ADR 0003):</p>
 <ul>
 <li><strong>Per-user operational records</strong> (<code>PK=USER#{sub}</code>, <code>SK=EVENT#{iso8601}#{seq}</code>, raw <code>sub</code>, distinct
@@ -4504,18 +4611,21 @@ their own raw identifier.</li>
 <li><strong>Hashed compliance records</strong> (<code>PK=AUDIT#{ERASURE|ACCESS}#{yyyy-MM-dd}</code>,
 <code>SK={occurredAt}#{correlationId}</code>, <code>subjectHash</code> + <code>actorHash</code>, no raw <code>sub</code>/email/IP): the permanent
 compliance proof. An auditor can prove &quot;N erasures happened on date D&quot; and &quot;this hash requested
-erasure&quot; without the table ever holding a re-identifiable subject reference.</li>
+erasure&quot; without the compliance record holding a re-identifiable subject reference (the per-user
+rows above do keep the raw <code>sub</code>).</li>
 </ul>
-<p>The compliance record's key is deterministic (<code>requestedAt</code>+<code>correlationId</code> for erasure), so a Step
-Functions retry of the audit-write step overwrites the same item instead of duplicating. Both records
+<p>The compliance record's key is deterministic (<code>requestedAt</code>+<code>correlationId</code> for erasure), so a retry
+of the audit write in the erasure Lambda cascade overwrites the same item instead of duplicating. Both records
 survive an erasure they document, which is the deliberate, DPDP-required retention exception.</p>
 <ul>
 <li><strong>Code:</strong> table in <code>DataStack.java</code>; grants like <code>data.getAuditTable().grant(role, &quot;dynamodb:PutItem&quot;)</code>
 in <code>SecurityStack.java</code>, <code>QueryStack.java</code>; <code>DsrAuditService</code> writes both shapes.</li>
 <li><strong>Console:</strong> DynamoDB &gt; <code>financial-platform-audit-dev</code> &gt; Explore items.</li>
-<li><strong>Lesson: least privilege makes the guarantee.</strong> The audit table is tamper-evident because no role can
-do anything except <code>PutItem</code>. Two keyings serve two readers (the subject's own export vs the auditor's
-PII-free proof) because one partition key cannot be both queryable-by-subject and free of PII. Enforce
+<li><strong>Lesson: least privilege makes the guarantee.</strong> The audit table is tamper-evident because no role
+holds <code>Delete</code> or <code>Update</code> on it: writers are <code>PutItem</code>-only, and the DSR role's extra <code>Query</code> grant
+only lets it read the trail back out for an export. Two keyings serve two readers (the subject's own
+export vs the auditor's PII-free proof) because one partition key cannot be both queryable-by-subject
+and free of PII. Enforce
 invariants at the IAM boundary, not in a service method a future bug could bypass.</li>
 </ul>
 <hr>
@@ -4567,7 +4677,9 @@ HTTP app backed by LocalStack DynamoDB and k6s localhost, so you get p50/p95/p99
 with no cloud spend (no auth / API Gateway / VPC).</li>
 <li><strong>Ephemeral real-AWS smoke + load test (paid):</strong> <code>scripts/run-all.sh</code> deploys, seeds, smokes, and runs
 a k6 load test; <code>scripts/teardown.sh</code> drops everything except the persistent Data stack. Only this run
-proves the auth / API Gateway / VPC / SnapStart behaviour, which LocalStack Community cannot emulate.</li>
+proves the auth / API Gateway / SnapStart behaviour, which LocalStack Community cannot emulate. It
+proves the live no-VPC topology (ADR 0004); it does not exercise VPC attachment, NAT, or endpoint
+behavior, since no VPC is deployed (see the 6.10.1 experiment for that).</li>
 </ul>
 <p><strong>The recorded load-test run</strong> (2026-07-11): 601 requests, zero
 failures, 10 req/s for 60s over 8 rotating tickers. <strong>Client-side p99 was ~193ms</strong> (the headline: real
@@ -4753,23 +4865,31 @@ authorizer Lambdas are invoked via their <code>live</code> aliases. Code: <code>
 <code>AuthorizerFnAlias</code>), <code>IngestionStack.java</code> (<code>FetchMarketDataAlias</code>, <code>GenerateInsightAlias</code>). See also
 Section 6.1.</li>
 </ul>
-<h3 id="13-5-re-creating-a-cognito-pool-invalidates-every-cached-id-and-token">13.5 Re-creating a Cognito pool invalidates every cached id and token</h3>
+<h3 id="13-5-tearing-down-the-security-stack-orphans-the-cognito-pool-it-does-not-delete-it">13.5 Tearing down the Security stack orphans the Cognito pool, it does not delete it</h3>
 <ul>
-<li><strong>Symptom:</strong> after tearing down and re-deploying the Security stack, every authenticated call returns
-<code>{&quot;message&quot;:&quot;Unauthorized&quot;}</code>, even though the deploy succeeded and the token flow worked yesterday.</li>
-<li><strong>Cause:</strong> a user pool is not restored, it is <strong>re-created</strong>: new pool id, new app client id, and an
-empty user list. Anything that cached the old identifiers keeps working against a pool that no longer
-exists: the scripts' <code>.load-run/state.env</code> still names the old pool and client, and any saved access
-token was signed by the old pool's keys (the JWT <code>iss</code> claim embeds the pool id), so the authorizer
-rejects it on the JWKS lookup.</li>
-<li><strong>Fix:</strong> treat identity as ephemeral state. After every Security re-deploy: refresh the recorded
-pool/client/API ids from the CloudFormation exports, recreate the test user (the new pool starts
-empty), and mint a fresh token. <code>scripts/deploy-ephemeral.sh</code> rewrites the state file for exactly this
-reason; a raw <code>cdk deploy</code> does not.</li>
-<li><strong>Lesson:</strong> CloudFormation restores <em>infrastructure</em>, not <em>identity state</em>. Users, group memberships,
-and issued tokens live in the pool instance, and die with it. The same applies to the ingestion
-schedule: a raw deploy re-creates the EventBridge rule ENABLED at its market-hours cron (dev
-<code>cron(*/5 3-9 ? * MON-FRI *)</code>), regardless of whether you had disabled it before teardown, so
+<li><strong>Symptom:</strong> <code>scripts/teardown.sh</code> destroys the Security stack and reports success. Redeploying
+Security afterward fails <code>cdk deploy</code> with a Cognito already-exists error for
+<code>financial-platform-users-dev</code>, not a clean rebuild.</li>
+<li><strong>Cause:</strong> the user pool in <code>SecurityStack.java</code> has a fixed, env-derived name and
+<code>RemovalPolicy.RETAIN</code>. CloudFormation deletes every other resource in the stack but leaves the pool
+itself in place, orphaned, outside any stack, which is why the stack delete still reports success.
+The next <code>cdk deploy</code> tries to create a new pool under that same fixed name and collides with the
+orphaned one.</li>
+<li><strong>Fix:</strong> after a teardown, decide what happens to the orphaned pool before redeploying Security:
+delete it by hand (<code>aws cognito-idp delete-user-pool</code>) for a clean, empty pool, or leave it and adopt
+it into the stack if you want to keep its users. Either way, treat identity as ephemeral state once
+you do have a pool the stack manages again: refresh the recorded pool/client/API ids from the
+CloudFormation exports, recreate the test user, and mint a fresh token. Anything that cached the old
+identifiers, <code>.load-run/state.env</code>, or a saved access token, stops working the moment the pool
+changes (the JWT <code>iss</code> claim embeds the pool id, so the authorizer rejects it on the JWKS lookup).
+<code>scripts/deploy-ephemeral.sh</code> rewrites the state file for this reason; a raw <code>cdk deploy</code> does not,
+and it does not resolve the already-exists collision either.</li>
+<li><strong>Lesson:</strong> <code>RemovalPolicy.RETAIN</code> protects the <em>resource</em>, not the <em>stack</em>: the Security stack is
+still torn down by <code>teardown.sh</code> like Ingestion and Query, it is not persistent, but the pool it
+created survives that teardown unmanaged. That is sharper than plain persistence, because the next
+deploy collides with the survivor instead of quietly rebuilding around it. The same applies to the
+ingestion schedule: a raw deploy re-creates the EventBridge rule ENABLED at its market-hours cron
+(dev <code>cron(*/5 3-9 ? * MON-FRI *)</code>), regardless of whether you had disabled it before teardown, so
 scheduled Bedrock spend silently resumes. Code:
 <code>SecurityStack.java</code> (pool + client), <code>scripts/lib/common.sh</code> (<code>save_state</code>/<code>load_state</code>),
 <code>AuthorizerHandler.java</code> (issuer-bound JWT verification). See also Section 9.1.</li>
@@ -4880,7 +5000,7 @@ two silently rejecting it, and each fails differently: Cognito fails loudly at t
 console on the first <code>fetch</code> after a successful sign-in; a missing WebSocket entry only fails once a
 ticker page tries to open its feed.</li>
 <li><strong>Fix:</strong> add every new hosting origin to <code>SecurityStack.java</code>'s <code>callbackUrls</code>/<code>logoutUrls</code>
-(<code>http://localhost:3000/callback</code> and <code>https://main.db53oxbwuxc6z.amplifyapp.com/callback</code> both
+(<code>http://localhost:3000/callback</code> and <code>https://main.dzeyw15qwrc7u.amplifyapp.com/callback</code> both
 registered for dev) and confirm it is covered by <code>QueryStack.java</code>'s <code>allowOrigin</code> (dev uses <code>&quot;*&quot;</code>,
 so any origin already passes; prod is pinned to <code>https://engnotes.dev</code> and would need the new origin
 added explicitly before a prod hosting deploy).</li>
@@ -5207,7 +5327,7 @@ Section 6 subsection that teaches it.</p>
 <td>Tables &gt; <code>financial-platform-audit-dev</code></td>
 <td><code>DataStack.java</code></td>
 <td>6.13</td>
-<td>Append-only, PutItem-only, immutable compliance log</td>
+<td>Append-only, no role holds Delete/Update, tamper-resistant compliance log</td>
 </tr>
 <tr>
 <td>S3</td>
@@ -5249,7 +5369,7 @@ Section 6 subsection that teaches it.</p>
 <td>User pools &gt; <code>financial-platform-users-dev</code></td>
 <td><code>SecurityStack.java</code></td>
 <td>6.7</td>
-<td>Identity, groups, consent attributes, signup trigger</td>
+<td>Identity, groups, consent attributes, PostConfirmation signup trigger and PreAuthentication login-gate trigger</td>
 </tr>
 <tr>
 <td>EventBridge</td>
@@ -5270,7 +5390,7 @@ Section 6 subsection that teaches it.</p>
 <td>Functions &gt; <code>financial-fetch-market-data-dev</code></td>
 <td><code>IngestionHandler.java</code></td>
 <td>6.1</td>
-<td>Fetch + dual-write + baseline update + z-score</td>
+<td>Fetch + triple write (TS# + S3 + DAY# rollup) + baseline update + z-score</td>
 </tr>
 <tr>
 <td>Lambda (insight)</td>
@@ -5361,11 +5481,11 @@ Section 6 subsection that teaches it.</p>
 <td>Roles &gt; <code>financial-*-role-dev</code></td>
 <td>each stack</td>
 <td>6.13</td>
-<td>Least-privilege per-function roles</td>
+<td>Least-privilege roles, scoped per function group (query, watchlist, consent, DSR, ingest, ...), not one role per function</td>
 </tr>
 <tr>
 <td>Amplify Hosting</td>
-<td>Amplify &gt; Apps &gt; <code>financial-intelligence-frontend</code> (app <code>db53oxbwuxc6z</code>)</td>
+<td>Amplify &gt; Apps &gt; <code>financial-intelligence-frontend</code> (app <code>dzeyw15qwrc7u</code>)</td>
 <td>not a CDK stack, created via <code>aws amplify create-app</code>/<code>create-branch</code></td>
 <td>14.1</td>
 <td>WEB_COMPUTE Next.js SSR, Git-connected to <code>main</code>, auto-build on push</td>
@@ -5375,7 +5495,7 @@ Section 6 subsection that teaches it.</p>
 <h3 id="14-1-frontend-architecture-not-a-cdk-stack">14.1 Frontend architecture (not a CDK stack)</h3>
 <p>The frontend (<code>frontend/</code>, Next.js 16) is deliberately not built as a CDK stack, it is a client of the
 platform, not an AWS resource defined in <code>FinancialPlatformApp.java</code>, even though it is now hosted on
-AWS (Amplify Hosting, live at https://main.db53oxbwuxc6z.amplifyapp.com; see the operator runbook's
+AWS (Amplify Hosting, live at https://main.dzeyw15qwrc7u.amplifyapp.com; see the operator runbook's
 &quot;Amplify Hosting: LIVE&quot; section for the exact <code>aws amplify</code> command sequence, not repeated here). Six ideas explain
 how it is put together:</p>
 <ul>
@@ -5500,13 +5620,19 @@ than two:</li>
     <span class="hljs-title function_">set</span>({ <span class="hljs-attr">status</span>: <span class="hljs-string">&#x27;signed-out&#x27;</span>, <span class="hljs-attr">sub</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">email</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">username</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">groups</span>: [] }),
 }))
 </code></pre>
-<p>Run it: work on the frontend locally against the live dev API, or check the hosted build.</p>
-<pre><code class="hljs language-bash"><span class="hljs-comment"># run the Next.js dev server locally (talks to the live dev API Gateway + Cognito)</span>
+<p>Run it: work on the frontend locally against the live dev API, or check the hosted build. <code>lib/config.ts</code>
+throws <code>Missing env: ...</code> at startup unless six <code>NEXT_PUBLIC_*</code> variables are set, so create
+<code>frontend/.env.local</code> first (values mapped from the deployed API Gateway URL and the Security stack's
+Cognito outputs, not pasted here): <code>NEXT_PUBLIC_API_URL</code>, <code>NEXT_PUBLIC_USER_POOL_ID</code>,
+<code>NEXT_PUBLIC_USER_POOL_CLIENT_ID</code>, <code>NEXT_PUBLIC_COGNITO_DOMAIN</code>, <code>NEXT_PUBLIC_SIGNIN_REDIRECT</code>,
+<code>NEXT_PUBLIC_SIGNOUT_REDIRECT</code>.</p>
+<pre><code class="hljs language-bash"><span class="hljs-comment"># frontend/.env.local must exist with the six NEXT_PUBLIC_* values above, or the next line fails immediately</span>
+<span class="hljs-comment"># run the Next.js dev server locally (talks to the live dev API Gateway + Cognito)</span>
 <span class="hljs-built_in">cd</span> frontend &amp;&amp; npm install &amp;&amp; npm run dev
-<span class="hljs-comment"># open http://localhost:3000 ; a signed-out visitor to /dashboard sees &quot;Could not load your watchlist&quot;</span>
+<span class="hljs-comment"># open http://localhost:3000 ; a signed-out visitor to /dashboard sees &quot;Sign in to view market insights.&quot;</span>
 <span class="hljs-comment"># run the component + hook test suite</span>
 npm <span class="hljs-built_in">test</span>
-<span class="hljs-comment"># the hosted build is live at https://main.db53oxbwuxc6z.amplifyapp.com (Amplify redeploys on push to main)</span>
+<span class="hljs-comment"># the hosted build is live at https://main.dzeyw15qwrc7u.amplifyapp.com (Amplify redeploys on push to main)</span>
 </code></pre>
 <hr>
 <h2 id="15-glossary">15. Glossary</h2>
@@ -5524,7 +5650,7 @@ npm <span class="hljs-built_in">test</span>
 </tr>
 <tr>
 <td><strong>CMK</strong></td>
-<td>Customer-managed KMS key; the one key that encrypts everything at rest (Section 6.9).</td>
+<td>Customer-managed KMS key; the one key that encrypts the platform's data-plane resources at rest (DynamoDB tables, the S3 lake, SNS topics, the SQS DLQ), not every service; Cognito does not use it (Section 6.9).</td>
 </tr>
 <tr>
 <td><strong>Cold start</strong></td>
@@ -5536,7 +5662,7 @@ npm <span class="hljs-built_in">test</span>
 </tr>
 <tr>
 <td><strong>Cross-region inference profile</strong></td>
-<td>A Bedrock model ID (<code>global.anthropic...</code>) that routes to whichever region can serve the model; lets ap-south-1 reach Sonnet 4.5 (Section 6.8).</td>
+<td>A Bedrock model ID (<code>global.anthropic...</code>) that routes to whichever region can serve the model; lets ap-south-1 reach Sonnet 4.6 (Section 6.8).</td>
 </tr>
 <tr>
 <td><strong>Distributed Map</strong></td>
@@ -5648,9 +5774,9 @@ deliberately does not duplicate. The commands worth knowing by name:</p>
 <ul>
 <li><strong>Build / test:</strong> <code>./mvnw clean verify</code> (the CI gate), <code>./mvnw verify -Pintegration-tests</code> (LocalStack
 ITs).</li>
-<li><strong>Deploy / tear down:</strong> <code>cdk deploy --all --context env=dev</code>; the ephemeral teardown is
-<code>./scripts/teardown.sh</code> (destroys Query/Ingestion/Network/Security, keeps only Data, and
-Section 13.5 explains what a Security re-deploy costs you). See the operator runbook's &quot;Cost control&quot; section.</li>
+<li><strong>Deploy / tear down:</strong> <code>cdk deploy --all --context env=dev</code> (run from <code>infrastructure/</code>); the
+ephemeral teardown is <code>./scripts/teardown.sh</code> (destroys Query/Ingestion/Security, keeps only Data,
+and Section 13.5 explains what a Security re-deploy costs you). See the operator runbook's &quot;Cost control&quot; section.</li>
 <li><strong>Verify a live deploy:</strong> the operator runbook's &quot;Verify a deployment&quot; section (WATCHSET, start an execution, check
 the Map Run, read a market row, confirm the DLQ is empty, curl an insight).</li>
 <li><strong>Load test:</strong> <code>scripts/local-load.sh</code> (free) or <code>scripts/run-all.sh</code> then <code>scripts/teardown.sh</code>

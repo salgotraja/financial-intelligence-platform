@@ -45,7 +45,7 @@ import tools.jackson.databind.node.ObjectNode;
  * with its {@code source} (BEDROCK or RULE_BASED). The cost circuit breaker (spec section 9), via
  * {@link CostTrackingService}, routes to the same fallback when the daily Bedrock spend cap is hit.
  *
- * <p>Model: Sonnet 4.5 is INFERENCE_PROFILE-only in ap-south-1, so BEDROCK_MODEL_ID is the global
+ * <p>Model: Sonnet 4.6 is INFERENCE_PROFILE-only in ap-south-1, so BEDROCK_MODEL_ID is the global
  * inference-profile id, not the bare foundation-model id (set in IngestionStack).
  *
  * <p>Task 7 (cross-ticker insight on groups): {@link #generateForGroup} reuses this exact tool-use
