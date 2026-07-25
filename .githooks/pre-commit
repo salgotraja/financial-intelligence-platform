@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Local freshness guard for the learning guide. The markdown source is local-only
+# (not committed), so CI cannot regenerate the HTML. This hook is the drift gate:
+# if you stage a change to the generator, template, or the published HTML, it
+# rebuilds from your LOCAL source and refuses the commit if the committed HTML is
+# stale. Skips silently when the local source is absent (fresh clone / CI).
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+
+changed=$(git diff --cached --name-only)
+echo "$changed" | grep -qE '^(docs/learning-guide\.html|scripts/docgen/)' || exit 0
+
+# No local markdown source means nothing to regenerate against; nothing to check.
+[ -f docs/LEARNING-GUIDE.md ] || exit 0
+command -v node >/dev/null 2>&1 || exit 0
+
+if ! ( cd scripts/docgen && npm run --silent docs:check ); then
+  echo ""
+  echo "pre-commit: learning-guide.html is stale vs your local markdown source."
+  echo "  Fix: (cd scripts/docgen && npm run docs:build) then 'git add docs/learning-guide.html'"
+  exit 1
+fi
