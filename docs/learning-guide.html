@@ -329,7 +329,7 @@ the design spec.</p>
 <li>4.7 <a href="#47-hop-7-a-user-reads-the-insight-api-gateway-to-cognito-to-query-lambda">Hop 7: a user reads the insight (API Gateway to Cognito to query Lambda)</a></li>
 </ul>
 </li>
-<li><a href="#5-the-six-stacks-your-deploy-units">The six stacks (your deploy units)</a>
+<li><a href="#5-the-stacks-four-live-two-retired">The stacks (four live, two retired)</a>
 <ul>
 <li>5.1 <a href="#51-data-stack-the-only-stack-that-holds-your-data">Data stack</a></li>
 <li>5.2 <a href="#52-network-stack-removed-kept-as-history">Network stack (removed, kept as history)</a></li>
@@ -392,12 +392,12 @@ the design spec.</p>
 <li>10.1 <a href="#101-consent-gate">Consent gate</a></li>
 <li>10.2 <a href="#102-group-to-route-authorization-purpose-limitation">Group-to-route authorization</a></li>
 <li>10.3 <a href="#103-right-to-access-and-right-to-erasure">Right to access and right to erasure</a></li>
-<li>10.4 <a href="#104-the-append-only-audit-table">The append-only audit table</a></li>
+<li>10.4 <a href="#10-4-the-append-only-audit-table-dual-scheme">The append-only audit table (dual scheme)</a></li>
 </ul>
 </li>
 <li><a href="#11-the-proof-layer-how-you-know-it-works">The proof layer (how you know it works)</a></li>
 <li><a href="#12-guided-aws-console-tour">Guided AWS console tour</a></li>
-<li><a href="#13-sixteen-aws-only-lessons-the-gotchas">Sixteen AWS-only lessons (the gotchas)</a></li>
+<li><a href="#13-seventeen-aws-only-lessons-the-gotchas">Seventeen AWS-only lessons (the gotchas)</a></li>
 <li><a href="#14-master-map-the-at-a-glance-index">Master map (the at-a-glance index)</a>
 <ul>
 <li>14.1 <a href="#141-frontend-architecture-not-a-cdk-stack">Frontend architecture (not a CDK stack)</a></li>
@@ -481,8 +481,8 @@ fallback) -&gt; DynamoDB -&gt; API Gateway <code>GET /insights/{ticker}</code> -
 -&gt; client.</strong></p>
 </blockquote>
 <p>A Next.js 16 frontend (<code>frontend/</code>, Section 14.1) now sits in front of this as a client of the REST
-and WebSocket APIs; before it, and still today for anything the UI does not cover, the AWS console
-and the REST API are your other &quot;views&quot; into the system. The technology is Java 25 on Spring Boot 4.1
+API, polling for new insights on a 60-second interval; before it, and still today for anything the
+UI does not cover, the AWS console and the REST API are your other &quot;views&quot; into the system. The technology is Java 25 on Spring Boot 4.1
 and Spring Cloud Function, packaged as Lambda fat JARs; the infrastructure is AWS CDK in Java.</p>
 <hr>
 <h2 id="3-the-core-architecture-cqrs-and-the-two-paths">3. The core architecture: CQRS and the two paths</h2>
@@ -903,7 +903,7 @@ curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hl
 </code></pre>
 <p>That is the whole spine. Everything else in this guide is detail hanging off those seven hops.</p>
 <hr>
-<h2 id="5-the-stacks-your-deploy-units">5. The stacks (your deploy units)</h2>
+<h2 id="5-the-stacks-four-live-two-retired">5. The stacks (four live, two retired)</h2>
 <p>Open <strong>CloudFormation &gt; Stacks</strong> in ap-south-1 and you will see the deploy units. They are split
 deliberately: <strong>Data and Security are persistent</strong> (they hold real data and identities, never torn
 down), while <strong>Ingestion and Query are ephemeral</strong> (torn down between work sessions to stop paying
@@ -1201,12 +1201,18 @@ aws cognito-idp list-users --user-pool-id <span class="hljs-string">&quot;<span 
 <li><strong>Code:</strong> <code>IngestionStack.java</code>.</li>
 <li><strong>AWS resources:</strong>
 <ul>
-<li>EventBridge rule <code>financial-market-data-schedule-dev</code>.</li>
+<li>Three EventBridge rules: <code>financial-market-data-schedule-dev</code> (the intraday fetch schedule),
+<code>financial-market-data-close-schedule-dev</code> (end-of-session close), and
+<code>financial-correlations-schedule-dev</code> (correlation grouping run).</li>
 <li>Step Functions state machine <code>financial-ingestion-pipeline-dev</code> (Standard; log group
 <code>/aws/states/financial-ingestion-dev</code>; execution data logged at <code>ERROR</code> level).</li>
-<li>Lambdas <code>financial-fetch-market-data-dev</code> (512 MB, 30s) and <code>financial-generate-insight-dev</code>
-(1024 MB, 60s), each with a published-version alias named <code>live</code> and SnapStart on published
-versions. Both share one least-privilege IAM role.</li>
+<li>Four Lambdas: <code>financial-fetch-market-data-dev</code> (512 MB, 30s), <code>financial-generate-insight-dev</code>
+(1024 MB, 60s), <code>financial-correlations-dev</code> (cross-ticker correlation grouping, Section 8.6),
+and <code>financial-history-backfill-dev</code> (Section 8.8). Each has a published-version alias named
+<code>live</code> and SnapStart on published versions. Fetch, generate-insight, and history-backfill share
+one least-privilege IAM role; correlations gets its own dedicated role scoped to table
+read/write only, deliberately excluding the shared role's Bedrock, Secrets Manager, and S3
+grants.</li>
 <li>SQS dead-letter queue <code>financial-ingestion-dlq-dev</code> (KMS-encrypted, 14-day retention).</li>
 <li>Two CloudWatch alarms: <code>financial-ingestion-pipeline-failed-dev</code> and
 <code>financial-ingestion-dlq-depth-dev</code> (both P2, notify the warnings SNS topic).</li>
@@ -1214,7 +1220,7 @@ versions. Both share one least-privilege IAM role.</li>
 <code>INFY.NS</code>, <code>HDFCBANK.NS</code>, <code>^NSEI</code>) until the watchlist write path maintains it.</li>
 </ul>
 </li>
-<li><strong>Console:</strong> Step Functions &gt; <code>financial-ingestion-pipeline-dev</code> (the graph); Lambda &gt; the two
+<li><strong>Console:</strong> Step Functions &gt; <code>financial-ingestion-pipeline-dev</code> (the graph); Lambda &gt; the four
 functions; SQS &gt; <code>financial-ingestion-dlq-dev</code>; CloudWatch &gt; Alarms.</li>
 <li><strong>Lesson: orchestrate fan-out with Step Functions, not a loop.</strong> The Distributed Map gives per-item
 retry, bounded concurrency, isolated failures, and a clean DLQ story. And the anomaly-gate Choice
@@ -1271,10 +1277,20 @@ aws stepfunctions start-execution --region ap-south-1 --state-machine-arn <span 
 <li>REST API <code>financial-intelligence-api-dev</code> (stage <code>dev</code>; 60s response cache with a cache cluster;
 access logs in JSON; X-Ray on; CORS).</li>
 <li>Custom token authorizer <code>financial-cognito-authorizer-dev</code> (5-minute results cache).</li>
-<li>Lambdas <code>financial-query-dev</code>, <code>financial-watchlist-dev</code>, <code>financial-consent-dev</code>,
-<code>financial-dsr-dev</code>, <code>financial-authorizer-dev</code>. Query and authorizer are invoked via <code>live</code>
-aliases; provisioned concurrency (2) is prod-only. Each has its own IAM role scoped to what it
-needs (query is read-only; DSR alone can call Cognito).</li>
+<li>Eleven separate deployed Lambda functions, each its own <code>functionName</code>: <code>financial-query-dev</code>,
+<code>financial-market-data-dev</code>, <code>financial-market-data-daily-dev</code>, <code>financial-stories-dev</code>,
+<code>financial-analysis-dev</code>, <code>financial-insights-feed-dev</code> (all six built from the query-function
+jar, one <code>SPRING_CLOUD_FUNCTION_DEFINITION</code> bean each: <code>serveInsight</code>, <code>serveMarketData</code>,
+<code>serveDailyMarketData</code>, <code>serveStory</code>, <code>serveDeepAnalysis</code>, <code>serveInsightFeed</code>);
+<code>financial-watchlist-dev</code> and <code>financial-portfolio-dev</code> (both built from the watchlist-function
+jar, beans <code>watchlist</code> and <code>portfolio</code>); and <code>financial-consent-dev</code>, <code>financial-dsr-dev</code>,
+<code>financial-authorizer-dev</code> (their own jars, one bean each). Sharing a jar across functions keeps
+the build to three Maven modules while still deploying eleven independently-scaled,
+independently-monitored Lambdas. Query and authorizer are invoked via <code>live</code> aliases;
+provisioned concurrency (2) is prod-only. IAM roles are scoped per jar group, not per function:
+the six query-function-jar Lambdas share one read-only role, watchlist and portfolio share
+another, and consent, DSR, and authorizer each get their own dedicated role (DSR alone can call
+Cognito).</li>
 <li>CloudWatch dashboard <code>financial-platform-dev</code>.</li>
 <li>Two P1 alarms: <code>financial-api-p99-latency-dev</code> (p99 &gt; 500ms for 5 min) and
 <code>financial-api-5xx-rate-dev</code> (5XX rate &gt; 1% with a low-volume floor), both notifying the critical
@@ -1339,37 +1355,37 @@ curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hl
 <tbody>
 <tr>
 <td><code>GET /insights/{ticker}</code></td>
-<td>query Lambda (<code>serveInsight</code>)</td>
+<td><code>financial-query-dev</code> (bean <code>serveInsight</code>)</td>
 <td>Lambda non-proxy, cached, <code>{ticker}</code> cache key</td>
 <td>latest insight for a ticker</td>
 </tr>
 <tr>
 <td><code>GET /insights</code></td>
-<td>query Lambda (<code>serveInsightFeed</code>)</td>
+<td><code>financial-insights-feed-dev</code> (bean <code>serveInsightFeed</code>)</td>
 <td>Lambda non-proxy, cached, <code>Authorization</code> cache key</td>
 <td>caller's watchlist feed (per-ticker + group insights, deduped)</td>
 </tr>
 <tr>
 <td><code>GET /market-data/{ticker}</code></td>
-<td>query Lambda (<code>serveMarketData</code>)</td>
+<td><code>financial-market-data-dev</code> (bean <code>serveMarketData</code>)</td>
 <td>Lambda non-proxy, cached, <code>{ticker}</code> cache key</td>
 <td>recent market-data points for a ticker (chart data)</td>
 </tr>
 <tr>
 <td><code>GET /market-data/{ticker}/daily</code></td>
-<td>query Lambda (<code>serveDailyMarketData</code>)</td>
+<td><code>financial-market-data-daily-dev</code> (bean <code>serveDailyMarketData</code>)</td>
 <td>Lambda non-proxy, cached, <code>{ticker}</code> + <code>days</code> cache keys</td>
 <td><code>DAY#</code> rollups for weekly/period charts (<code>days</code>, default 30, clamped to [1, 260])</td>
 </tr>
 <tr>
 <td><code>GET /stories/{ticker}</code></td>
-<td>query Lambda (<code>serveStory</code>)</td>
+<td><code>financial-stories-dev</code> (bean <code>serveStory</code>)</td>
 <td>Lambda non-proxy, cached, <code>{ticker}</code> cache key</td>
 <td>rule-based per-ticker narrative (Section 9.6)</td>
 </tr>
 <tr>
 <td><code>GET /analysis/{ticker}</code></td>
-<td>query Lambda (<code>serveDeepAnalysis</code>)</td>
+<td><code>financial-analysis-dev</code> (bean <code>serveDeepAnalysis</code>)</td>
 <td>Lambda non-proxy, cached, <code>{ticker}</code> cache key</td>
 <td>deterministic 1W/1M/3M/1Y stats + 52-week band (Section 9.5)</td>
 </tr>
@@ -1381,25 +1397,31 @@ curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hl
 </tr>
 <tr>
 <td><code>GET /watchlist</code>, <code>POST/DELETE /watchlist/{ticker}</code></td>
-<td>watchlist Lambda (<code>watchlist</code>)</td>
+<td><code>financial-watchlist-dev</code> (bean <code>watchlist</code>)</td>
 <td>Lambda non-proxy</td>
 <td>watchlist CRUD</td>
 </tr>
 <tr>
+<td><code>GET/POST/DELETE /portfolio/{ticker}</code>, <code>GET /portfolio</code>, <code>GET /portfolio/history</code></td>
+<td><code>financial-portfolio-dev</code> (bean <code>portfolio</code>)</td>
+<td>Lambda non-proxy</td>
+<td>portfolio holdings CRUD + history</td>
+</tr>
+<tr>
 <td><code>GET/POST/DELETE /user/consent</code></td>
-<td>consent Lambda (<code>consent</code>)</td>
+<td><code>financial-consent-dev</code> (bean <code>consent</code>)</td>
 <td>Lambda non-proxy</td>
 <td>DPDP consent</td>
 </tr>
 <tr>
 <td><code>GET /user/export</code></td>
-<td>dsr Lambda (<code>dsr</code>)</td>
+<td><code>financial-dsr-dev</code> (bean <code>dsr</code>)</td>
 <td>Lambda non-proxy</td>
 <td>DPDP right-to-access</td>
 </tr>
 <tr>
 <td><code>DELETE /user/account</code></td>
-<td>dsr Lambda (<code>dsr</code>)</td>
+<td><code>financial-dsr-dev</code> (bean <code>dsr</code>)</td>
 <td>Lambda non-proxy</td>
 <td>DPDP right-to-erasure</td>
 </tr>
@@ -1411,6 +1433,14 @@ curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hl
 </tr>
 </tbody>
 </table>
+<blockquote>
+<p><strong>Same jar, different functions.</strong> <code>financial-market-data-dev</code>, <code>financial-market-data-daily-dev</code>,
+<code>financial-stories-dev</code>, <code>financial-analysis-dev</code>, <code>financial-insights-feed-dev</code>, and
+<code>financial-query-dev</code> are all built from the query-function jar; <code>financial-watchlist-dev</code> and
+<code>financial-portfolio-dev</code> are both built from the watchlist-function jar. <code>QueryStack.java</code> sets a
+different <code>SPRING_CLOUD_FUNCTION_DEFINITION</code> per Lambda so each deploys, scales, and gets
+monitored as its own function, even though the code lives in one Maven module (Section 6.2).</p>
+</blockquote>
 <blockquote>
 <p><strong>Note on integrations:</strong> every Lambda route uses a <strong>non-proxy</strong> integration with a request
 template. This is deliberate (Section 6.3 and Section 13, lesson 2): the template maps the path
@@ -1610,7 +1640,7 @@ stream, with an adapter bridging the platform's event shape to your function. On
 <thead>
 <tr>
 <th>Module</th>
-<th>Bean</th>
+<th>Beans</th>
 <th>Signature</th>
 </tr>
 </thead>
@@ -1627,12 +1657,12 @@ stream, with an adapter bridging the platform's event shape to your function. On
 </tr>
 <tr>
 <td>query-function</td>
-<td><code>serveInsight</code></td>
-<td><code>Function&lt;QueryRequest, QueryResponse&gt;</code></td>
+<td><code>serveInsight</code>, <code>serveMarketData</code>, <code>serveDailyMarketData</code>, <code>serveStory</code>, <code>serveDeepAnalysis</code>, <code>serveInsightFeed</code></td>
+<td>one <code>Function&lt;..., ...&gt;</code> per bean</td>
 </tr>
 <tr>
 <td>watchlist-function</td>
-<td><code>watchlist</code></td>
+<td><code>watchlist</code>, <code>portfolio</code></td>
 <td>operation-switched</td>
 </tr>
 <tr>
@@ -1653,11 +1683,18 @@ stream, with an adapter bridging the platform's event shape to your function. On
 </tbody>
 </table>
 <blockquote>
-<p><strong>Note (a real naming trap):</strong> the query bean is <code>serveInsight</code>, <strong>not</strong> <code>queryHandler</code>. Component
-scanning already registers the <code>@SpringBootApplication</code> class (<code>QueryHandler</code>) as a bean named
-<code>queryHandler</code>, so a same-named <code>@Bean</code> would collide. The CDK sets
-<code>SPRING_CLOUD_FUNCTION_DEFINITION=serveInsight</code> to match. Request/response types are Java <code>record</code>s
-throughout, which serialise cleanly to and from JSON.</p>
+<p><strong>One module, many deployed functions.</strong> query-function and watchlist-function each expose several
+<code>@Bean Function&lt;...&gt;</code>s, and <code>QueryStack.java</code> deploys each bean as its own named Lambda function
+(a different <code>SPRING_CLOUD_FUNCTION_DEFINITION</code> per deploy, Section 5.5) rather than routing every
+request through one Lambda. A Maven module is a build/code boundary here, not a one-to-one map to
+a deployed Lambda.</p>
+</blockquote>
+<blockquote>
+<p><strong>Note (a real naming trap):</strong> the query module's primary bean is <code>serveInsight</code>, <strong>not</strong>
+<code>queryHandler</code>. Component scanning already registers the <code>@SpringBootApplication</code> class
+(<code>QueryHandler</code>) as a bean named <code>queryHandler</code>, so a same-named <code>@Bean</code> would collide. The CDK sets
+<code>SPRING_CLOUD_FUNCTION_DEFINITION=serveInsight</code> on <code>financial-query-dev</code> to match. Request/response
+types are Java <code>record</code>s throughout, which serialise cleanly to and from JSON.</p>
 </blockquote>
 <blockquote>
 <p><strong>Why this matters:</strong> the handler is pure logic with no AWS coupling in its signature, which is why
@@ -3220,10 +3257,10 @@ stage). <strong>Console:</strong> WAF &amp; Shield &gt; Web ACLs (REGIONAL, ap-s
 </li>
 </ul>
 <blockquote>
-<p><strong>The WebSocket API is not WAF-protected, and that is accepted.</strong> WAFv2 has no association target for
-an API Gateway WebSocket API, so RealtimeStack's socket cannot carry a Web ACL. The connect path is
-still authorized (the <code>?token=</code> Cognito JWT check), and subscriptions are bounded by a 2h TTL; there
-is simply no WAF layer available for it. Do not try to attach one.</p>
+<p><strong>History: the WebSocket API was never WAF-protected (retired path, ADR 0005).</strong> WAFv2 had no
+association target for an API Gateway WebSocket API, so the retired Realtime stack's socket could
+not carry a Web ACL. That gap is moot now: the frontend has no WebSocket transport left (Section
+14.1), and every client request goes through the REST API above, which the Web ACL does cover.</p>
 </blockquote>
 <blockquote>
 <p><strong>Load testing trips the rate rule.</strong> A 10 rps single-IP load run exceeds 300/5min and starts drawing
@@ -3574,7 +3611,7 @@ a <code>correlationId</code> to follow one request across services (see the oper
 <p>Do this with the console open, region set to <strong>ap-south-1 (Mumbai)</strong> in the top-right selector. It is a
 10-stop walk from the map down to a live trace. Each stop names the code file and what it teaches.</p>
 <ol>
-<li><strong>CloudFormation &gt; Stacks.</strong> There are your five deploy units (Section 5). This is the &quot;table of
+<li><strong>CloudFormation &gt; Stacks.</strong> There are your four live deploy units (Section 5). This is the &quot;table of
 contents&quot; for everything else. Code: <code>FinancialPlatformApp.java</code>. <em>Teaches:</em> the stateful-vs-ephemeral
 split.</li>
 <li><strong><code>FinancialPlatform-Data-dev</code> &gt; Resources tab.</strong> Every stateful resource (KMS key, both DynamoDB
@@ -3605,8 +3642,8 @@ Disabled (Section 7.5 explains why it may be Disabled). Code: <code>IngestionSta
 scheduled trigger and the cost of running it.</li>
 </ol>
 <hr>
-<h2 id="13-sixteen-aws-only-lessons-the-gotchas">13. Sixteen AWS-only lessons (the gotchas)</h2>
-<p>These sixteen behaviours only bite on real AWS (not in unit tests or on paper) or on framework
+<h2 id="13-seventeen-aws-only-lessons-the-gotchas">13. Seventeen AWS-only lessons (the gotchas)</h2>
+<p>These seventeen behaviours only bite on real AWS (not in unit tests or on paper) or on framework
 internals and process-level nondeterminism that unit tests don't exercise the same way a real deploy
 or a CI run does. Each is subtle, each cost real debugging, and each is worth internalising.</p>
 <h3 id="13-1-cognito-custom-attribute-names-are-capped-at-20-characters">13.1 Cognito custom-attribute names are capped at 20 characters</h3>
@@ -4069,7 +4106,7 @@ Section 6 subsection that teaches it.</p>
 <td>Stacks &gt; <code>FinancialPlatform-*-dev</code></td>
 <td><code>FinancialPlatformApp.java</code></td>
 <td>5</td>
-<td>Five deploy units; stateful vs ephemeral split</td>
+<td>Four live deploy units (plus two retired); stateful vs ephemeral split</td>
 </tr>
 <tr>
 <td>KMS</td>
@@ -4108,17 +4145,17 @@ Section 6 subsection that teaches it.</p>
 </tr>
 <tr>
 <td>Budgets</td>
-<td>Billing &gt; Budgets &gt; <code>FinancialPlatform-Data-dev-MonthlyCostBudget-*</code> (auto-named: a fixed name breaks budget replacement, see USER-GUIDE &quot;Deploy&quot;)</td>
+<td>Billing &gt; Budgets &gt; <code>FinancialPlatform-Data-dev-MonthlyCostBudget-*</code> (auto-named: a fixed name breaks budget replacement, see the operator runbook's &quot;Deploy&quot; section)</td>
 <td><code>DataStack.java</code></td>
 <td>6.12</td>
 <td>USD 5 guardrail for the learning account</td>
 </tr>
 <tr>
-<td>VPC</td>
-<td>Your VPCs &gt; <code>financial-platform-vpc-dev</code></td>
-<td><code>NetworkStack.java</code></td>
+<td>VPC (RETIRED, ADR 0004)</td>
+<td>Your VPCs &gt; <code>financial-platform-vpc-dev</code> (no longer deployed)</td>
+<td><code>NetworkStack.java</code> (removed)</td>
 <td>6.10</td>
-<td>NAT + gateway/interface endpoints for private Lambdas</td>
+<td>Formerly NAT + gateway/interface endpoints for private Lambdas; see Section 5.2</td>
 </tr>
 <tr>
 <td>Cognito</td>
@@ -4175,6 +4212,13 @@ Section 6 subsection that teaches it.</p>
 <td><code>WatchlistHandler.java</code></td>
 <td>6.4</td>
 <td>Watchlist CRUD + WATCHSET maintenance, consent-gated</td>
+</tr>
+<tr>
+<td>Lambda (portfolio)</td>
+<td>Functions &gt; <code>financial-portfolio-dev</code></td>
+<td><code>PortfolioHandler.java</code></td>
+<td>6.4</td>
+<td>Portfolio holdings CRUD + history (Section 5.5), same jar as watchlist</td>
 </tr>
 <tr>
 <td>Lambda (consent)</td>
@@ -4268,28 +4312,25 @@ on demand) so the page always returns <code>200</code> and a real HTML body, eve
 (<code>src/components/auth-gate.tsx</code>) then makes the signed-in/signed-out decision entirely client-side,
 after Amplify resolves the session in the browser: a signed-out visitor to <code>/dashboard</code> still gets a
 <code>200</code> with a sign-in prompt in place of the real content, not a redirect or a <code>401</code>. All REST calls
-(<code>lib/api.ts</code>) and the WebSocket connection happen from the client, never from server components —
-the backend's Cognito authorizer is the only enforcement point that matters; the client-side gate is
-UX, not security.</li>
+(<code>lib/api.ts</code>) happen from the client, never from server components: the backend's Cognito
+authorizer is the only enforcement point that matters; the client-side gate is UX, not security.</li>
 <li><strong>Access-token flow.</strong> Sign-in is a full Cognito Hosted UI redirect (<code>signInWithRedirect</code>), not a
 form: Amplify handles the authorization-code exchange and stores the resulting tokens. Every
-subsequent REST call (<code>lib/api.ts</code> → <code>apiFetch</code>) and WebSocket connect (<code>lib/auth.ts</code> →
-<code>getAccessToken</code>) pulls the <strong>access token</strong> (not the id token — same rule the backend authorizer
-follows, Section 9.1) fresh off <code>fetchAuthSession()</code> on each call, so Amplify's own silent-refresh
-handles token expiry transparently; the app never caches a token itself. <code>cognito:groups</code> off that
-same token (<code>lib/auth.ts</code> → <code>parseGroups</code>) drives the readers/premium/admins UI gating described in
-the operator runbook's &quot;Frontend (Next.js)&quot; section — the same claim, the same groups, as the backend
+subsequent REST call (<code>lib/api.ts</code> → <code>apiFetch</code>) pulls the <strong>access token</strong> (not the id token, the
+same rule the backend authorizer follows, Section 9.1) fresh off <code>fetchAuthSession()</code> on each call
+(<code>lib/auth.ts</code> → <code>getAccessToken</code>), so Amplify's own silent-refresh handles token expiry
+transparently; the app never caches a token itself. <code>cognito:groups</code> off that same token
+(<code>lib/auth.ts</code> → <code>parseGroups</code>) drives the readers/premium/admins UI gating described in the
+operator runbook's &quot;Frontend (Next.js)&quot; section, the same claim and the same groups as the backend
 policy in Section 10.2, read twice by two different layers for two different purposes (UX vs
 enforcement).</li>
-<li><strong>WebSocket reconnect (retired with the push path, ADR 0005; kept as the reconnect lesson).</strong>
-<code>useInsightFeed</code> (<code>src/hooks/use-insight-feed.ts</code>, deleted 2026-07-19) opened one WebSocket per
-mounted ticker page, subscribes on <code>onopen</code>, and on <code>onclose</code> (a network blip, or API Gateway's
-~2-hour WebSocket connection cap, Section 5.6) reconnects with a <strong>fresh access token</strong> and
-exponential backoff (1s, 2s, 4s, ... capped at 30s), resetting the backoff counter on the next
-successful <code>onopen</code>. This mirrors the backend's own &quot;reconnect-and-resubscribe&quot; expectation
-(Section 5.6's Realtime-stack follow-ups) — the connections table's 2h TTL and the API Gateway
-connection cap mean no client can assume one socket stays open indefinitely, so the frontend treats
-reconnect as the normal case, not an error path.</li>
+<li><strong>60-second polling, not push.</strong> <code>useInsightPoll</code> (<code>src/hooks/use-insight-poll.ts</code>; replaced the
+retired WebSocket hook on 2026-07-19) re-fetches <code>GET /insights/{ticker}</code> for every subscribed
+ticker on a 60-second interval while the NSE session is open, matching the API Gateway 60s response
+cache so polling faster would only re-read the same cached entry. Each poll pulls a fresh access
+token via <code>fetchAuthSession()</code> rather than caching one, the same pattern as every other REST call.
+Consumers still do their own one-shot initial fetch; the poll only layers fresher insights on top
+after the first interval elapses.</li>
 </ul>
 <hr>
 <h2 id="15-glossary">15. Glossary</h2>
