@@ -189,6 +189,7 @@ public class BedrockInsightService {
      * Calls Bedrock for the given prompt, retrying once on invalid output; empty triggers the
      * caller's rule-based fallback. {@code logLabel} is the ticker or groupId, for logging only.
      */
+    // tag::bedrock-invoke[]
     private Optional<StructuredInsight> tryBedrock(String logLabel, String correlationId, String promptText) {
         String requestBody = buildToolRequest(promptText);
 
@@ -215,7 +216,9 @@ public class BedrockInsightService {
                         e.getClass().getSimpleName());
                 metrics.count("BedrockError", "reason", e.getClass().getSimpleName());
                 return Optional.empty();
-            } catch (IllegalArgumentException e) {
+            }
+            // end::bedrock-invoke[]
+            catch (IllegalArgumentException e) {
                 log.warn(
                         "Invalid Bedrock output. label={} attempt={}/{} reason={}",
                         logLabel,

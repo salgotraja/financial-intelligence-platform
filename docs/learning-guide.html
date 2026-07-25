@@ -1146,6 +1146,15 @@ function version — that prod-only PC sits on the very alias SnapStart needs, s
 prod deploy will fail; one of the two must go (untested because prod has never been deployed —
 exactly the real-AWS-only defect class this guide catalogs).</p>
 </blockquote>
+<p>The query Lambda's <code>live</code> alias is published from <code>getCurrentVersion()</code>, the exact indirection SnapStart requires:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// Invoke the query Lambda via a published-version alias so SnapStart engages; invoking</span>
+<span class="hljs-comment">// $LATEST would run the full Spring Boot init (~5-10s) on every cold start. No provisioned</span>
+<span class="hljs-comment">// concurrency: AWS rejects it on a SnapStart-enabled version/alias.</span>
+<span class="hljs-type">var</span> <span class="hljs-variable">queryFnAlias</span> <span class="hljs-operator">=</span> Alias.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;QueryFnAlias&quot;</span>)
+        .aliasName(<span class="hljs-string">&quot;live&quot;</span>)
+        .version(queryFn.getCurrentVersion())
+        .build();
+</code></pre>
 <blockquote>
 <p><strong>Further reading:</strong> <a href="https://docs.aws.amazon.com/lambda/latest/dg/welcome.html">AWS Lambda developer guide</a>;
 <a href="https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html">SnapStart</a>.</p>
@@ -1216,6 +1225,35 @@ Section 11) with no code change. The AWS SDK clients are wired in <code>config/A
 which honours an optional <code>aws.endpoint-url</code> override so tests can point every client at LocalStack;
 the S3 client only sets <code>forcePathStyle(true)</code> when that override is present.</p>
 </blockquote>
+<p>The <code>serveInsight</code> bean itself, the read path's entry point:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">/** Returns the latest stored insight for the requested ticker. */</span>
+<span class="hljs-meta">@Bean</span>
+<span class="hljs-keyword">public</span> Function&lt;QueryRequest, QueryResponse&gt; <span class="hljs-title function_">serveInsight</span><span class="hljs-params">(InsightQuery insightQuery, Metrics metrics)</span> {
+    <span class="hljs-keyword">return</span> request -&gt; {
+        <span class="hljs-keyword">try</span> (<span class="hljs-type">var</span> <span class="hljs-variable">ctx</span> <span class="hljs-operator">=</span> RequestContext.begin(<span class="hljs-string">&quot;financial-query&quot;</span>, request.correlationId())) {
+            ctx.withTicker(request.ticker());
+            <span class="hljs-type">String</span> <span class="hljs-variable">ticker</span> <span class="hljs-operator">=</span> request.ticker();
+            <span class="hljs-type">String</span> <span class="hljs-variable">correlationId</span> <span class="hljs-operator">=</span> request.correlationId();
+
+            log.info(<span class="hljs-string">&quot;Serving latest insight. ticker={} correlationId={}&quot;</span>, ticker, correlationId);
+
+            <span class="hljs-type">QueryResponse</span> <span class="hljs-variable">response</span> <span class="hljs-operator">=</span> insightQuery.findLatestInsight(ticker);
+
+            <span class="hljs-keyword">if</span> (!response.found()) {
+                metrics.count(<span class="hljs-string">&quot;EmptyResult&quot;</span>, <span class="hljs-string">&quot;route&quot;</span>, <span class="hljs-string">&quot;insight&quot;</span>);
+            }
+
+            log.info(
+                    <span class="hljs-string">&quot;Insight query complete. ticker={} found={} correlationId={}&quot;</span>,
+                    ticker,
+                    response.found(),
+                    correlationId);
+
+            <span class="hljs-keyword">return</span> response;
+        }
+    };
+}
+</code></pre>
 <blockquote>
 <p><strong>Further reading:</strong> <a href="https://docs.spring.io/spring-cloud-function/reference/">Spring Cloud Function reference</a>;
 <a href="https://docs.spring.io/spring-cloud-function/reference/adapters/aws-lambda.html">AWS adapter</a>.</p>
@@ -1243,6 +1281,37 @@ through a dedicated API Gateway IAM role, with no Lambda in between.</li>
 <li><strong>Mock integration.</strong> <code>GET /health</code> returns <code>{&quot;status&quot;:&quot;ok&quot;}</code> with no backend at all, for cheap
 uptime checks.</li>
 </ul>
+<p>The <code>queryIntegration</code> non-proxy request template and the <code>GET /insights/{ticker}</code> method it backs:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// Non-proxy: the request template maps the path ticker + request id onto the function&#x27;s</span>
+<span class="hljs-comment">// QueryRequest record. With the default proxy integration the template is ignored and the</span>
+<span class="hljs-comment">// raw event arrives, so the ticker resolves to null.</span>
+<span class="hljs-type">var</span> <span class="hljs-variable">queryIntegration</span> <span class="hljs-operator">=</span> LambdaIntegration.Builder.create(queryFnAlias)
+        .proxy(<span class="hljs-literal">false</span>)
+        .requestTemplates(Map.of(
+                <span class="hljs-string">&quot;application/json&quot;</span>,
+                <span class="hljs-string">&quot;{ \&quot;ticker\&quot;: \&quot;$util.escapeJavaScript($input.params(&#x27;ticker&#x27;))\&quot;, &quot;</span>
+                        + <span class="hljs-string">&quot;  \&quot;correlationId\&quot;: \&quot;$context.requestId\&quot; }&quot;</span>))
+        <span class="hljs-comment">// {ticker} must be a cache key, else the 60s stage cache serves one ticker&#x27;s</span>
+        <span class="hljs-comment">// response for every ticker (wrong data + collapses the load-test cache mix).</span>
+        .cacheKeyParameters(List.of(<span class="hljs-string">&quot;method.request.path.ticker&quot;</span>))
+        .integrationResponses(errorAwareIntegrationResponses(allowOrigin))
+        .build();
+
+<span class="hljs-type">var</span> <span class="hljs-variable">insightsResource</span> <span class="hljs-operator">=</span> api.getRoot().addResource(<span class="hljs-string">&quot;insights&quot;</span>);
+
+<span class="hljs-comment">// /insights/{ticker} - protected (readers+)</span>
+insightsResource
+        .addResource(<span class="hljs-string">&quot;{ticker}&quot;</span>)
+        .addMethod(
+                <span class="hljs-string">&quot;GET&quot;</span>,
+                queryIntegration,
+                MethodOptions.builder()
+                        .authorizer(apiAuthorizer)
+                        .authorizationType(AuthorizationType.CUSTOM)
+                        .requestParameters(Map.of(<span class="hljs-string">&quot;method.request.path.ticker&quot;</span>, <span class="hljs-literal">true</span>))
+                        .methodResponses(standardMethodResponses())
+                        .build());
+</code></pre>
 <blockquote>
 <p><strong>Gotcha (Section 13.2):</strong> with caching on, a path parameter is <strong>not</strong> part of the cache key unless
 you declare it. Without the <code>cacheKeyParameters</code> line, <code>/insights/RELIANCE.NS</code> and <code>/insights/TCS.NS</code>
@@ -1273,6 +1342,70 @@ baselines, insights, cost records, the ticker union, user watchlists, and consen
 by <code>PK</code>/<code>SK</code> (full map in Section 7). Billing is <code>PAY_PER_REQUEST</code> (on-demand), so there is no
 capacity to plan. Key settings in <code>DataStack.java</code>: <code>PK</code>/<code>SK</code> strings, <code>BillingMode.PAY_PER_REQUEST</code>,
 customer-managed KMS encryption, PITR on, TTL attribute <code>ttl</code>, and an empty <code>GSI1</code>.</p>
+<p>The <code>platformTable</code> construction and its <code>GSI1</code> in <code>DataStack.java</code>:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// DynamoDB: single-table design (spec section 4)</span>
+<span class="hljs-comment">// One table overloads every operational entity onto generic PK/SK:</span>
+<span class="hljs-comment">//   market data point  PK=TICKER#{ticker}  SK=TS#{iso8601}      (ttl ~24h)</span>
+<span class="hljs-comment">//   anomaly baseline    PK=TICKER#{ticker}  SK=BASELINE          (no ttl)</span>
+<span class="hljs-comment">//   insight (latest)    PK=TICKER#{ticker}  SK=INSIGHT#{iso8601} (ttl 7d)</span>
+<span class="hljs-comment">//   bedrock cost        PK=COST#{yyyy-MM-dd} SK=INVOKE#... | TOTAL (ttl 7d)</span>
+<span class="hljs-comment">// On-demand billing: pay per request, no capacity planning needed.</span>
+<span class="hljs-built_in">this</span>.platformTable = Table.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;PlatformTable&quot;</span>)
+        .tableName(<span class="hljs-string">&quot;financial-platform-&quot;</span> + env)
+        .partitionKey(Attribute.builder()
+                .name(<span class="hljs-string">&quot;PK&quot;</span>)
+                .type(AttributeType.STRING)
+                .build())
+        .sortKey(Attribute.builder()
+                .name(<span class="hljs-string">&quot;SK&quot;</span>)
+                .type(AttributeType.STRING)
+                .build())
+        .billingMode(BillingMode.PAY_PER_REQUEST)
+        .encryption(TableEncryption.CUSTOMER_MANAGED)
+        .encryptionKey(encryptionKey)
+        .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder()
+                .pointInTimeRecoveryEnabled(<span class="hljs-literal">true</span>)
+                .build()) <span class="hljs-comment">// PITR for disaster recovery</span>
+        .timeToLiveAttribute(<span class="hljs-string">&quot;ttl&quot;</span>) <span class="hljs-comment">// auto-expire hot data</span>
+        <span class="hljs-comment">// Stream exists for the backfill consumer (see IngestionStack&#x27;s HistoryBackfillFn);</span>
+        <span class="hljs-comment">// the notifier that used to be the stream&#x27;s other consumer is gone with the</span>
+        <span class="hljs-comment">// WebSocket push path, so a second consumer slot is free.</span>
+        .stream(StreamViewType.NEW_IMAGE)
+        .removalPolicy(statefulRemoval)
+        .build();
+
+<span class="hljs-comment">// GSI1 (insight-by-ticker): reserved for the by-ticker insight feed once correlation</span>
+<span class="hljs-comment">// grouping moves insights under GROUP# keys. Empty until items carry GSI1PK/GSI1SK.</span>
+platformTable.addGlobalSecondaryIndex(GlobalSecondaryIndexProps.builder()
+        .indexName(<span class="hljs-string">&quot;GSI1&quot;</span>)
+        .partitionKey(Attribute.builder()
+                .name(<span class="hljs-string">&quot;GSI1PK&quot;</span>)
+                .type(AttributeType.STRING)
+                .build())
+        .sortKey(Attribute.builder()
+                .name(<span class="hljs-string">&quot;GSI1SK&quot;</span>)
+                .type(AttributeType.STRING)
+                .build())
+        .projectionType(ProjectionType.ALL)
+        .build());
+</code></pre>
+<p>The <code>MarketDataResponse</code> record that gets read from and written to the table's market-data-point item:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> <span class="hljs-keyword">record</span> <span class="hljs-title class_">MarketDataResponse</span><span class="hljs-params">(
+        String ticker,
+        BigDecimal price,
+        BigDecimal previousClose,
+        BigDecimal change,
+        BigDecimal changePercent,
+        Long volume,
+        BigDecimal marketCap,
+        BigDecimal high52Week,
+        BigDecimal low52Week,
+        String correlationId,
+        String dataSource,
+        <span class="hljs-type">boolean</span> stored,
+        <span class="hljs-type">boolean</span> anomaly,
+        String anomalyReason)</span> {
+</code></pre>
 <p><strong>The canonical read</strong> (<code>InsightQuery.findLatestInsight</code>): <code>PK = TICKER#{ticker} AND begins_with(SK, 'INSIGHT#')</code>, <code>scanIndexForward=false</code>, <code>Limit 1</code>. Because ISO-8601 timestamps sort lexicographically,
 &quot;newest&quot; is just &quot;last SK&quot;, so the latest insight is a one-item query with no index and no scan.</p>
 <blockquote>
@@ -1310,6 +1443,38 @@ item runs <code>FetchMarketData</code> (Lambda) -&gt; <code>AnomalyGate</code> (
 (Lambda) or <code>InsightSkipped</code> (Pass). Retries use a shared <code>standardRetry</code> (3 attempts, 2s base, 2x
 backoff, full jitter). Failures route to the SQS DLQ: a per-item failure to <code>TickerToDlq</code> (isolated),
 a read/map-stage failure to <code>SendToDlq</code> (fails the run).</p>
+<p>The <code>FanOutTickers</code> Distributed Map build and its item processor wiring:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// == State 2: Distributed Map fan-out over the tickers ==</span>
+<span class="hljs-comment">// Bounded concurrency respects provider rate limits (Alpha Vantage free tier ~5 req/min).</span>
+<span class="hljs-comment">// Per-ticker failures are tolerated so one bad ticker never fails the whole run; each failure</span>
+<span class="hljs-comment">// still lands in the DLQ via the item catch above. Chosen over a single-Lambda loop (poor</span>
+<span class="hljs-comment">// isolation, timeout-bound) for per-item retry and a clean DLQ story (spec section 5).</span>
+<span class="hljs-type">DistributedMap</span> <span class="hljs-variable">fanOut</span> <span class="hljs-operator">=</span> DistributedMap.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;FanOutTickers&quot;</span>)
+        .comment(<span class="hljs-string">&quot;Fan out the per-ticker pipeline across the WATCHSET union&quot;</span>)
+        .itemsPath(<span class="hljs-string">&quot;$.watchset.Items&quot;</span>)
+        <span class="hljs-comment">// 2, not 5: this account&#x27;s Lambda concurrency quota is 10 TOTAL, and a fan-out</span>
+        <span class="hljs-comment">// burst at 5 (x fetch+insight per item) starved the API-path authorizers into</span>
+        <span class="hljs-comment">// &quot;Rate Exceeded&quot; 500s (observed live 2026-07-12). Keep pipeline bursts well</span>
+        <span class="hljs-comment">// under half the pool until the requested quota increase (-&gt;1000) is granted.</span>
+        .maxConcurrency(<span class="hljs-number">2</span>)
+        .itemSelector(OrderedMap.of(
+                Map.entry(<span class="hljs-string">&quot;ticker.$&quot;</span>, <span class="hljs-string">&quot;$$.Map.Item.Value.ticker.S&quot;</span>),
+                Map.entry(<span class="hljs-string">&quot;requestedAt.$&quot;</span>, <span class="hljs-string">&quot;$$.Execution.StartTime&quot;</span>),
+                Map.entry(
+                        <span class="hljs-string">&quot;correlationId.$&quot;</span>,
+                        <span class="hljs-string">&quot;States.Format(&#x27;{}#{}&#x27;, $$.Execution.Name, $$.Map.Item.Value.ticker.S)&quot;</span>),
+                Map.entry(<span class="hljs-string">&quot;source.$&quot;</span>, <span class="hljs-string">&quot;$$.Execution.Input.source&quot;</span>)))
+        .toleratedFailurePercentage(<span class="hljs-number">100</span>)
+        .build();
+<span class="hljs-comment">// executionType on ProcessorConfig is the working path in this CDK version; the synth-time</span>
+<span class="hljs-comment">// &quot;use mapExecutionType instead&quot; advisory is benign (mapExecutionType alone fails Map validation).</span>
+fanOut.itemProcessor(
+        perTicker,
+        ProcessorConfig.builder()
+                .mode(ProcessorMode.DISTRIBUTED)
+                .executionType(ProcessorType.STANDARD)
+                .build());
+</code></pre>
 <table>
 <thead>
 <tr>
@@ -1365,6 +1530,19 @@ ingestion state machine. Dev is <code>rate(5 minutes)</code>; prod is <code>cron
 hours 09:15-15:30 IST plus margin, expressed in UTC: 03:00-10:59 UTC = 08:30-16:29 IST), which
 saves roughly 75% of invocations versus 24/7 (40 of 168 weekly hours remain). The
 target carries a fixed input <code>{&quot;source&quot;:&quot;eventbridge-schedule&quot;}</code>, a DLQ, and <code>retryAttempts(2)</code>.</p>
+<p>The <code>MarketDataSchedule</code> rule, with its market-hours cron expressions for dev and prod:</p>
+<pre><code class="hljs language-java">Rule.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;MarketDataSchedule&quot;</span>)
+        .ruleName(<span class="hljs-string">&quot;financial-market-data-schedule-&quot;</span> + env)
+        .description(<span class="hljs-string">&quot;Triggers the financial data pipeline during NSE market hours&quot;</span>)
+        .schedule(Schedule.expression(prod ? <span class="hljs-string">&quot;cron(*/1 3-9 ? * MON-FRI *)&quot;</span> : <span class="hljs-string">&quot;cron(*/5 3-9 ? * MON-FRI *)&quot;</span>))
+        .targets(List.of(SfnStateMachine.Builder.create(stateMachine)
+                <span class="hljs-comment">// The pipeline reads tickers from WATCHSET, so the trigger carries no ticker.</span>
+                .input(RuleTargetInput.fromObject(Map.of(<span class="hljs-string">&quot;source&quot;</span>, <span class="hljs-string">&quot;eventbridge-schedule&quot;</span>)))
+                .deadLetterQueue(dlq)
+                .retryAttempts(<span class="hljs-number">2</span>)
+                .build()))
+        .build();
+</code></pre>
 <blockquote>
 <p><strong>Why market-hours cron in prod?</strong> Outside trading hours the price is flat, so the z-score is always
 0 and no anomaly can fire; running the pipeline then would only burn invocations. The dev <code>rate(5 minutes)</code> keeps a steady trickle for development regardless of the clock.</p>
@@ -1383,6 +1561,51 @@ groups (<code>readers</code>, <code>premium</code>, <code>admins</code>), and fo
 Cognito issues an access token (a JWT) whose <code>cognito:groups</code> claim carries the user's groups; the API
 authorizer verifies that token and reads the groups (Section 9.1). A PostConfirmation Lambda trigger
 seeds a default-deny consent record at sign-up.</p>
+<p>The PostConfirmation role, function, and trigger registration in <code>SecurityStack.java</code>:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// PostConfirmation trigger: seeds default-deny consent + ACCOUNT_CREATED audit at signup</span>
+<span class="hljs-comment">// (spec sub-project B). ADR 0004: no VPC anywhere in the platform, so this persistent</span>
+<span class="hljs-comment">// stack reaches DynamoDB over the regional endpoint via its role, same as every other Lambda.</span>
+<span class="hljs-type">var</span> <span class="hljs-variable">postConfirmationRole</span> <span class="hljs-operator">=</span> Role.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;PostConfirmationLambdaRole&quot;</span>)
+        .roleName(<span class="hljs-string">&quot;financial-postconfirmation-lambda-role-&quot;</span> + env)
+        .description(<span class="hljs-string">&quot;IAM role for the Cognito PostConfirmation consent-seeding Lambda&quot;</span>)
+        .assumedBy(<span class="hljs-keyword">new</span> <span class="hljs-title class_">ServicePrincipal</span>(<span class="hljs-string">&quot;lambda.amazonaws.com&quot;</span>))
+        .managedPolicies(List.of(
+                ManagedPolicy.fromAwsManagedPolicyName(<span class="hljs-string">&quot;service-role/AWSLambdaBasicExecutionRole&quot;</span>),
+                ManagedPolicy.fromAwsManagedPolicyName(<span class="hljs-string">&quot;AWSXRayDaemonWriteAccess&quot;</span>)))
+        .build();
+data.getPlatformTable().grantReadWriteData(postConfirmationRole);
+data.getAuditTable().grant(postConfirmationRole, <span class="hljs-string">&quot;dynamodb:PutItem&quot;</span>);
+data.getEncryptionKey().grantEncryptDecrypt(postConfirmationRole);
+
+<span class="hljs-type">var</span> <span class="hljs-variable">postConfirmationFn</span> <span class="hljs-operator">=</span> Function.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;PostConfirmationFn&quot;</span>)
+        .functionName(<span class="hljs-string">&quot;financial-postconfirmation-&quot;</span> + env)
+        .description(<span class="hljs-string">&quot;Cognito PostConfirmation: seed default-deny consent + audit event&quot;</span>)
+        .runtime(Runtime.JAVA_25)
+        .handler(<span class="hljs-string">&quot;org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest&quot;</span>)
+        .code(Code.fromAsset(<span class="hljs-string">&quot;../functions/consent-function/target/consent-function.jar&quot;</span>))
+        .role(postConfirmationRole)
+        .memorySize(<span class="hljs-number">512</span>)
+        .timeout(Duration.seconds(<span class="hljs-number">10</span>))
+        .snapStart(SnapStartConf.ON_PUBLISHED_VERSIONS)
+        .tracing(Tracing.ACTIVE)
+        .environment(OrderedMap.of(
+                Map.entry(<span class="hljs-string">&quot;PLATFORM_TABLE&quot;</span>, data.getPlatformTable().getTableName()),
+                Map.entry(<span class="hljs-string">&quot;AUDIT_TABLE&quot;</span>, data.getAuditTable().getTableName()),
+                Map.entry(<span class="hljs-string">&quot;ENVIRONMENT&quot;</span>, env),
+                Map.entry(<span class="hljs-string">&quot;CONSENT_POLICY_VERSION&quot;</span>, <span class="hljs-string">&quot;v1&quot;</span>),
+                Map.entry(<span class="hljs-string">&quot;SPRING_CLOUD_FUNCTION_DEFINITION&quot;</span>, <span class="hljs-string">&quot;postConfirmation&quot;</span>),
+                Map.entry(<span class="hljs-string">&quot;MAIN_CLASS&quot;</span>, <span class="hljs-string">&quot;dev.engnotes.consent.ConsentHandler&quot;</span>),
+                Map.entry(<span class="hljs-string">&quot;LOG_LEVEL&quot;</span>, env.equals(<span class="hljs-string">&quot;prod&quot;</span>) ? <span class="hljs-string">&quot;INFO&quot;</span> : <span class="hljs-string">&quot;DEBUG&quot;</span>)))
+        .build();
+
+LogGroup.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;PostConfirmationFnLogs&quot;</span>)
+        .logGroupName(<span class="hljs-string">&quot;/aws/lambda/&quot;</span> + postConfirmationFn.getFunctionName())
+        .retention(RetentionDays.TWO_WEEKS)
+        .removalPolicy(RemovalPolicy.DESTROY)
+        .build();
+
+userPool.addTrigger(UserPoolOperation.POST_CONFIRMATION, postConfirmationFn);
+</code></pre>
 <blockquote>
 <p><strong>Why the group claim matters:</strong> authorization here is group-driven (Section 10.2). The group lives
 in Cognito, travels in the JWT, and is enforced at the API edge. That means access control is a
@@ -1414,6 +1637,35 @@ all required. The reply is read from the <code>tool_use</code> content block and
 <code>StructuredInsight</code> record; invalid output is retried once (<code>MAX_ATTEMPTS = 2</code>) then falls back. SDK
 retries are disabled (<code>RetryPolicy.none()</code>) because Step Functions owns retry and SDK retries would
 amplify cost; the SDK call timeout is 50s (10s margin under the 60s Lambda timeout).</p>
+<p>The first-attempt invoke, cost recording, and throttling fallback inside <code>tryBedrock</code>:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">private</span> Optional&lt;StructuredInsight&gt; <span class="hljs-title function_">tryBedrock</span><span class="hljs-params">(String logLabel, String correlationId, String promptText)</span> {
+    <span class="hljs-type">String</span> <span class="hljs-variable">requestBody</span> <span class="hljs-operator">=</span> buildToolRequest(promptText);
+
+    <span class="hljs-keyword">for</span> (<span class="hljs-type">int</span> <span class="hljs-variable">attempt</span> <span class="hljs-operator">=</span> <span class="hljs-number">1</span>; attempt &lt;= MAX_ATTEMPTS; attempt++) {
+        <span class="hljs-keyword">try</span> {
+            <span class="hljs-type">InvokeModelResponse</span> <span class="hljs-variable">response</span> <span class="hljs-operator">=</span> bedrock.invokeModel(InvokeModelRequest.builder()
+                    .modelId(modelId)
+                    .contentType(<span class="hljs-string">&quot;application/json&quot;</span>)
+                    .accept(<span class="hljs-string">&quot;application/json&quot;</span>)
+                    .body(SdkBytes.fromUtf8String(requestBody))
+                    .build());
+
+            <span class="hljs-comment">// Tokens are billed whether or not the output parses, so record before validating.</span>
+            <span class="hljs-type">String</span> <span class="hljs-variable">responseBody</span> <span class="hljs-operator">=</span> response.body().asUtf8String();
+            recordCost(correlationId, responseBody, logLabel);
+
+            <span class="hljs-type">StructuredInsight</span> <span class="hljs-variable">insight</span> <span class="hljs-operator">=</span> parseToolUse(responseBody);
+            <span class="hljs-keyword">return</span> Optional.of(insight);
+
+        } <span class="hljs-keyword">catch</span> (ThrottlingException | ModelTimeoutException e) {
+            log.warn(
+                    <span class="hljs-string">&quot;Bedrock unavailable, using rule-based fallback. label={} error={}&quot;</span>,
+                    logLabel,
+                    e.getClass().getSimpleName());
+            metrics.count(<span class="hljs-string">&quot;BedrockError&quot;</span>, <span class="hljs-string">&quot;reason&quot;</span>, e.getClass().getSimpleName());
+            <span class="hljs-keyword">return</span> Optional.empty();
+        }
+</code></pre>
 <blockquote>
 <p><strong>Why force a tool instead of &quot;reply in JSON&quot;?</strong> Asking for JSON in a prompt gets <em>usually</em>-valid
 JSON; a forced tool with a schema gets structurally-guaranteed fields the model must populate. The
@@ -1439,6 +1691,17 @@ on) encrypts the DynamoDB tables, the S3 bucket, the SNS topics, and the SQS DLQ
 and least-privilege: for example the ingestion role gets <code>grantEncryptDecrypt</code>, the query role only
 <code>grantDecrypt</code> (it never writes), and the Step Functions role gets <code>grantDecrypt</code> so <code>ReadWatchset</code>
 can read the encrypted table.</p>
+<p>The <code>encryptionKey</code> construction in <code>DataStack.java</code>:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// KMS Key - one customer-managed key for all data at rest. Rotation enabled (annual).</span>
+<span class="hljs-built_in">this</span>.encryptionKey = Key.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;PlatformKey&quot;</span>)
+        .description(<span class="hljs-string">&quot;Encryption key for Financial Intelligence Platform - &quot;</span> + env)
+        .keySpec(KeySpec.SYMMETRIC_DEFAULT)
+        .keyUsage(KeyUsage.ENCRYPT_DECRYPT)
+        .enableKeyRotation(<span class="hljs-literal">true</span>)
+        <span class="hljs-comment">// dev DESTROY avoids orphaned keys piling up across teardown cycles.</span>
+        .removalPolicy(statefulRemoval)
+        .build();
+</code></pre>
 <blockquote>
 <p><strong>Why one key for everything?</strong> It keeps key management simple and puts all data-at-rest under one
 rotation and audit boundary. The tradeoff (a single key is a single blast radius) is acceptable for a
@@ -1620,6 +1883,38 @@ attribution (tag values are sanitised because <code>^NSEI</code> would otherwise
 only the days it needs. The hot tier (DynamoDB, 24h TTL) answers &quot;latest / recent&quot;; the cold tier
 (S3, permanent) answers &quot;historical / backtest / audit&quot;. Two tiers, two access patterns, one write.</p>
 </blockquote>
+<p>The <code>storeToS3</code> write, including the date-and-ticker-partitioned key and cost-attribution tags:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">private</span> <span class="hljs-keyword">void</span> <span class="hljs-title function_">storeToS3</span><span class="hljs-params">(MarketDataResponse data, String timestamp, String correlationId)</span> {
+    <span class="hljs-type">Instant</span> <span class="hljs-variable">now</span> <span class="hljs-operator">=</span> Instant.now();
+
+    <span class="hljs-comment">// Partition by date and ticker for Athena query efficiency.</span>
+    <span class="hljs-comment">// Example key: 2025/06/15/RELIANCE_NS/14-30-00.json</span>
+    <span class="hljs-type">String</span> <span class="hljs-variable">s3Key</span> <span class="hljs-operator">=</span> String.format(
+            <span class="hljs-string">&quot;%s/%s/%s.json&quot;</span>,
+            DATE_FORMATTER.format(now), data.ticker().replace(<span class="hljs-string">&quot;.&quot;</span>, <span class="hljs-string">&quot;_&quot;</span>), FILE_FORMATTER.format(now));
+
+    String jsonPayload;
+    <span class="hljs-keyword">try</span> {
+        jsonPayload = objectMapper.writeValueAsString(buildPayload(data, timestamp, correlationId));
+    } <span class="hljs-keyword">catch</span> (Exception e) {
+        <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">MarketDataException</span>(<span class="hljs-string">&quot;Failed to serialize market data for ticker &quot;</span> + data.ticker(), e);
+    }
+
+    <span class="hljs-type">byte</span>[] payload = jsonPayload.getBytes(StandardCharsets.UTF_8);
+
+    s3.putObject(
+            PutObjectRequest.builder()
+                    .bucket(dataLakeBucket)
+                    .key(s3Key)
+                    .contentType(<span class="hljs-string">&quot;application/json&quot;</span>)
+                    .contentLength((<span class="hljs-type">long</span>) payload.length)
+                    <span class="hljs-comment">// Tag for lifecycle management and cost attribution</span>
+                    .tagging(<span class="hljs-string">&quot;ticker=&quot;</span> + sanitizeTagValue(data.ticker()) + <span class="hljs-string">&quot;&amp;env=&quot;</span>
+                            + sanitizeTagValue(System.getenv(<span class="hljs-string">&quot;ENVIRONMENT&quot;</span>)))
+                    .build(),
+            RequestBody.fromBytes(payload));
+}
+</code></pre>
 <blockquote>
 <p><strong>Further reading:</strong> <a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html">S3 user guide</a>;
 <a href="https://docs.aws.amazon.com/athena/latest/ug/partitions.html">partitioning for Athena</a>.</p>
@@ -1681,6 +1976,32 @@ token cost, auth denials, API Gateway cache hit/miss), ending in an alarm-status
 carry no threshold alarms: CloudWatch forbids <code>SEARCH</code> in an alarm expression, and the EMF metrics
 are emitted only as per-dimension series, so there is no single series to alarm on without a SEARCH.
 Alarming on them waits on dimensionless rollup metrics from the functions (backlog).</p>
+<p>The <code>emit</code> method every metric call in <code>Metrics.java</code> funnels through, before it reaches CloudWatch as an EMF log line:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">private</span> Metrics <span class="hljs-title function_">emit</span><span class="hljs-params">(String name, <span class="hljs-type">double</span> value, Unit unit, String... dimensionPairs)</span> {
+    <span class="hljs-type">DimensionSet</span> <span class="hljs-variable">dimensions</span> <span class="hljs-operator">=</span> buildDimensions(dimensionPairs);
+    <span class="hljs-type">MetricsLogger</span> <span class="hljs-variable">logger</span> <span class="hljs-operator">=</span> loggerFactory.get();
+    logger.setNamespace(NAMESPACE);
+    logger.putProperty(<span class="hljs-string">&quot;function&quot;</span>, function);
+    properties.forEach(logger::putProperty);
+    <span class="hljs-keyword">if</span> (dimensions != <span class="hljs-literal">null</span>) {
+        logger.putDimensions(dimensions);
+    }
+    logger.putMetric(name, value, unit);
+    logger.flush();
+    <span class="hljs-keyword">return</span> <span class="hljs-built_in">this</span>;
+}
+</code></pre>
+<p>The <code>platformHealth</code> composite alarm that rolls the two P1 pagers into one health signal:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// == PlatformHealth composite ==</span>
+<span class="hljs-comment">// Single health rollup of the two existing P1 pagers, wired to the same critical SNS topic.</span>
+<span class="hljs-comment">// No SEARCH here, so this deploys cleanly.</span>
+<span class="hljs-type">var</span> <span class="hljs-variable">platformHealth</span> <span class="hljs-operator">=</span> CompositeAlarm.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;PlatformHealthAlarm&quot;</span>)
+        .compositeAlarmName(<span class="hljs-string">&quot;financial-platform-health-&quot;</span> + env)
+        .alarmDescription(<span class="hljs-string">&quot;[P1] Platform health rollup: fires when API latency OR 5XX-rate P1 breaches.&quot;</span>)
+        .alarmRule(AlarmRule.anyOf(p99LatencyAlarm, api5xxRateAlarm))
+        .build();
+platformHealth.addAlarmAction(<span class="hljs-keyword">new</span> <span class="hljs-title class_">SnsAction</span>(data.getCriticalTopic()));
+</code></pre>
 <blockquote>
 <p><strong>Why alarm on symptoms, not causes?</strong> You page on user-visible impact (latency, 5XX), not on
 naturally fluctuating causes (4XX, per-Lambda throttles, DynamoDB throttles), which live on the
@@ -1756,6 +2077,23 @@ resource ARNs, with no wildcards.</p>
 </tr>
 </tbody>
 </table>
+<p>The Bedrock invoke grant on the shared ingestion role, scoped to the specific inference-profile and foundation-model ARNs:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// Bedrock invoke. Claude is INFERENCE_PROFILE-only in ap-south-1: the bare</span>
+<span class="hljs-comment">// foundation-model id is not invocable on demand. We call the global cross-region</span>
+<span class="hljs-comment">// profile, so the policy must allow BOTH the inference-profile ARN and the underlying</span>
+<span class="hljs-comment">// foundation-model ARN. Global profiles can route to any region, hence the * region on</span>
+<span class="hljs-comment">// the foundation-model. Model verified against `aws bedrock list-inference-profiles`</span>
+<span class="hljs-comment">// in ap-south-1 (2026-07-12): global.anthropic.claude-sonnet-4-6 exists; the previously</span>
+<span class="hljs-comment">// configured global sonnet-4-5 profile does not.</span>
+ingestionRole.addToPolicy(PolicyStatement.Builder.create()
+        .effect(Effect.ALLOW)
+        .actions(List.of(<span class="hljs-string">&quot;bedrock:InvokeModel&quot;</span>))
+        .resources(List.of(
+                <span class="hljs-string">&quot;arn:aws:bedrock:&quot;</span> + <span class="hljs-built_in">this</span>.getRegion() + <span class="hljs-string">&quot;:&quot;</span> + <span class="hljs-built_in">this</span>.getAccount()
+                        + <span class="hljs-string">&quot;:inference-profile/global.anthropic.claude-sonnet-4-6&quot;</span>,
+                <span class="hljs-string">&quot;arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6&quot;</span>))
+        .build());
+</code></pre>
 <blockquote>
 <p><strong>Why this matters (the compliance guarantee):</strong> the audit table is tamper-evident not because of
 application code but because <em>no role can do anything except <code>PutItem</code></em> on it. The query Lambda cannot
@@ -1999,6 +2337,45 @@ anomaly.</li>
 <p>An anomaly fires when <code>|returnZ| &gt;= 3.0</code> or <code>|volumeZ| &gt;= 3.0</code> (<code>ANOMALY_Z_THRESHOLD</code>), or the price
 breaks its 52-week range. The z-score is only computed once the baseline has <code>ANOMALY_MIN_SAMPLES</code> (5)
 observations; below that it is 0 (warmup, no flag).</p>
+<p>The <code>evaluate</code> method that reads the baseline, computes both z-scores, and returns the anomaly-tagged copy:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">/**
+ * Evaluates the point against the ticker&#x27;s baseline, updates the baseline, and returns a copy of
+ * {<span class="hljs-doctag">@code</span> data} carrying the anomaly verdict.
+ */</span>
+<span class="hljs-keyword">public</span> MarketDataResponse <span class="hljs-title function_">evaluate</span><span class="hljs-params">(MarketDataResponse data, String correlationId)</span> {
+    <span class="hljs-type">String</span> <span class="hljs-variable">ticker</span> <span class="hljs-operator">=</span> data.ticker();
+    <span class="hljs-keyword">try</span> {
+        Map&lt;String, AttributeValue&gt; baseline = readBaseline(ticker);
+        <span class="hljs-type">RunningStats</span> <span class="hljs-variable">returnStats</span> <span class="hljs-operator">=</span> readStats(baseline, <span class="hljs-string">&quot;return&quot;</span>);
+        <span class="hljs-type">RunningStats</span> <span class="hljs-variable">volumeStats</span> <span class="hljs-operator">=</span> readStats(baseline, <span class="hljs-string">&quot;volume&quot;</span>);
+
+        <span class="hljs-type">Double</span> <span class="hljs-variable">returnObs</span> <span class="hljs-operator">=</span> toDouble(data.changePercent());
+        <span class="hljs-type">Double</span> <span class="hljs-variable">volumeObs</span> <span class="hljs-operator">=</span> data.volume() == <span class="hljs-literal">null</span> ? <span class="hljs-literal">null</span> : data.volume().doubleValue();
+
+        <span class="hljs-type">double</span> <span class="hljs-variable">returnZ</span> <span class="hljs-operator">=</span> warmZScore(returnStats, returnObs);
+        <span class="hljs-type">double</span> <span class="hljs-variable">volumeZ</span> <span class="hljs-operator">=</span> warmZScore(volumeStats, volumeObs);
+
+        <span class="hljs-type">boolean</span> <span class="hljs-variable">returnAnomaly</span> <span class="hljs-operator">=</span> Math.abs(returnZ) &gt;= zThreshold;
+        <span class="hljs-type">boolean</span> <span class="hljs-variable">volumeAnomaly</span> <span class="hljs-operator">=</span> Math.abs(volumeZ) &gt;= zThreshold;
+        <span class="hljs-type">boolean</span> <span class="hljs-variable">weekBreak</span> <span class="hljs-operator">=</span> fiftyTwoWeekBreak(data);
+
+        <span class="hljs-type">boolean</span> <span class="hljs-variable">anomaly</span> <span class="hljs-operator">=</span> returnAnomaly || volumeAnomaly || weekBreak;
+        <span class="hljs-type">String</span> <span class="hljs-variable">reason</span> <span class="hljs-operator">=</span> anomaly ? buildReason(returnAnomaly, returnZ, volumeAnomaly, volumeZ, weekBreak) : <span class="hljs-literal">null</span>;
+
+        <span class="hljs-type">long</span> <span class="hljs-variable">returnCount</span> <span class="hljs-operator">=</span> persistBaselineWithRetry(ticker, baseline, returnObs, volumeObs, correlationId);
+
+        log.info(
+                <span class="hljs-string">&quot;Anomaly evaluation. ticker={} anomaly={} reason={} returnZ={} volumeZ={} returnCount={} correlationId={}&quot;</span>,
+                ticker,
+                anomaly,
+                reason,
+                returnZ,
+                volumeZ,
+                returnCount,
+                correlationId);
+
+        <span class="hljs-keyword">return</span> data.withAnomaly(anomaly, reason);
+</code></pre>
 <p><strong>Do the arithmetic on the live baseline from Section 7.2</strong> (captured 2026-07-12): <code>returnCount = 14</code>,
 <code>returnMean = 1.4079</code>, <code>returnM2 = 15.4164</code>. Sample variance is <code>M2 / (count - 1) = 15.4164 / 13 = 1.1859</code>, so <code>stdDev = 1.0890</code>. The incoming return at capture time was the frozen weekend
 <code>changePercent = 2.19</code>, giving <code>z = (2.19 - 1.4079) / 1.0890 = 0.72</code> — far below the 3.0 threshold,
@@ -2456,13 +2833,10 @@ denied.</p>
 <h3 id="10-3-right-to-access-and-right-to-erasure">10.3 Right to access and right to erasure</h3>
 <p>One Lambda (<code>DsrHandler</code>, bean <code>dsr</code>) serves both data-subject rights.</p>
 <ul>
-<li>
-<p><strong>Export</strong> (<code>GET /user/export</code>, operation <code>EXPORT</code>): returns all personal data inline as JSON, the
+<li><strong>Export</strong> (<code>GET /user/export</code>, operation <code>EXPORT</code>): returns all personal data inline as JSON, the
 consent record + watchlist + audit trail (<code>UserDataExportService</code>), and writes a <code>DATA_EXPORTED</code> audit
-event.</p>
-</li>
-<li>
-<p><strong>Erasure</strong> (<code>DELETE /user/account</code>, operation <code>ERASE</code>): a <strong>synchronous cascade</strong> inside the DSR
+event.</li>
+<li><strong>Erasure</strong> (<code>DELETE /user/account</code>, operation <code>ERASE</code>): a <strong>synchronous cascade</strong> inside the DSR
 Lambda (<code>ErasureService</code>; the Step Functions workflow was collapsed 2026-07-19): acquire the
 <code>deletion_pending</code> lease on <code>USER#&lt;sub&gt;/PROFILE</code> (so the ingest and insight write paths skip the
 user mid-erasure), capture the subject's email, delete the subject's <code>USER#&lt;sub&gt;/CONSENT</code> + every
@@ -2472,13 +2846,38 @@ send an SES confirmation email, then clear the lease and write the erasure audit
 DynamoDB conditional write (succeed only if the flag is absent, false, or older than 5 minutes):
 a concurrent duplicate <code>DELETE</code> gets an <code>inProgress</code> response and no second cascade, and a
 crashed cascade's stale lease is taken over by the next request. The route returns 200 with the
-completed <code>ErasureResult</code>.</p>
-</li>
-<li>
-<p><strong>Console:</strong> Lambda &gt; <code>financial-dsr-dev</code> (the whole cascade is one invocation; read its log
+completed <code>ErasureResult</code>.</li>
+</ul>
+<p>The conditional-write lease that fences a cascade against concurrent duplicates and stale crashes:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> <span class="hljs-type">boolean</span> <span class="hljs-title function_">acquireDeletionLease</span><span class="hljs-params">(String subjectSub, String requestedAt)</span> {
+    Map&lt;String, AttributeValue&gt; item = <span class="hljs-keyword">new</span> <span class="hljs-title class_">HashMap</span>&lt;&gt;();
+    item.put(<span class="hljs-string">&quot;PK&quot;</span>, AttributeValues.s(<span class="hljs-string">&quot;USER#&quot;</span> + subjectSub));
+    item.put(<span class="hljs-string">&quot;SK&quot;</span>, AttributeValues.s(<span class="hljs-string">&quot;PROFILE&quot;</span>));
+    item.put(<span class="hljs-string">&quot;deletionPending&quot;</span>, AttributeValue.builder().bool(<span class="hljs-literal">true</span>).build());
+    item.put(<span class="hljs-string">&quot;requestedAt&quot;</span>, AttributeValues.s(requestedAt));
+    <span class="hljs-type">String</span> <span class="hljs-variable">staleCutoff</span> <span class="hljs-operator">=</span> Instant.now(clock).minus(DELETION_LEASE).toString();
+    <span class="hljs-keyword">try</span> {
+        dynamoDb.putItem(PutItemRequest.builder()
+                .tableName(platformTable)
+                .item(item)
+                .conditionExpression(<span class="hljs-string">&quot;attribute_not_exists(deletionPending) OR deletionPending &lt;&gt; :pending&quot;</span>
+                        + <span class="hljs-string">&quot; OR requestedAt &lt; :staleCutoff&quot;</span>)
+                .expressionAttributeValues(Map.of(
+                        <span class="hljs-string">&quot;:pending&quot;</span>, AttributeValue.builder().bool(<span class="hljs-literal">true</span>).build(),
+                        <span class="hljs-string">&quot;:staleCutoff&quot;</span>, AttributeValues.s(staleCutoff)))
+                .build());
+        log.info(<span class="hljs-string">&quot;Acquired deletion lease. subjectSub={}&quot;</span>, subjectSub);
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">true</span>;
+    } <span class="hljs-keyword">catch</span> (ConditionalCheckFailedException e) {
+        log.info(<span class="hljs-string">&quot;Deletion lease held by an in-flight cascade; no-op. subjectSub={}&quot;</span>, subjectSub);
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>;
+    }
+}
+</code></pre>
+<ul>
+<li><strong>Console:</strong> Lambda &gt; <code>financial-dsr-dev</code> (the whole cascade is one invocation; read its log
 stream to follow the steps). The DSR IAM role is the only one granted Cognito
-<code>AdminDeleteUser</code> / <code>ListUsers</code>.</p>
-</li>
+<code>AdminDeleteUser</code> / <code>ListUsers</code>.</li>
 </ul>
 <blockquote>
 <p><strong>Why not a workflow, and why this ordering?</strong> The cascade crosses DynamoDB, S3, Cognito, and SES,
@@ -2573,6 +2972,28 @@ future regressions from silently dropping coverage; the list, not the number, is
 to write. A percentage gate can tell you when coverage regresses; it cannot tell you which paths are
 worth testing in the first place.</p>
 </blockquote>
+<p>A guard test asserting the three business metrics stay dashboard-only and never get a SEARCH-backed alarm:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">// CloudWatch rejects ANY alarm whose expression contains SEARCH (&quot;SEARCH is not supported on</span>
+<span class="hljs-comment">// Metric Alarms&quot;) - confirmed at deploy time, not caught by synth. The three business metrics are</span>
+<span class="hljs-comment">// emitted only as per-dimension EMF series, so there is no single dimensionless series to alarm on</span>
+<span class="hljs-comment">// without a SEARCH. They are therefore dashboard-only; no threshold alarm is created for them.</span>
+<span class="hljs-comment">// This guards against reintroducing a SEARCH-backed business alarm (which would break deploy).</span>
+<span class="hljs-meta">@Test</span>
+<span class="hljs-meta">@SuppressWarnings(&quot;unchecked&quot;)</span>
+<span class="hljs-keyword">void</span> <span class="hljs-title function_">noSearchBackedBusinessAlarmsAreCreated</span><span class="hljs-params">()</span> {
+    <span class="hljs-type">var</span> <span class="hljs-variable">alarms</span> <span class="hljs-operator">=</span> synth().findResources(<span class="hljs-string">&quot;AWS::CloudWatch::Alarm&quot;</span>);
+    <span class="hljs-type">var</span> <span class="hljs-variable">forbiddenNames</span> <span class="hljs-operator">=</span>
+            List.of(<span class="hljs-string">&quot;financial-data-freshness-dev&quot;</span>, <span class="hljs-string">&quot;financial-bedrock-error-dev&quot;</span>, <span class="hljs-string">&quot;financial-auth-denied-dev&quot;</span>);
+    <span class="hljs-type">var</span> <span class="hljs-variable">present</span> <span class="hljs-operator">=</span> alarms.values().stream()
+            .map(r -&gt; (Map&lt;String, Object&gt;) r.get(<span class="hljs-string">&quot;Properties&quot;</span>))
+            .map(p -&gt; (String) p.get(<span class="hljs-string">&quot;AlarmName&quot;</span>))
+            .filter(forbiddenNames::contains)
+            .toList();
+    assertTrue(
+            present.isEmpty(),
+            <span class="hljs-string">&quot;business metrics are dashboard-only; no alarm should be created, found: &quot;</span> + present);
+}
+</code></pre>
 <p><strong>Observability you can open right now</strong> (ap-south-1):</p>
 <ul>
 <li><strong>CloudWatch &gt; Dashboards &gt; <code>financial-platform-dev</code></strong> is one pane: API latency p50/p90/p99, request

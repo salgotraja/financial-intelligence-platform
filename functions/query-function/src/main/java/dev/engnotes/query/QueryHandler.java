@@ -54,6 +54,7 @@ public class QueryHandler {
         return Metrics.forFunction("financial-query");
     }
 
+    // tag::serve-insight[]
     /** Returns the latest stored insight for the requested ticker. */
     @Bean
     public Function<QueryRequest, QueryResponse> serveInsight(InsightQuery insightQuery, Metrics metrics) {
@@ -81,6 +82,7 @@ public class QueryHandler {
             }
         };
     }
+    // end::serve-insight[]
 
     /** Returns recent stored market-data points for the requested ticker (newest first). */
     @Bean

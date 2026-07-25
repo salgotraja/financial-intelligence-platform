@@ -44,6 +44,7 @@ public class DataStack extends Stack {
         boolean prod = env.equals("prod");
         RemovalPolicy statefulRemoval = prod ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
+        // tag::kms-key[]
         // KMS Key - one customer-managed key for all data at rest. Rotation enabled (annual).
         this.encryptionKey = Key.Builder.create(this, "PlatformKey")
                 .description("Encryption key for Financial Intelligence Platform - " + env)
@@ -53,10 +54,12 @@ public class DataStack extends Stack {
                 // dev DESTROY avoids orphaned keys piling up across teardown cycles.
                 .removalPolicy(statefulRemoval)
                 .build();
+        // end::kms-key[]
 
         Tags.of(encryptionKey).add("component", "security");
         Tags.of(encryptionKey).add("env", env);
 
+        // tag::platform-table[]
         // DynamoDB: single-table design (spec section 4)
         // One table overloads every operational entity onto generic PK/SK:
         //   market data point  PK=TICKER#{ticker}  SK=TS#{iso8601}      (ttl ~24h)
@@ -102,6 +105,7 @@ public class DataStack extends Stack {
                         .build())
                 .projectionType(ProjectionType.ALL)
                 .build());
+        // end::platform-table[]
 
         // Append-only consent audit table (spec sub-project B). Separate from the single table so the
         // app role can hold PutItem only (no Update/Delete) for tamper-evidence. RETAIN in every env

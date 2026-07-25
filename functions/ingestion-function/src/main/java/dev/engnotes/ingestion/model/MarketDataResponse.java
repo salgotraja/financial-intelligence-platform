@@ -10,6 +10,7 @@ import java.math.BigDecimal;
  * gate and {@link #withStored(boolean)} after persistence. Serialized to JSON by component name, so
  * the wire shape (notably {@code anomaly}, read by the Step Functions Choice) is unchanged.
  */
+// tag::market-data-record[]
 public record MarketDataResponse(
         String ticker,
         BigDecimal price,
@@ -25,6 +26,7 @@ public record MarketDataResponse(
         boolean stored,
         boolean anomaly,
         String anomalyReason) {
+    // end::market-data-record[]
 
     public static Builder builder() {
         return new Builder();

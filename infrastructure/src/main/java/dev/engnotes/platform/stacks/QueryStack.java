@@ -436,6 +436,7 @@ public class QueryStack extends Stack {
                 .resultsCacheTtl(Duration.minutes(5))
                 .build();
 
+        // tag::query-live-alias[]
         // Invoke the query Lambda via a published-version alias so SnapStart engages; invoking
         // $LATEST would run the full Spring Boot init (~5-10s) on every cold start. No provisioned
         // concurrency: AWS rejects it on a SnapStart-enabled version/alias.
@@ -443,6 +444,7 @@ public class QueryStack extends Stack {
                 .aliasName("live")
                 .version(queryFn.getCurrentVersion())
                 .build();
+        // end::query-live-alias[]
 
         // Same SnapStart rule for the remaining API Lambdas: only a published version restores from
         // the snapshot, so every integration below targets a live alias, never $LATEST.
@@ -645,6 +647,7 @@ public class QueryStack extends Stack {
         // Explicit dependency: associating before the stage exists fails the deploy.
         webAclAssociation.getNode().addDependency(deployedStage);
 
+        // tag::query-integration[]
         // Non-proxy: the request template maps the path ticker + request id onto the function's
         // QueryRequest record. With the default proxy integration the template is ignored and the
         // raw event arrives, so the ticker resolves to null.
@@ -674,6 +677,7 @@ public class QueryStack extends Stack {
                                 .requestParameters(Map.of("method.request.path.ticker", true))
                                 .methodResponses(standardMethodResponses())
                                 .build());
+        // end::query-integration[]
 
         // /insights - protected (readers+), watchlist-scoped insight feed (no ticker). Bare resource,
         // separate from /insights/{ticker} above and from RoutePolicy's "insights/*" rule.
@@ -1209,6 +1213,7 @@ public class QueryStack extends Stack {
         // rollup metrics (a Plans 1+2 change); tracked as backlog. See the observability design Plan-3
         // amendment and the real-AWS-only-defects note (bare/aggregated SEARCH both fail at deploy).
 
+        // tag::platform-health-alarm[]
         // == PlatformHealth composite ==
         // Single health rollup of the two existing P1 pagers, wired to the same critical SNS topic.
         // No SEARCH here, so this deploys cleanly.
@@ -1218,6 +1223,7 @@ public class QueryStack extends Stack {
                 .alarmRule(AlarmRule.anyOf(p99LatencyAlarm, api5xxRateAlarm))
                 .build();
         platformHealth.addAlarmAction(new SnsAction(data.getCriticalTopic()));
+        // end::platform-health-alarm[]
 
         // == Platform dashboard ==
         // One pane aggregating user-facing symptoms (API, Lambda) and diagnostic causes (ingestion,

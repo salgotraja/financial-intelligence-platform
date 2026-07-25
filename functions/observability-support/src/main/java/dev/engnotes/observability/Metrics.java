@@ -95,6 +95,7 @@ public final class Metrics {
         return this;
     }
 
+    // tag::emf-emit[]
     private Metrics emit(String name, double value, Unit unit, String... dimensionPairs) {
         DimensionSet dimensions = buildDimensions(dimensionPairs);
         MetricsLogger logger = loggerFactory.get();
@@ -108,6 +109,7 @@ public final class Metrics {
         logger.flush();
         return this;
     }
+    // end::emf-emit[]
 
     private static DimensionSet buildDimensions(String... pairs) {
         if (pairs == null || pairs.length == 0) {

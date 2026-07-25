@@ -149,6 +149,7 @@ public class MarketDataStoreService {
                 .build());
     }
 
+    // tag::s3-lake-write[]
     private void storeToS3(MarketDataResponse data, String timestamp, String correlationId) {
         Instant now = Instant.now();
 
@@ -179,6 +180,7 @@ public class MarketDataStoreService {
                         .build(),
                 RequestBody.fromBytes(payload));
     }
+    // end::s3-lake-write[]
 
     /**
      * S3 object tag values reject characters like {@code ^} (e.g. the index ticker {@code ^NSEI}),

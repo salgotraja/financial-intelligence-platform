@@ -93,6 +93,7 @@ public class SecurityStack extends Stack {
                     .build();
         }
 
+        // tag::cognito-post-confirmation[]
         // PostConfirmation trigger: seeds default-deny consent + ACCOUNT_CREATED audit at signup
         // (spec sub-project B). ADR 0004: no VPC anywhere in the platform, so this persistent
         // stack reaches DynamoDB over the regional endpoint via its role, same as every other Lambda.
@@ -136,6 +137,7 @@ public class SecurityStack extends Stack {
                 .build();
 
         userPool.addTrigger(UserPoolOperation.POST_CONFIRMATION, postConfirmationFn);
+        // end::cognito-post-confirmation[]
 
         // PreAuthentication trigger: login gate (spec s11, adapted). Denies WITHDRAWN consent and
         // GIVEN-under-a-stale-version consent by throwing; PENDING (never consented) and current-
