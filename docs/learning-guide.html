@@ -2535,6 +2535,65 @@ token cost, auth denials, API Gateway cache hit/miss), ending in an alarm-status
 carry no threshold alarms: CloudWatch forbids <code>SEARCH</code> in an alarm expression, and the EMF metrics
 are emitted only as per-dimension series, so there is no single series to alarm on without a SEARCH.
 Alarming on them waits on dimensionless rollup metrics from the functions (backlog).</p>
+<p>The <code>correlationId</code> referenced throughout this guide is threaded through the MDC by one small
+try-with-resources class every handler opens first, and closes last:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">private</span> <span class="hljs-title function_">RequestContext</span><span class="hljs-params">(String function, String correlationId)</span> {
+    <span class="hljs-built_in">this</span>.correlationId = correlationId;
+    MDC.put(<span class="hljs-string">&quot;function&quot;</span>, function);
+    MDC.put(<span class="hljs-string">&quot;correlationId&quot;</span>, correlationId);
+    <span class="hljs-type">String</span> <span class="hljs-variable">traceId</span> <span class="hljs-operator">=</span> parseTraceRoot(System.getenv(TRACE_ENV));
+    <span class="hljs-keyword">if</span> (traceId != <span class="hljs-literal">null</span>) {
+        MDC.put(<span class="hljs-string">&quot;traceId&quot;</span>, traceId);
+    }
+}
+
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> RequestContext <span class="hljs-title function_">begin</span><span class="hljs-params">(String function, String correlationId)</span> {
+    <span class="hljs-type">String</span> <span class="hljs-variable">resolved</span> <span class="hljs-operator">=</span> (correlationId == <span class="hljs-literal">null</span> || correlationId.isBlank())
+            ? UUID.randomUUID().toString()
+            : correlationId;
+    <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">RequestContext</span>(function, resolved);
+}
+
+<span class="hljs-keyword">public</span> RequestContext <span class="hljs-title function_">withTicker</span><span class="hljs-params">(String ticker)</span> {
+    <span class="hljs-keyword">if</span> (ticker != <span class="hljs-literal">null</span>) {
+        MDC.put(<span class="hljs-string">&quot;ticker&quot;</span>, ticker);
+    }
+    <span class="hljs-keyword">return</span> <span class="hljs-built_in">this</span>;
+}
+
+<span class="hljs-keyword">public</span> RequestContext <span class="hljs-title function_">withUser</span><span class="hljs-params">(String userId)</span> {
+    <span class="hljs-keyword">if</span> (userId != <span class="hljs-literal">null</span>) {
+        MDC.put(<span class="hljs-string">&quot;userId&quot;</span>, userId);
+    }
+    <span class="hljs-keyword">return</span> <span class="hljs-built_in">this</span>;
+}
+
+<span class="hljs-keyword">public</span> String <span class="hljs-title function_">correlationId</span><span class="hljs-params">()</span> {
+    <span class="hljs-keyword">return</span> correlationId;
+}
+
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> String <span class="hljs-title function_">parseTraceRoot</span><span class="hljs-params">(String header)</span> {
+    <span class="hljs-keyword">if</span> (header == <span class="hljs-literal">null</span>) {
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">null</span>;
+    }
+    <span class="hljs-keyword">for</span> (String part : header.split(<span class="hljs-string">&quot;;&quot;</span>)) {
+        <span class="hljs-type">String</span> <span class="hljs-variable">trimmed</span> <span class="hljs-operator">=</span> part.trim();
+        <span class="hljs-keyword">if</span> (trimmed.startsWith(<span class="hljs-string">&quot;Root=&quot;</span>)) {
+            <span class="hljs-keyword">return</span> trimmed.substring(<span class="hljs-string">&quot;Root=&quot;</span>.length());
+        }
+    }
+    <span class="hljs-keyword">return</span> <span class="hljs-literal">null</span>;
+}
+
+<span class="hljs-meta">@Override</span>
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title function_">close</span><span class="hljs-params">()</span> {
+    MDC.remove(<span class="hljs-string">&quot;function&quot;</span>);
+    MDC.remove(<span class="hljs-string">&quot;correlationId&quot;</span>);
+    MDC.remove(<span class="hljs-string">&quot;traceId&quot;</span>);
+    MDC.remove(<span class="hljs-string">&quot;ticker&quot;</span>);
+    MDC.remove(<span class="hljs-string">&quot;userId&quot;</span>);
+}
+</code></pre>
 <p>The <code>emit</code> method every metric call in <code>Metrics.java</code> funnels through, before it reaches CloudWatch as an EMF log line:</p>
 <pre><code class="hljs language-java"><span class="hljs-keyword">private</span> Metrics <span class="hljs-title function_">emit</span><span class="hljs-params">(String name, <span class="hljs-type">double</span> value, Unit unit, String... dimensionPairs)</span> {
     <span class="hljs-type">DimensionSet</span> <span class="hljs-variable">dimensions</span> <span class="hljs-operator">=</span> buildDimensions(dimensionPairs);
@@ -2993,6 +3052,70 @@ fields, parsed and validated by the <code>StructuredInsight</code> record, retri
 recorded <em>before</em> validation, because tokens are billed whether or not the output parses.</p>
 <p>The stored insight item and its attributes are in Section 7.2. The <code>source</code> attribute is the honest
 label of which path produced it: <code>BEDROCK</code> or <code>RULE_BASED</code>.</p>
+<p>The tool-schema builder that forces the model into <code>emit_insight</code>, pinning <code>signal</code> to the enum,
+<code>confidence</code> to <code>[0,1]</code>, and requiring all four fields, so there is no free-text path the model can
+take instead:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">private</span> String <span class="hljs-title function_">buildToolRequest</span><span class="hljs-params">(String promptText)</span> {
+    <span class="hljs-type">ObjectNode</span> <span class="hljs-variable">body</span> <span class="hljs-operator">=</span> objectMapper.createObjectNode();
+    body.put(<span class="hljs-string">&quot;anthropic_version&quot;</span>, ANTHROPIC_VERSION);
+    body.put(<span class="hljs-string">&quot;max_tokens&quot;</span>, maxTokens);
+
+    <span class="hljs-type">ObjectNode</span> <span class="hljs-variable">signalProp</span> <span class="hljs-operator">=</span> objectMapper.createObjectNode().put(<span class="hljs-string">&quot;type&quot;</span>, <span class="hljs-string">&quot;string&quot;</span>);
+    <span class="hljs-type">ArrayNode</span> <span class="hljs-variable">signalEnum</span> <span class="hljs-operator">=</span> signalProp.putArray(<span class="hljs-string">&quot;enum&quot;</span>);
+    <span class="hljs-keyword">for</span> (Signal s : Signal.values()) {
+        signalEnum.add(s.name());
+    }
+    <span class="hljs-type">ObjectNode</span> <span class="hljs-variable">confidenceProp</span> <span class="hljs-operator">=</span> objectMapper
+            .createObjectNode()
+            .put(<span class="hljs-string">&quot;type&quot;</span>, <span class="hljs-string">&quot;number&quot;</span>)
+            .put(<span class="hljs-string">&quot;minimum&quot;</span>, <span class="hljs-number">0</span>)
+            .put(<span class="hljs-string">&quot;maximum&quot;</span>, <span class="hljs-number">1</span>);
+    <span class="hljs-type">ObjectNode</span> <span class="hljs-variable">driversProp</span> <span class="hljs-operator">=</span> objectMapper.createObjectNode().put(<span class="hljs-string">&quot;type&quot;</span>, <span class="hljs-string">&quot;array&quot;</span>);
+    driversProp.set(<span class="hljs-string">&quot;items&quot;</span>, objectMapper.createObjectNode().put(<span class="hljs-string">&quot;type&quot;</span>, <span class="hljs-string">&quot;string&quot;</span>));
+
+    <span class="hljs-type">ObjectNode</span> <span class="hljs-variable">properties</span> <span class="hljs-operator">=</span> objectMapper.createObjectNode();
+    properties.set(<span class="hljs-string">&quot;signal&quot;</span>, signalProp);
+    properties.set(<span class="hljs-string">&quot;confidence&quot;</span>, confidenceProp);
+    properties.set(<span class="hljs-string">&quot;rationale&quot;</span>, objectMapper.createObjectNode().put(<span class="hljs-string">&quot;type&quot;</span>, <span class="hljs-string">&quot;string&quot;</span>));
+    properties.set(<span class="hljs-string">&quot;drivers&quot;</span>, driversProp);
+
+    <span class="hljs-type">ObjectNode</span> <span class="hljs-variable">schema</span> <span class="hljs-operator">=</span> objectMapper.createObjectNode();
+    schema.put(<span class="hljs-string">&quot;type&quot;</span>, <span class="hljs-string">&quot;object&quot;</span>);
+    schema.set(<span class="hljs-string">&quot;properties&quot;</span>, properties);
+    <span class="hljs-type">ArrayNode</span> <span class="hljs-variable">required</span> <span class="hljs-operator">=</span> schema.putArray(<span class="hljs-string">&quot;required&quot;</span>);
+    required.add(<span class="hljs-string">&quot;signal&quot;</span>);
+    required.add(<span class="hljs-string">&quot;confidence&quot;</span>);
+    required.add(<span class="hljs-string">&quot;rationale&quot;</span>);
+    required.add(<span class="hljs-string">&quot;drivers&quot;</span>);
+
+    <span class="hljs-type">ObjectNode</span> <span class="hljs-variable">tool</span> <span class="hljs-operator">=</span> objectMapper.createObjectNode();
+    tool.put(<span class="hljs-string">&quot;name&quot;</span>, TOOL_NAME);
+    tool.put(<span class="hljs-string">&quot;description&quot;</span>, <span class="hljs-string">&quot;Return the structured financial insight for the ticker.&quot;</span>);
+    tool.set(<span class="hljs-string">&quot;input_schema&quot;</span>, schema);
+    body.putArray(<span class="hljs-string">&quot;tools&quot;</span>).add(tool);
+
+    <span class="hljs-type">ObjectNode</span> <span class="hljs-variable">toolChoice</span> <span class="hljs-operator">=</span> objectMapper.createObjectNode();
+    toolChoice.put(<span class="hljs-string">&quot;type&quot;</span>, <span class="hljs-string">&quot;tool&quot;</span>);
+    toolChoice.put(<span class="hljs-string">&quot;name&quot;</span>, TOOL_NAME);
+    body.set(<span class="hljs-string">&quot;tool_choice&quot;</span>, toolChoice);
+
+    <span class="hljs-type">ObjectNode</span> <span class="hljs-variable">message</span> <span class="hljs-operator">=</span> objectMapper.createObjectNode();
+    message.put(<span class="hljs-string">&quot;role&quot;</span>, <span class="hljs-string">&quot;user&quot;</span>);
+    message.put(<span class="hljs-string">&quot;content&quot;</span>, promptText);
+    body.putArray(<span class="hljs-string">&quot;messages&quot;</span>).add(message);
+
+    <span class="hljs-keyword">return</span> objectMapper.writeValueAsString(body);
+}
+</code></pre>
+<p><strong>Run it: generate an insight, then read back which path produced it.</strong> Seed an anomaly (Section 8.2's
+&quot;Exercising the insight (Bedrock) leg&quot; procedure), trigger a run, then check the stored item's <code>source</code>:</p>
+<pre><code class="hljs language-bash">aws dynamodb query --table-name financial-platform-dev --region ap-south-1 \
+  --key-condition-expression <span class="hljs-string">&quot;PK = :pk AND begins_with(SK, :sk)&quot;</span> \
+  --expression-attribute-values <span class="hljs-string">&#x27;{&quot;:pk&quot;:{&quot;S&quot;:&quot;TICKER#RELIANCE.NS&quot;},&quot;:sk&quot;:{&quot;S&quot;:&quot;INSIGHT#&quot;}}&#x27;</span> \
+  --no-scan-index-forward --<span class="hljs-built_in">limit</span> 1 \
+  --query <span class="hljs-string">&#x27;Items[0].{source:source.S,signal:signal.S,modelId:modelId.S}&#x27;</span>
+<span class="hljs-comment"># source=BEDROCK once the account&#x27;s quota lifts (Section 8.4); source=RULE_BASED today</span>
+</code></pre>
 <h3 id="8-4-the-rule-based-fallback">8.4 The rule-based fallback</h3>
 <p><code>RuleBasedInsightGenerator</code> produces a deterministic insight in the same schema when the LLM cannot be
 used. It fires on any of: the cost circuit breaker being open; a <code>ThrottlingException</code>; a
@@ -3012,6 +3135,83 @@ thresholds because the model was unavailable.</li>
 free-text LLM path, a throttle no longer fails the state into the DLQ; the platform always returns an
 insight, tagged with its source. Availability is chosen over sophistication for the fallback.</p>
 </blockquote>
+<p>The signal/drivers/rationale logic this section describes, unchanged since it fires on every run
+today:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> StructuredInsight <span class="hljs-title function_">generate</span><span class="hljs-params">(InsightRequest data)</span> {
+    <span class="hljs-type">boolean</span> <span class="hljs-variable">breakoutHigh</span> <span class="hljs-operator">=</span> isBreakoutHigh(data);
+    <span class="hljs-type">boolean</span> <span class="hljs-variable">breakdownLow</span> <span class="hljs-operator">=</span> isBreakdownLow(data);
+    <span class="hljs-type">Signal</span> <span class="hljs-variable">signal</span> <span class="hljs-operator">=</span> deriveSignal(data, breakoutHigh, breakdownLow);
+    List&lt;String&gt; drivers = buildDrivers(data, breakoutHigh, breakdownLow);
+    <span class="hljs-type">String</span> <span class="hljs-variable">rationale</span> <span class="hljs-operator">=</span> buildRationale(data, signal);
+    <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">StructuredInsight</span>(signal, fallbackConfidence, rationale, drivers);
+}
+
+<span class="hljs-keyword">private</span> Signal <span class="hljs-title function_">deriveSignal</span><span class="hljs-params">(InsightRequest data, <span class="hljs-type">boolean</span> breakoutHigh, <span class="hljs-type">boolean</span> breakdownLow)</span> {
+    <span class="hljs-keyword">if</span> (breakoutHigh) {
+        <span class="hljs-keyword">return</span> Signal.BULLISH;
+    }
+    <span class="hljs-keyword">if</span> (breakdownLow) {
+        <span class="hljs-keyword">return</span> Signal.BEARISH;
+    }
+    <span class="hljs-type">BigDecimal</span> <span class="hljs-variable">changePercent</span> <span class="hljs-operator">=</span> data.getChangePercent();
+    <span class="hljs-keyword">if</span> (changePercent == <span class="hljs-literal">null</span>) {
+        <span class="hljs-keyword">return</span> Signal.NEUTRAL;
+    }
+    <span class="hljs-type">double</span> <span class="hljs-variable">pct</span> <span class="hljs-operator">=</span> changePercent.doubleValue();
+    <span class="hljs-keyword">if</span> (pct &gt;= bullishThresholdPercent) {
+        <span class="hljs-keyword">return</span> Signal.BULLISH;
+    }
+    <span class="hljs-keyword">if</span> (pct &lt;= -bullishThresholdPercent) {
+        <span class="hljs-keyword">return</span> Signal.BEARISH;
+    }
+    <span class="hljs-keyword">return</span> Signal.NEUTRAL;
+}
+
+<span class="hljs-keyword">private</span> List&lt;String&gt; <span class="hljs-title function_">buildDrivers</span><span class="hljs-params">(InsightRequest data, <span class="hljs-type">boolean</span> breakoutHigh, <span class="hljs-type">boolean</span> breakdownLow)</span> {
+    List&lt;String&gt; drivers = <span class="hljs-keyword">new</span> <span class="hljs-title class_">ArrayList</span>&lt;&gt;();
+    <span class="hljs-keyword">if</span> (data.getAnomalyReason() != <span class="hljs-literal">null</span> &amp;&amp; !data.getAnomalyReason().isBlank()) {
+        drivers.add(<span class="hljs-string">&quot;anomaly: &quot;</span> + data.getAnomalyReason().strip());
+    }
+    <span class="hljs-keyword">if</span> (data.getChangePercent() != <span class="hljs-literal">null</span>) {
+        drivers.add(<span class="hljs-string">&quot;change percent: &quot;</span> + data.getChangePercent().toPlainString());
+    }
+    <span class="hljs-keyword">if</span> (data.getVolume() != <span class="hljs-literal">null</span>) {
+        drivers.add(<span class="hljs-string">&quot;volume: &quot;</span> + data.getVolume());
+    }
+    <span class="hljs-keyword">if</span> (breakoutHigh) {
+        drivers.add(<span class="hljs-string">&quot;price broke the 52-week high&quot;</span>);
+    }
+    <span class="hljs-keyword">if</span> (breakdownLow) {
+        drivers.add(<span class="hljs-string">&quot;price broke the 52-week low&quot;</span>);
+    }
+    <span class="hljs-keyword">return</span> drivers;
+}
+
+<span class="hljs-keyword">private</span> String <span class="hljs-title function_">buildRationale</span><span class="hljs-params">(InsightRequest data, Signal signal)</span> {
+    <span class="hljs-type">String</span> <span class="hljs-variable">change</span> <span class="hljs-operator">=</span> data.getChangePercent() == <span class="hljs-literal">null</span>
+            ? <span class="hljs-string">&quot;an unavailable change&quot;</span>
+            : data.getChangePercent().toPlainString() + <span class="hljs-string">&quot;%&quot;</span>;
+    <span class="hljs-keyword">return</span> <span class="hljs-string">&quot;Rule-based fallback insight for &quot;</span> + data.getTicker() + <span class="hljs-string">&quot;: &quot;</span> + signal + <span class="hljs-string">&quot; on a move of &quot;</span> + change
+            + <span class="hljs-string">&quot;. Generated from static thresholds because the model was unavailable.&quot;</span>;
+}
+
+<span class="hljs-keyword">private</span> <span class="hljs-type">boolean</span> <span class="hljs-title function_">isBreakoutHigh</span><span class="hljs-params">(InsightRequest data)</span> {
+    <span class="hljs-keyword">return</span> data.getPrice() != <span class="hljs-literal">null</span>
+            &amp;&amp; data.getHigh52Week() != <span class="hljs-literal">null</span>
+            &amp;&amp; data.getPrice().compareTo(data.getHigh52Week()) &gt; <span class="hljs-number">0</span>;
+}
+
+<span class="hljs-keyword">private</span> <span class="hljs-type">boolean</span> <span class="hljs-title function_">isBreakdownLow</span><span class="hljs-params">(InsightRequest data)</span> {
+    <span class="hljs-keyword">return</span> data.getPrice() != <span class="hljs-literal">null</span>
+            &amp;&amp; data.getLow52Week() != <span class="hljs-literal">null</span>
+            &amp;&amp; data.getPrice().compareTo(data.getLow52Week()) &lt; <span class="hljs-number">0</span>;
+}
+</code></pre>
+<p><strong>Run it: see why the fallback fires instead of Bedrock.</strong></p>
+<pre><code class="hljs language-bash">aws bedrock get-foundation-model-availability --model-id anthropic.claude-sonnet-4-6 --region ap-south-1 \
+  --query <span class="hljs-string">&#x27;{region:regionAvailability,auth:authorizationStatus,agreement:agreementAvailability}&#x27;</span>
+<span class="hljs-comment"># agreement AVAILABLE + a 0 tokens/day account quota is why RULE_BASED is still the live path</span>
+</code></pre>
 <p><strong>See it live:</strong> the captured insight item in Section 7.2 is this fallback's real output. Every rule
 above is visible in it: <code>signal = BULLISH</code> because <code>changePercent 2.19 &gt;= 1.0</code>; <code>confidence = 0.4</code>
 (the fixed fallback value); drivers built from the anomaly reason (<code>return z=219.00</code>), the change
@@ -3059,6 +3259,42 @@ the breaker <em>closed</em> (fail-open for availability), so a DynamoDB hiccup n
 generation. This layered cost control (anomaly gate, then per-day breaker, then Budgets, then ephemeral
 teardown) is how a learning account stays under USD 5.</p>
 </blockquote>
+<p>The breaker check <code>BedrockInsightService</code> calls before every invoke:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">/** True when today&#x27;s accumulated Bedrock spend has reached the configured daily cap. */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-type">boolean</span> <span class="hljs-title function_">isBreakerOpen</span><span class="hljs-params">()</span> {
+    <span class="hljs-type">String</span> <span class="hljs-variable">dayKey</span> <span class="hljs-operator">=</span> dayPartitionKey();
+    <span class="hljs-keyword">try</span> {
+        Map&lt;String, AttributeValue&gt; item = dynamoDb.getItem(GetItemRequest.builder()
+                        .tableName(platformTable)
+                        .key(Map.of(<span class="hljs-string">&quot;PK&quot;</span>, str(dayKey), <span class="hljs-string">&quot;SK&quot;</span>, str(TOTAL_SK)))
+                        .projectionExpression(<span class="hljs-string">&quot;spendUsd&quot;</span>)
+                        .build())
+                .item();
+        <span class="hljs-keyword">if</span> (item == <span class="hljs-literal">null</span> || !item.containsKey(<span class="hljs-string">&quot;spendUsd&quot;</span>)) {
+            <span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>;
+        }
+        <span class="hljs-type">BigDecimal</span> <span class="hljs-variable">spend</span> <span class="hljs-operator">=</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">BigDecimal</span>(item.get(<span class="hljs-string">&quot;spendUsd&quot;</span>).n());
+        <span class="hljs-type">boolean</span> <span class="hljs-variable">open</span> <span class="hljs-operator">=</span> spend.compareTo(dailyCapUsd) &gt;= <span class="hljs-number">0</span>;
+        <span class="hljs-keyword">if</span> (open) {
+            log.warn(
+                    <span class="hljs-string">&quot;Bedrock cost circuit breaker OPEN. day={} spendUsd={} capUsd={}&quot;</span>,
+                    dayKey,
+                    spend.toPlainString(),
+                    dailyCapUsd.toPlainString());
+        }
+        <span class="hljs-keyword">return</span> open;
+    } <span class="hljs-keyword">catch</span> (Exception e) {
+        log.warn(<span class="hljs-string">&quot;Cost counter read failed, leaving breaker closed. day={} error={}&quot;</span>, dayKey, e.toString());
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>;
+    }
+}
+</code></pre>
+<p><strong>Run it: read today's accumulated Bedrock spend.</strong></p>
+<pre><code class="hljs language-bash">aws dynamodb get-item --table-name financial-platform-dev --region ap-south-1 \
+  --key <span class="hljs-string">&quot;{\&quot;PK\&quot;:{\&quot;S\&quot;:\&quot;COST#<span class="hljs-subst">$(date -u +%F)</span>\&quot;},\&quot;SK\&quot;:{\&quot;S\&quot;:\&quot;TOTAL\&quot;}}&quot;</span> \
+  --query <span class="hljs-string">&#x27;Item.spendUsd.N&#x27;</span>
+<span class="hljs-comment"># absent item (no output) means zero spend today; the breaker opens once this reaches COST_DAILY_CAP_USD</span>
+</code></pre>
 <h3 id="8-6-correlation-grouping-and-cross-ticker-insight">8.6 Correlation grouping and cross-ticker insight</h3>
 <p>The insight unit is a group of correlated tickers, not a single ticker (spec section 7). A third
 EventBridge rule, <code>financial-correlations-schedule-dev</code> (<code>cron(0/15 3-9 ? * MON-FRI *)</code>), drives a
@@ -3101,6 +3337,44 @@ thresholded correlation graph, which union-find solves in near-linear time with 
 tuning knobs beyond the one threshold. It is the cheapest correct cut for &quot;group tickers that move
 together.&quot; Code: the correlation service + <code>CorrelationStoreService</code> in <code>insight-function</code>.</p>
 </blockquote>
+<p>The pass this section describes, start to finish: read the qualifying series, compute every pair,
+cluster, persist:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> CorrelationResponse <span class="hljs-title function_">compute</span><span class="hljs-params">(Instant now)</span> {
+    Map&lt;String, TickerSeries&gt; qualifying = readQualifyingSeries();
+    List&lt;CorrelationEdge&gt; computedEdges = computeAllPairs(qualifying);
+    List&lt;CorrelationEdge&gt; qualifyingEdges = computedEdges.stream()
+            .filter(edge -&gt; Math.abs(edge.rho()) &gt;= threshold)
+            .toList();
+
+    <span class="hljs-type">String</span> <span class="hljs-variable">computedAt</span> <span class="hljs-operator">=</span> now.toString();
+    <span class="hljs-type">String</span> <span class="hljs-variable">window</span> <span class="hljs-operator">=</span> windowDescription();
+
+    List&lt;CorrelationGroup&gt; groups = CorrelationClustering.connectedComponents(qualifyingEdges).stream()
+            .map(members -&gt; <span class="hljs-keyword">new</span> <span class="hljs-title class_">CorrelationGroup</span>(
+                    GroupIdGenerator.groupId(members),
+                    members,
+                    rhosWithin(computedEdges, members),
+                    window,
+                    computedAt))
+            .toList();
+
+    storeService.replaceAll(groups);
+
+    log.info(
+            <span class="hljs-string">&quot;Correlation pass complete. tickersEvaluated={} pairsComputed={} groupsComputed={} threshold={}&quot;</span>,
+            qualifying.size(),
+            computedEdges.size(),
+            groups.size(),
+            threshold);
+
+    <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">CorrelationResponse</span>(<span class="hljs-string">&quot;computed&quot;</span>, qualifying.size(), groups.size(), computedAt);
+}
+</code></pre>
+<p><strong>Run it: read the groups the last pass produced</strong>, via the <code>GROUPSET</code> distinct-index mirror:</p>
+<pre><code class="hljs language-bash">aws dynamodb query --table-name financial-platform-dev --region ap-south-1 \
+  --key-condition-expression <span class="hljs-string">&quot;PK = :pk&quot;</span> \
+  --expression-attribute-values <span class="hljs-string">&#x27;{&quot;:pk&quot;:{&quot;S&quot;:&quot;GROUPSET&quot;}}&#x27;</span> --output json | jq <span class="hljs-string">&#x27;.Items&#x27;</span>
+</code></pre>
 <h3 id="8-7-market-hours-and-nse-holiday-gating">8.7 Market-hours and NSE-holiday gating</h3>
 <p>Scheduled work must not run when the NSE is closed: off-session ingest pollutes the intraday curve and
 burns invocations, and off-session correlation groups over stale data. Two layers enforce this.</p>
@@ -3127,6 +3401,37 @@ copy of the small, static calendar rather than introducing a cross-module depend
 The two lists are kept identical by convention; a shared module would couple two independently
 deployable units for almost no code. Code: <code>MarketHours.java</code> in each function module.</p>
 </blockquote>
+<p>The cron envelope handles weekday and time; this is the in-code layer that also excludes the listed
+NSE holidays:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">/** True when {<span class="hljs-doctag">@code</span> date} is an NSE trading day: a weekday that is not a listed holiday. */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-type">boolean</span> <span class="hljs-title function_">isTradingDay</span><span class="hljs-params">(LocalDate date)</span> {
+    <span class="hljs-type">DayOfWeek</span> <span class="hljs-variable">day</span> <span class="hljs-operator">=</span> date.getDayOfWeek();
+    <span class="hljs-keyword">if</span> (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY) {
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>;
+    }
+    <span class="hljs-keyword">return</span> !TRADING_HOLIDAYS_2026.contains(date);
+}
+
+<span class="hljs-comment">/** True when {<span class="hljs-doctag">@code</span> instant}, viewed in Asia/Kolkata, falls inside the NSE trading session. */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-type">boolean</span> <span class="hljs-title function_">isMarketOpen</span><span class="hljs-params">(Instant instant)</span> {
+    <span class="hljs-type">ZonedDateTime</span> <span class="hljs-variable">local</span> <span class="hljs-operator">=</span> instant.atZone(TRADING_ZONE);
+    <span class="hljs-keyword">if</span> (!isTradingDay(local.toLocalDate())) {
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>;
+    }
+    <span class="hljs-type">LocalTime</span> <span class="hljs-variable">time</span> <span class="hljs-operator">=</span> local.toLocalTime();
+    <span class="hljs-keyword">return</span> !time.isBefore(SESSION_OPEN) &amp;&amp; !time.isAfter(SESSION_CLOSE);
+}
+</code></pre>
+<p><strong>Run it: confirm the schedule rule and observe a holiday no-op.</strong> There is no runnable command that
+fakes a holiday against live AWS (the guard reads the real clock), so this observes the gate's effect
+in the logs instead of driving it directly:</p>
+<pre><code class="hljs language-bash">aws events describe-rule --name financial-market-data-schedule-dev \
+  --query <span class="hljs-string">&quot;{state:State,schedule:ScheduleExpression}&quot;</span> --output table
+aws logs <span class="hljs-built_in">tail</span> /aws/lambda/financial-fetch-market-data-dev --region ap-south-1 --since 1d \
+  --filter-pattern <span class="hljs-string">&quot;market-closed&quot;</span>
+<span class="hljs-comment"># a hit shows stored=false dataSource=market-closed: the run inside the cron window that the holiday</span>
+<span class="hljs-comment"># guard still no-opped</span>
+</code></pre>
 <h3 id="8-8-history-backfill-conditional-writes-and-the-yahoo-history-endpoint">8.8 History backfill: conditional writes and the Yahoo history endpoint</h3>
 <p>The deep-analysis feature (Section 9.5) needs a year of daily bars on day one, not just the ones a
 ticker accumulates going forward. <code>HistoryBackfillService</code> fills that gap once per ticker: it fetches
@@ -3165,6 +3470,58 @@ equivalent needed because the backfill is idempotent and rerunnable (a failed ti
 rerunning the sweep script, not by a second data source). Code: <code>YahooHistoryProvider.java</code>,
 <code>HistoryBackfillService.java</code>, <code>IngestionStack.java</code> (<code>HistoryBackfillFn</code>).</p>
 </blockquote>
+<p>The conditional put that makes a rerun a cheap no-op on every day a live rollup or earlier backfill
+already owns:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> BackfillResult <span class="hljs-title function_">backfill</span><span class="hljs-params">(String ticker, String correlationId)</span> {
+    List&lt;DailyBar&gt; bars = historyProvider.fetchDailyBars(ticker, correlationId);
+    <span class="hljs-type">int</span> <span class="hljs-variable">written</span> <span class="hljs-operator">=</span> <span class="hljs-number">0</span>;
+    <span class="hljs-type">int</span> <span class="hljs-variable">skipped</span> <span class="hljs-operator">=</span> <span class="hljs-number">0</span>;
+    <span class="hljs-keyword">for</span> (DailyBar bar : bars) {
+        Map&lt;String, AttributeValue&gt; item = <span class="hljs-keyword">new</span> <span class="hljs-title class_">HashMap</span>&lt;&gt;();
+        item.put(<span class="hljs-string">&quot;PK&quot;</span>, str(<span class="hljs-string">&quot;TICKER#&quot;</span> + ticker));
+        item.put(<span class="hljs-string">&quot;SK&quot;</span>, str(<span class="hljs-string">&quot;DAY#&quot;</span> + bar.date()));
+        item.put(<span class="hljs-string">&quot;ticker&quot;</span>, str(ticker));
+        item.put(<span class="hljs-string">&quot;day&quot;</span>, str(bar.date().toString()));
+        putNumber(item, <span class="hljs-string">&quot;open&quot;</span>, bar.open());
+        putNumber(item, <span class="hljs-string">&quot;high&quot;</span>, bar.high());
+        putNumber(item, <span class="hljs-string">&quot;low&quot;</span>, bar.low());
+        putNumber(item, <span class="hljs-string">&quot;close&quot;</span>, bar.close());
+        <span class="hljs-comment">// Intentionally omit previousClose: readers compute close-to-close returns; the</span>
+        <span class="hljs-comment">// notable-day story sentence skips rows without it.</span>
+        <span class="hljs-keyword">if</span> (bar.volume() != <span class="hljs-literal">null</span>) {
+            item.put(
+                    <span class="hljs-string">&quot;volume&quot;</span>,
+                    AttributeValue.builder().n(Long.toString(bar.volume())).build());
+        }
+        item.put(<span class="hljs-string">&quot;updatedAt&quot;</span>, str(Instant.now().toString()));
+        item.put(<span class="hljs-string">&quot;backfilled&quot;</span>, AttributeValue.builder().bool(<span class="hljs-literal">true</span>).build());
+        <span class="hljs-keyword">try</span> {
+            dynamoDb.putItem(PutItemRequest.builder()
+                    .tableName(platformTable)
+                    .item(item)
+                    .conditionExpression(<span class="hljs-string">&quot;attribute_not_exists(PK) AND attribute_not_exists(SK)&quot;</span>)
+                    .build());
+            written++;
+        } <span class="hljs-keyword">catch</span> (ConditionalCheckFailedException e) {
+            skipped++; <span class="hljs-comment">// a live rollup (or an earlier backfill) already owns this day</span>
+        }
+    }
+    log.info(
+            <span class="hljs-string">&quot;History backfill complete. ticker={} bars={} written={} skipped={} correlationId={}&quot;</span>,
+            ticker,
+            bars.size(),
+            written,
+            skipped,
+            correlationId);
+    <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">BackfillResult</span>(ticker, written, skipped);
+}
+</code></pre>
+<p><strong>Run it: check a watched ticker's backfilled days</strong>, filtering the <code>DAY#</code> rows for the provenance flag:</p>
+<pre><code class="hljs language-bash">aws dynamodb query --table-name financial-platform-dev --region ap-south-1 \
+  --key-condition-expression <span class="hljs-string">&quot;PK = :pk AND begins_with(SK, :sk)&quot;</span> \
+  --expression-attribute-values <span class="hljs-string">&#x27;{&quot;:pk&quot;:{&quot;S&quot;:&quot;TICKER#RELIANCE.NS&quot;},&quot;:sk&quot;:{&quot;S&quot;:&quot;DAY#&quot;}}&#x27;</span> \
+  --projection-expression <span class="hljs-string">&quot;SK, backfilled&quot;</span> --query <span class="hljs-string">&#x27;Items[?backfilled.BOOL==`true`]&#x27;</span>
+</code></pre>
 <hr>
 <h2 id="9-the-read-path-in-depth">9. The read path in depth</h2>
 <p>The read path is the Query stack at runtime: API Gateway -&gt; authorizer Lambda -&gt; (cache) -&gt; query
@@ -3185,6 +3542,44 @@ templates read as <code>$context.authorizer.sub</code> / <code>$context.authoriz
 <p>Authorization is group-driven via <code>RoutePolicy.allowedRules(groups)</code> (Section 10.2): if the caller's
 groups match no rule the authorizer returns <strong>Deny</strong>; otherwise <strong>Allow</strong> with the allowed method ARNs.
 Any exception fails closed to a Deny with an &quot;unknown&quot; principal.</p>
+<p>The bean, start to finish: verify, build the allowed-resource list, hand-build the policy Map:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> Function&lt;APIGatewayCustomAuthorizerEvent, Map&lt;String, Object&gt;&gt; <span class="hljs-title function_">authorize</span><span class="hljs-params">(
+        JwtVerifier verifier, Metrics metrics)</span> {
+    <span class="hljs-keyword">return</span> event -&gt; {
+        <span class="hljs-keyword">try</span> (<span class="hljs-type">var</span> <span class="hljs-variable">ctx</span> <span class="hljs-operator">=</span> RequestContext.begin(MODULE_LABEL, <span class="hljs-literal">null</span>)) {
+            <span class="hljs-type">String</span> <span class="hljs-variable">methodArn</span> <span class="hljs-operator">=</span> event.getMethodArn();
+            <span class="hljs-keyword">try</span> {
+                <span class="hljs-type">Principal</span> <span class="hljs-variable">principal</span> <span class="hljs-operator">=</span> verifier.verify(stripBearer(event.getAuthorizationToken()));
+                List&lt;RoutePolicy.Rule&gt; allowed = RoutePolicy.allowedRules(principal.groups());
+                <span class="hljs-keyword">if</span> (allowed.isEmpty()) {
+                    log.info(<span class="hljs-string">&quot;Deny (no permitted routes). sub={}&quot;</span>, principal.sub());
+                    metrics.count(<span class="hljs-string">&quot;AuthDenied&quot;</span>, <span class="hljs-string">&quot;reason&quot;</span>, <span class="hljs-string">&quot;no_permitted_routes&quot;</span>);
+                    <span class="hljs-keyword">return</span> policy(
+                            principal.sub(), deny(methodArn), principal.sub(), joinGroups(principal.groups()));
+                }
+                <span class="hljs-type">String</span> <span class="hljs-variable">base</span> <span class="hljs-operator">=</span> arnBase(methodArn);
+                List&lt;String&gt; resources = allowed.stream()
+                        .map(rule -&gt; base + <span class="hljs-string">&quot;/&quot;</span> + rule.httpMethod() + <span class="hljs-string">&quot;/&quot;</span> + rule.resourcePattern())
+                        .toList();
+                <span class="hljs-keyword">return</span> policy(principal.sub(), allow(resources), principal.sub(), joinGroups(principal.groups()));
+            } <span class="hljs-keyword">catch</span> (RuntimeException e) {
+                log.warn(<span class="hljs-string">&quot;Deny (verification failed): {}&quot;</span>, e.getMessage());
+                metrics.count(<span class="hljs-string">&quot;AuthDenied&quot;</span>, <span class="hljs-string">&quot;reason&quot;</span>, <span class="hljs-string">&quot;verification_failed&quot;</span>);
+                <span class="hljs-keyword">return</span> policy(<span class="hljs-string">&quot;unknown&quot;</span>, deny(methodArn), <span class="hljs-string">&quot;unknown&quot;</span>, <span class="hljs-string">&quot;&quot;</span>);
+            }
+        }
+    };
+}
+</code></pre>
+<p><strong>Run it: mint a token, decode its claims, and tail the authorizer's allow/deny decisions.</strong></p>
+<pre><code class="hljs language-bash">ACCESS_TOKEN=$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id <span class="hljs-string">&quot;<span class="hljs-variable">$CLIENT_ID</span>&quot;</span> \
+  --auth-parameters <span class="hljs-string">&quot;USERNAME=<span class="hljs-variable">$TEST_USER</span>,PASSWORD=<span class="hljs-variable">$TEST_USER_PASSWORD</span>&quot;</span> \
+  --query <span class="hljs-string">&#x27;AuthenticationResult.AccessToken&#x27;</span> --output text)
+<span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> | <span class="hljs-built_in">cut</span> -d. -f2 | <span class="hljs-built_in">tr</span> <span class="hljs-string">&#x27;_-&#x27;</span> <span class="hljs-string">&#x27;/+&#x27;</span> | <span class="hljs-built_in">base64</span> -d 2&gt;/dev/null | jq
+<span class="hljs-comment"># look for token_use=access and cognito:groups - that claim is what RoutePolicy (Section 10.2) checks</span>
+
+aws logs <span class="hljs-built_in">tail</span> /aws/lambda/financial-authorizer-dev --region ap-south-1 --since 15m
+</code></pre>
 <blockquote>
 <p><strong>Why return a reusable policy?</strong> The authorizer expands the caller's allowed rules into method-ARN
 resources, so the returned policy covers all of the caller's routes, which is safe under API Gateway's
@@ -3239,6 +3634,36 @@ alone, which is correct because the response is the same for everyone. The <stro
 cached response. Those methods now include <code>Authorization</code> in <code>cacheKeyParameters</code>, so each caller's
 response is cached under its own token. This is the fix for the cross-user leak in Lesson 13.9.</p>
 </blockquote>
+<p>The stage-level cache config both bullets above describe (same construct as the CORS block in
+Section 6.3, <code>rest-api-cors</code>, since both live on the one <code>RestApi.deployOptions()</code> call):</p>
+<pre><code class="hljs language-java"><span class="hljs-type">var</span> <span class="hljs-variable">api</span> <span class="hljs-operator">=</span> RestApi.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;FinancialApi&quot;</span>)
+        .restApiName(<span class="hljs-string">&quot;financial-intelligence-api-&quot;</span> + env)
+        .description(<span class="hljs-string">&quot;Financial Intelligence Platform API&quot;</span>)
+        .deployOptions(StageOptions.builder()
+                .stageName(env)
+                .tracingEnabled(<span class="hljs-literal">true</span>)
+                .dataTraceEnabled(!env.equals(<span class="hljs-string">&quot;prod&quot;</span>)) <span class="hljs-comment">// disable in prod (PII risk)</span>
+                .loggingLevel(MethodLoggingLevel.INFO)
+                .accessLogDestination(<span class="hljs-keyword">new</span> <span class="hljs-title class_">LogGroupLogDestination</span>(apiGwLogs))
+                .accessLogFormat(AccessLogFormat.jsonWithStandardFields())
+                <span class="hljs-comment">// Cache: 60s TTL reduces DynamoDB reads for popular tickers</span>
+                .cachingEnabled(<span class="hljs-literal">true</span>)
+                .cacheTtl(Duration.seconds(<span class="hljs-number">60</span>))
+                .cacheClusterEnabled(<span class="hljs-literal">true</span>)
+                .build())
+        .defaultCorsPreflightOptions(CorsOptions.builder()
+                .allowOrigins(List.of(allowOrigin))
+                .allowMethods(List.of(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;POST&quot;</span>, <span class="hljs-string">&quot;DELETE&quot;</span>, <span class="hljs-string">&quot;OPTIONS&quot;</span>))
+                .build())
+        .build();
+</code></pre>
+<p><strong>Run it: hit the same ticker twice inside the 60s window and watch the second read short-circuit.</strong>
+API Gateway sets no client-visible cache header, so the tell is server-side latency, not a header:</p>
+<pre><code class="hljs language-bash">curl -s -o /dev/null -w <span class="hljs-string">&#x27;latency=%{time_total}s\n&#x27;</span> -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/insights/RELIANCE.NS&quot;</span>
+curl -s -o /dev/null -w <span class="hljs-string">&#x27;latency=%{time_total}s\n&#x27;</span> -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/insights/RELIANCE.NS&quot;</span>
+<span class="hljs-comment"># the second call is the cache hit: no query-Lambda log line for it, and CloudWatch&#x27;s</span>
+<span class="hljs-comment"># metricCacheHitCount (Section 6.12&#x27;s dashboard) is the authoritative hit/miss signal</span>
+</code></pre>
 <h3 id="9-4-waf-rate-limiting-and-aws-managed-rules">9.4 WAF: rate limiting and AWS managed rules</h3>
 <p>The REST API sits behind a REGIONAL WAFv2 Web ACL (<code>financial-waf-{env}</code>) associated to the API
 Gateway <strong>stage</strong>. <code>DefaultAction</code> is Allow, and three rules run in order:</p>
@@ -3268,6 +3693,52 @@ not carry a Web ACL. That gap is moot now: the frontend has no WebSocket transpo
 ~310ms) or from CloudWatch server-side percentiles (steady-state p99 ~15.5ms). See the operator
 runbook's &quot;Load-testing the query path&quot; section.</p>
 </blockquote>
+<p>The rate-limit rule plus the Web ACL that carries it and the two managed rule groups:</p>
+<pre><code class="hljs language-java"><span class="hljs-type">var</span> <span class="hljs-variable">rateLimitVisibility</span> <span class="hljs-operator">=</span> CfnWebACL.VisibilityConfigProperty.builder()
+        .sampledRequestsEnabled(<span class="hljs-literal">true</span>)
+        .cloudWatchMetricsEnabled(<span class="hljs-literal">true</span>)
+        .metricName(<span class="hljs-string">&quot;financial-waf-ratelimit-&quot;</span> + env)
+        .build();
+<span class="hljs-type">var</span> <span class="hljs-variable">rateLimitRule</span> <span class="hljs-operator">=</span> CfnWebACL.RuleProperty.builder()
+        .name(<span class="hljs-string">&quot;RateLimitPerIp&quot;</span>)
+        .priority(<span class="hljs-number">2</span>)
+        .action(CfnWebACL.RuleActionProperty.builder()
+                .block(CfnWebACL.BlockActionProperty.builder().build())
+                .build())
+        .statement(CfnWebACL.StatementProperty.builder()
+                .rateBasedStatement(CfnWebACL.RateBasedStatementProperty.builder()
+                        .limit(<span class="hljs-number">300</span>)
+                        .evaluationWindowSec(<span class="hljs-number">300</span>)
+                        .aggregateKeyType(<span class="hljs-string">&quot;IP&quot;</span>)
+                        .build())
+                .build())
+        .visibilityConfig(rateLimitVisibility)
+        .build();
+
+<span class="hljs-type">var</span> <span class="hljs-variable">webAcl</span> <span class="hljs-operator">=</span> CfnWebACL.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;ApiWebAcl&quot;</span>)
+        .name(<span class="hljs-string">&quot;financial-waf-&quot;</span> + env)
+        .description(<span class="hljs-string">&quot;Regional Web ACL protecting the Financial Intelligence API&quot;</span>)
+        .scope(<span class="hljs-string">&quot;REGIONAL&quot;</span>)
+        .defaultAction(CfnWebACL.DefaultActionProperty.builder()
+                .allow(CfnWebACL.AllowActionProperty.builder().build())
+                .build())
+        .rules(List.of(commonRuleSetRule, knownBadInputsRule, rateLimitRule))
+        .visibilityConfig(CfnWebACL.VisibilityConfigProperty.builder()
+                .sampledRequestsEnabled(<span class="hljs-literal">true</span>)
+                .cloudWatchMetricsEnabled(<span class="hljs-literal">true</span>)
+                .metricName(<span class="hljs-string">&quot;financial-waf-acl-&quot;</span> + env)
+                .build())
+        .build();
+</code></pre>
+<p><strong>Run it: list the ACL and confirm it is associated to the API stage.</strong></p>
+<pre><code class="hljs language-bash">aws wafv2 list-web-acls --scope REGIONAL \
+  --query <span class="hljs-string">&quot;WebACLs[?contains(Name,&#x27;financial-waf&#x27;)].{name:Name,id:Id}&quot;</span> --output table
+REST_ID=$(aws cloudformation describe-stacks --stack-name FinancialPlatform-Query-dev \
+  --query <span class="hljs-string">&quot;Stacks[0].Outputs[?ExportName==&#x27;platform-api-endpoint-dev&#x27;].OutputValue&quot;</span> --output text \
+  | sed -E <span class="hljs-string">&#x27;s#https://([a-z0-9]+)\..*#\1#&#x27;</span>)
+aws wafv2 get-web-acl-for-resource \
+  --resource-arn <span class="hljs-string">&quot;arn:aws:apigateway:ap-south-1::/restapis/<span class="hljs-variable">${REST_ID}</span>/stages/dev&quot;</span> --query <span class="hljs-string">&#x27;WebACL.Name&#x27;</span>
+</code></pre>
 <h3 id="9-5-deep-analysis-compute-on-read-over-the-day-projection">9.5 Deep analysis: compute-on-read over the DAY# projection</h3>
 <p><code>GET /analysis/{ticker}</code> (<code>DeepAnalysisService</code>, bean <code>serveDeepAnalysis</code>) computes deterministic
 1W/1M/3M/1Y stats (return, high/low, volatility, max drawdown, best/worst day, up/down-day counts,
@@ -3296,6 +3767,27 @@ mechanical once you know to look for it; the failure mode without it is a runtim
 <code>ValidationException</code> naming the reserved word, not a compile-time or <code>cdk synth</code>-time error.
 Code: <code>DailyMarketDataQuery.java</code>.</p>
 </blockquote>
+<p>The public entry points: the caller-supplied-point overload <code>StoryQuery</code> uses to avoid a duplicate
+read, and the plain one <code>serveDeepAnalysis</code> uses when it has none to hand in:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> DeepAnalysisResponse <span class="hljs-title function_">analyze</span><span class="hljs-params">(String rawTicker)</span> {
+    <span class="hljs-type">var</span> <span class="hljs-variable">daily</span> <span class="hljs-operator">=</span> dailyMarketDataQuery.findDailyPoints(rawTicker, FETCH_DAYS);
+    Optional&lt;MarketDataPoint&gt; latestPoint =
+            daily.found() ? marketDataQuery.findLatestPoint(daily.ticker()) : Optional.empty();
+    <span class="hljs-keyword">return</span> analyze(daily, latestPoint);
+}
+
+<span class="hljs-comment">/**
+ * Uses the supplied point in {<span class="hljs-doctag">@code</span> band52w} instead of fetching it, so callers that already
+ * hold the latest point (e.g. {<span class="hljs-doctag">@code</span> StoryQuery}) avoid a duplicate DynamoDB read.
+ */</span>
+<span class="hljs-keyword">public</span> DeepAnalysisResponse <span class="hljs-title function_">analyze</span><span class="hljs-params">(String rawTicker, Optional&lt;MarketDataPoint&gt; latestPoint)</span> {
+    <span class="hljs-type">var</span> <span class="hljs-variable">daily</span> <span class="hljs-operator">=</span> dailyMarketDataQuery.findDailyPoints(rawTicker, FETCH_DAYS);
+    <span class="hljs-keyword">return</span> analyze(daily, latestPoint);
+}
+</code></pre>
+<p><strong>Run it:</strong></p>
+<pre><code class="hljs language-bash">curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/analysis/RELIANCE.NS&quot;</span> | jq <span class="hljs-string">&#x27;.horizons[] | {key, returnPercent, partial}&#x27;</span>
+</code></pre>
 <h3 id="9-6-stories-the-narrative-composer-seam-and-the-honesty-gate">9.6 Stories: the narrative composer seam and the honesty gate</h3>
 <p><code>GET /stories/{ticker}</code> (<code>StoryQuery</code>, bean <code>serveStory</code>) assembles a ticker's recent <code>DAY#</code> rollups,
 its latest insight, and now (since the deep-analysis feature) its <code>DeepAnalysisResponse</code> stats pack,
@@ -3324,6 +3816,38 @@ Bedrock tool schema never letting the model invent identity or time (Section 6.8
 sentence in the composer follows the same rule: a sentence that lacks the data it needs is omitted,
 never approximated. Code: <code>RuleBasedStoryComposer.bandSentence</code>, <code>StoryComposer.java</code>.</p>
 </blockquote>
+<p>The <code>serveStory</code> bean that assembles the days, insight, and analysis pack and hands them to the one
+<code>StoryComposer.compose</code> seam:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> Function&lt;QueryRequest, StoryResponse&gt; <span class="hljs-title function_">serveStory</span><span class="hljs-params">(StoryQuery storyQuery, Metrics metrics)</span> {
+    <span class="hljs-keyword">return</span> request -&gt; {
+        <span class="hljs-keyword">try</span> (<span class="hljs-type">var</span> <span class="hljs-variable">ctx</span> <span class="hljs-operator">=</span> RequestContext.begin(<span class="hljs-string">&quot;financial-query&quot;</span>, request.correlationId())) {
+            ctx.withTicker(request.ticker());
+            <span class="hljs-type">String</span> <span class="hljs-variable">ticker</span> <span class="hljs-operator">=</span> request.ticker();
+            <span class="hljs-type">String</span> <span class="hljs-variable">correlationId</span> <span class="hljs-operator">=</span> request.correlationId();
+
+            log.info(<span class="hljs-string">&quot;Serving story. ticker={} correlationId={}&quot;</span>, ticker, correlationId);
+
+            <span class="hljs-type">StoryResponse</span> <span class="hljs-variable">response</span> <span class="hljs-operator">=</span> storyQuery.story(ticker);
+
+            <span class="hljs-keyword">if</span> (!response.found()) {
+                metrics.count(<span class="hljs-string">&quot;EmptyResult&quot;</span>, <span class="hljs-string">&quot;route&quot;</span>, <span class="hljs-string">&quot;story&quot;</span>);
+            }
+
+            log.info(
+                    <span class="hljs-string">&quot;Story query complete. ticker={} days={} insightCount={} correlationId={}&quot;</span>,
+                    ticker,
+                    response.inputs().days(),
+                    response.inputs().insightCount(),
+                    correlationId);
+
+            <span class="hljs-keyword">return</span> response;
+        }
+    };
+}
+</code></pre>
+<p><strong>Run it:</strong></p>
+<pre><code class="hljs language-bash">curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/stories/RELIANCE.NS&quot;</span> | jq <span class="hljs-string">&#x27;.story&#x27;</span>
+</code></pre>
 <hr>
 <h2 id="10-the-compliance-layer-dpdp">10. The compliance layer (DPDP)</h2>
 <p>The platform handles personal data (which stocks a user watches is personal), so it builds the Digital
@@ -3374,6 +3898,40 @@ and WITHDRAWN are told apart only by whether a version was ever stamped. Any fut
 version on a default-deny record would turn PENDING into WITHDRAWN and lock new users out of
 onboarding.</p>
 </blockquote>
+<p>The login-gate trigger, echoing the event back unchanged on allow and throwing (which Cognito surfaces
+as the login error) on WITHDRAWN or RECONSENT_REQUIRED:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> Function&lt;Map&lt;String, Object&gt;, Map&lt;String, Object&gt;&gt; <span class="hljs-title function_">preAuthentication</span><span class="hljs-params">(ConsentStoreService store)</span> {
+    <span class="hljs-keyword">return</span> event -&gt; {
+        <span class="hljs-keyword">try</span> (<span class="hljs-type">var</span> <span class="hljs-variable">ctx</span> <span class="hljs-operator">=</span> RequestContext.begin(MODULE_LABEL, <span class="hljs-literal">null</span>)) {
+            <span class="hljs-type">String</span> <span class="hljs-variable">sub</span> <span class="hljs-operator">=</span> userAttribute(event, <span class="hljs-string">&quot;sub&quot;</span>);
+            ctx.withUser(sub);
+            log.info(<span class="hljs-string">&quot;PreAuthentication consent gate. sub={} userName={}&quot;</span>, sub, event.get(<span class="hljs-string">&quot;userName&quot;</span>));
+            <span class="hljs-keyword">if</span> (sub == <span class="hljs-literal">null</span> || sub.isBlank()) {
+                <span class="hljs-keyword">return</span> event;
+            }
+            <span class="hljs-type">LoginGate</span> <span class="hljs-variable">gate</span> <span class="hljs-operator">=</span> store.gateLogin(sub, <span class="hljs-string">&quot;login&quot;</span>);
+            <span class="hljs-keyword">switch</span> (gate) {
+                <span class="hljs-keyword">case</span> WITHDRAWN -&gt;
+                    <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">IllegalStateException</span>(
+                            <span class="hljs-string">&quot;Login denied: consent has been withdrawn. Contact support to restore access.&quot;</span>);
+                <span class="hljs-keyword">case</span> RECONSENT_REQUIRED -&gt;
+                    <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">IllegalStateException</span>(
+                            <span class="hljs-string">&quot;Login denied: our privacy policy has changed. Please re-consent to continue.&quot;</span>);
+                <span class="hljs-keyword">case</span> ALLOWED -&gt; {}
+            }
+            <span class="hljs-keyword">return</span> event;
+        }
+    };
+}
+</code></pre>
+<p><strong>Run it: grant consent, watch the watchlist gate open, then withdraw and watch it close again.</strong></p>
+<pre><code class="hljs language-bash">curl -s -X POST <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/user/consent&quot;</span> -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> \
+  -d <span class="hljs-string">&#x27;{&quot;version&quot;:&quot;v1&quot;,&quot;purpose&quot;:&quot;personalized market insights&quot;}&#x27;</span> | jq
+curl -s <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/watchlist&quot;</span> -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> -o /dev/null -w <span class="hljs-string">&#x27;%{http_code}\n&#x27;</span>   <span class="hljs-comment"># -&gt; 200</span>
+
+curl -s -X DELETE <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/user/consent&quot;</span> -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> | jq
+curl -s <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/watchlist&quot;</span> -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> -o /dev/null -w <span class="hljs-string">&#x27;%{http_code}\n&#x27;</span>   <span class="hljs-comment"># -&gt; 400 (&quot;consent required&quot;: ConsentGate fail-closed, not an authorizer denial)</span>
+</code></pre>
 <h3 id="10-2-group-to-route-authorization-purpose-limitation">10.2 Group-to-route authorization (purpose limitation)</h3>
 <p>The custom authorizer validates the Cognito JWT and then checks the caller's group against a static
 route map (<code>RoutePolicy.RULES</code>) before allowing the call. A caller is allowed on a route if in <strong>any</strong> of
@@ -3415,6 +3973,45 @@ DSR Lambda</em> by <code>SubjectResolver</code>, not in this route map: any auth
 <code>sub</code>, and only the <code>admins</code> group may target another <code>sub</code>. Self-service on someone else's <code>sub</code> is
 denied.</p>
 </blockquote>
+<p>The map itself, and the lookup the authorizer runs against it:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> <span class="hljs-keyword">record</span> <span class="hljs-title class_">Rule</span><span class="hljs-params">(String httpMethod, String resourcePattern, Set&lt;String&gt; allowedGroups)</span> {}
+
+<span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> List&lt;Rule&gt; RULES = List.of(
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;insights&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;insights/*&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;market-data/*&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;stories/*&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;analysis/*&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;watchlist&quot;</span>, Set.of(<span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;POST&quot;</span>, <span class="hljs-string">&quot;watchlist/*&quot;</span>, Set.of(<span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;DELETE&quot;</span>, <span class="hljs-string">&quot;watchlist/*&quot;</span>, Set.of(<span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;portfolio&quot;</span>, Set.of(<span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;portfolio/*&quot;</span>, Set.of(<span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;POST&quot;</span>, <span class="hljs-string">&quot;portfolio/*&quot;</span>, Set.of(<span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;DELETE&quot;</span>, <span class="hljs-string">&quot;portfolio/*&quot;</span>, Set.of(<span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;POST&quot;</span>, <span class="hljs-string">&quot;ingest/*&quot;</span>, Set.of(<span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;user/consent&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;POST&quot;</span>, <span class="hljs-string">&quot;user/consent&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;DELETE&quot;</span>, <span class="hljs-string">&quot;user/consent&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;GET&quot;</span>, <span class="hljs-string">&quot;user/export&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">Rule</span>(<span class="hljs-string">&quot;DELETE&quot;</span>, <span class="hljs-string">&quot;user/account&quot;</span>, Set.of(<span class="hljs-string">&quot;readers&quot;</span>, <span class="hljs-string">&quot;premium&quot;</span>, <span class="hljs-string">&quot;admins&quot;</span>)));
+
+<span class="hljs-keyword">private</span> <span class="hljs-title function_">RoutePolicy</span><span class="hljs-params">()</span> {}
+
+<span class="hljs-comment">/** Returns the rules the given groups may call (a caller is allowed if in any rule&#x27;s group set). */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> List&lt;Rule&gt; <span class="hljs-title function_">allowedRules</span><span class="hljs-params">(Collection&lt;String&gt; groups)</span> {
+    <span class="hljs-keyword">return</span> RULES.stream()
+            .filter(rule -&gt; rule.allowedGroups().stream().anyMatch(groups::contains))
+            .toList();
+}
+</code></pre>
+<p><strong>Run it: decode a token's group claim</strong> (Section 9.1's Phase-7 token) <strong>and check it against the
+table above</strong> - <code>readers</code> gets <code>insights/*</code> but not <code>watchlist</code>:</p>
+<pre><code class="hljs language-bash"><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> | <span class="hljs-built_in">cut</span> -d. -f2 | <span class="hljs-built_in">tr</span> <span class="hljs-string">&#x27;_-&#x27;</span> <span class="hljs-string">&#x27;/+&#x27;</span> | <span class="hljs-built_in">base64</span> -d 2&gt;/dev/null | jq <span class="hljs-string">&#x27;.&quot;cognito:groups&quot;&#x27;</span>
+curl -s <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/watchlist&quot;</span> -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> -o /dev/null -w <span class="hljs-string">&#x27;%{http_code}\n&#x27;</span>
+<span class="hljs-comment"># a readers-only token -&gt; 403 here (RoutePolicy has no readers rule for watchlist) even though the</span>
+<span class="hljs-comment"># same token gets 200 on GET /insights/{ticker}</span>
+</code></pre>
 <h3 id="10-3-right-to-access-and-right-to-erasure">10.3 Right to access and right to erasure</h3>
 <p>One Lambda (<code>DsrHandler</code>, bean <code>dsr</code>) serves both data-subject rights.</p>
 <ul>
@@ -3527,6 +4124,33 @@ via <code>./mvnw verify -Pintegration-tests</code>. Plain <code>verify</code> st
 their signatures (Section 6.2) and <code>AwsClientConfig</code> honours <code>aws.endpoint-url</code>, the exact same code
 runs here and in Lambda.</li>
 </ul>
+<p>All 8 function modules' ITs extend this one base class, which resets the data plane before every test
+and hands subclasses ready-to-use <code>ddb()</code>/<code>s3()</code> clients:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> <span class="hljs-type">DynamoDbClient</span> <span class="hljs-variable">DDB</span> <span class="hljs-operator">=</span> LocalStackSupport.dynamoDbClient();
+<span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> <span class="hljs-type">S3Client</span> <span class="hljs-variable">S3</span> <span class="hljs-operator">=</span> LocalStackSupport.s3Client();
+
+<span class="hljs-meta">@DynamicPropertySource</span>
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title function_">awsProperties</span><span class="hljs-params">(DynamicPropertyRegistry registry)</span> {
+    registry.add(<span class="hljs-string">&quot;aws.endpoint-url&quot;</span>, LocalStackSupport::endpoint);
+    registry.add(<span class="hljs-string">&quot;aws.region&quot;</span>, LocalStackSupport::region);
+    registry.add(<span class="hljs-string">&quot;PLATFORM_TABLE&quot;</span>, () -&gt; PlatformSchema.PLATFORM_TABLE);
+    registry.add(<span class="hljs-string">&quot;AUDIT_TABLE&quot;</span>, () -&gt; PlatformSchema.AUDIT_TABLE);
+    registry.add(<span class="hljs-string">&quot;DATA_LAKE_BUCKET&quot;</span>, () -&gt; PlatformSchema.DATA_LAKE_BUCKET);
+}
+
+<span class="hljs-meta">@BeforeEach</span>
+<span class="hljs-keyword">void</span> <span class="hljs-title function_">resetDataPlane</span><span class="hljs-params">()</span> {
+    PlatformSchemaProvisioner.reset(DDB, S3);
+}
+
+<span class="hljs-keyword">protected</span> DynamoDbClient <span class="hljs-title function_">ddb</span><span class="hljs-params">()</span> {
+    <span class="hljs-keyword">return</span> DDB;
+}
+
+<span class="hljs-keyword">protected</span> S3Client <span class="hljs-title function_">s3</span><span class="hljs-params">()</span> {
+    <span class="hljs-keyword">return</span> S3;
+}
+</code></pre>
 <p><strong>Run it:</strong></p>
 <pre><code class="hljs language-bash">./mvnw verify                              <span class="hljs-comment"># unit tests + Spotless check, no Docker, no LocalStack</span>
 ./mvnw verify -Pintegration-tests          <span class="hljs-comment"># + LocalStack ITs + per-module 80% merged-coverage gate (needs Docker running)</span>

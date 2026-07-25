@@ -52,6 +52,7 @@ public final class MarketHours {
 
     private MarketHours() {}
 
+    // tag::market-hours-gate[]
     /** True when {@code date} is an NSE trading day: a weekday that is not a listed holiday. */
     public static boolean isTradingDay(LocalDate date) {
         DayOfWeek day = date.getDayOfWeek();
@@ -70,4 +71,5 @@ public final class MarketHours {
         LocalTime time = local.toLocalTime();
         return !time.isBefore(SESSION_OPEN) && !time.isAfter(SESSION_CLOSE);
     }
+    // end::market-hours-gate[]
 }

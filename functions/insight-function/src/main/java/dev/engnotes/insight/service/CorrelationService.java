@@ -46,6 +46,7 @@ public class CorrelationService {
         this.threshold = threshold;
     }
 
+    // tag::correlation-compute[]
     public CorrelationResponse compute(Instant now) {
         Map<String, TickerSeries> qualifying = readQualifyingSeries();
         List<CorrelationEdge> computedEdges = computeAllPairs(qualifying);
@@ -76,6 +77,7 @@ public class CorrelationService {
 
         return new CorrelationResponse("computed", qualifying.size(), groups.size(), computedAt);
     }
+    // end::correlation-compute[]
 
     /** Reads every WATCHSET ticker's series, keeping only those with enough of their own history. */
     private Map<String, TickerSeries> readQualifyingSeries() {

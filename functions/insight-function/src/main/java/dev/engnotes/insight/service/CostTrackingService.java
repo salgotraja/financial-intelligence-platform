@@ -98,6 +98,7 @@ public class CostTrackingService {
         }
     }
 
+    // tag::cost-circuit-breaker[]
     /** True when today's accumulated Bedrock spend has reached the configured daily cap. */
     public boolean isBreakerOpen() {
         String dayKey = dayPartitionKey();
@@ -126,6 +127,7 @@ public class CostTrackingService {
             return false;
         }
     }
+    // end::cost-circuit-breaker[]
 
     private void writeInvocationItem(
             String dayKey, String correlationId, long inputTokens, long outputTokens, BigDecimal cost) {

@@ -156,6 +156,7 @@ public class QueryHandler {
 
     /** Returns the rule-based per-ticker narrative (spec sub-project C, Task 16). */
     @Bean
+    // tag::story-handler[]
     public Function<QueryRequest, StoryResponse> serveStory(StoryQuery storyQuery, Metrics metrics) {
         return request -> {
             try (var ctx = RequestContext.begin("financial-query", request.correlationId())) {
@@ -182,6 +183,7 @@ public class QueryHandler {
             }
         };
     }
+    // end::story-handler[]
 
     /** Returns the deterministic multi-horizon deep analysis for the requested ticker. */
     @Bean

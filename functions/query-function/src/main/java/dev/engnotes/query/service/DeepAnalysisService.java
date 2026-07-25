@@ -57,6 +57,7 @@ public class DeepAnalysisService {
      * the fetch band52w used to do) - skipped when there's no history to analyze. Used by the
      * {@code serveDeepAnalysis} bean, which has no pre-fetched point to hand in.
      */
+    // tag::deep-analysis-compute-on-read[]
     public DeepAnalysisResponse analyze(String rawTicker) {
         var daily = dailyMarketDataQuery.findDailyPoints(rawTicker, FETCH_DAYS);
         Optional<MarketDataPoint> latestPoint =
@@ -72,6 +73,7 @@ public class DeepAnalysisService {
         var daily = dailyMarketDataQuery.findDailyPoints(rawTicker, FETCH_DAYS);
         return analyze(daily, latestPoint);
     }
+    // end::deep-analysis-compute-on-read[]
 
     private DeepAnalysisResponse analyze(DailyMarketDataResponse daily, Optional<MarketDataPoint> latestPoint) {
         String ticker = daily.ticker();

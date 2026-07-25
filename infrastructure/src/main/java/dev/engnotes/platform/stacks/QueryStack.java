@@ -604,6 +604,7 @@ public class QueryStack extends Stack {
                 .visibilityConfig(knownBadInputsVisibility)
                 .build();
 
+        // tag::waf-rate-limit-rule[]
         var rateLimitVisibility = CfnWebACL.VisibilityConfigProperty.builder()
                 .sampledRequestsEnabled(true)
                 .cloudWatchMetricsEnabled(true)
@@ -639,6 +640,7 @@ public class QueryStack extends Stack {
                         .metricName("financial-waf-acl-" + env)
                         .build())
                 .build();
+        // end::waf-rate-limit-rule[]
 
         // Stage ARN is derived from the RestApi construct (restApiId + deployed stage name), not
         // hardcoded: arn:aws:apigateway:{region}::/restapis/{restApiId}/stages/{stageName}.

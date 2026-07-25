@@ -42,6 +42,7 @@ public class HistoryBackfillService {
         this.historyProvider = historyProvider;
     }
 
+    // tag::history-backfill-conditional-put[]
     public BackfillResult backfill(String ticker, String correlationId) {
         List<DailyBar> bars = historyProvider.fetchDailyBars(ticker, correlationId);
         int written = 0;
@@ -85,6 +86,7 @@ public class HistoryBackfillService {
                 correlationId);
         return new BackfillResult(ticker, written, skipped);
     }
+    // end::history-backfill-conditional-put[]
 
     private static void putNumber(Map<String, AttributeValue> item, String name, BigDecimal value) {
         if (value != null) {

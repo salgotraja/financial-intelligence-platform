@@ -15,6 +15,7 @@ public final class RequestContext implements AutoCloseable {
 
     private final String correlationId;
 
+    // tag::request-context-mdc[]
     private RequestContext(String function, String correlationId) {
         this.correlationId = correlationId;
         MDC.put("function", function);
@@ -71,4 +72,5 @@ public final class RequestContext implements AutoCloseable {
         MDC.remove("ticker");
         MDC.remove("userId");
     }
+    // end::request-context-mdc[]
 }

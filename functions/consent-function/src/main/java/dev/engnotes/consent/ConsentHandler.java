@@ -114,6 +114,7 @@ public class ConsentHandler {
     // Untyped for the same reason as postConfirmation: Cognito requires the trigger to echo the event
     // back unchanged on allow, and a typed round-trip mutates the JSON.
     @Bean
+    // tag::consent-login-gate[]
     public Function<Map<String, Object>, Map<String, Object>> preAuthentication(ConsentStoreService store) {
         return event -> {
             try (var ctx = RequestContext.begin(MODULE_LABEL, null)) {
@@ -137,6 +138,7 @@ public class ConsentHandler {
             }
         };
     }
+    // end::consent-login-gate[]
 
     private static String userAttribute(Map<String, Object> event, String name) {
         return event.get("request") instanceof Map<?, ?> request
