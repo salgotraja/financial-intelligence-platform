@@ -216,9 +216,7 @@ public class BedrockInsightService {
                         e.getClass().getSimpleName());
                 metrics.count("BedrockError", "reason", e.getClass().getSimpleName());
                 return Optional.empty();
-            }
-            // end::bedrock-invoke[]
-            catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException e) {
                 log.warn(
                         "Invalid Bedrock output. label={} attempt={}/{} reason={}",
                         logLabel,
@@ -240,6 +238,7 @@ public class BedrockInsightService {
                 logLabel);
         return Optional.empty();
     }
+    // end::bedrock-invoke[]
 
     private String buildToolRequest(String promptText) {
         ObjectNode body = objectMapper.createObjectNode();

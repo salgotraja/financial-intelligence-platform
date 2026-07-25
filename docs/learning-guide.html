@@ -1664,7 +1664,28 @@ amplify cost; the SDK call timeout is 50s (10s margin under the 60s Lambda timeo
                     e.getClass().getSimpleName());
             metrics.count(<span class="hljs-string">&quot;BedrockError&quot;</span>, <span class="hljs-string">&quot;reason&quot;</span>, e.getClass().getSimpleName());
             <span class="hljs-keyword">return</span> Optional.empty();
+        } <span class="hljs-keyword">catch</span> (IllegalArgumentException e) {
+            log.warn(
+                    <span class="hljs-string">&quot;Invalid Bedrock output. label={} attempt={}/{} reason={}&quot;</span>,
+                    logLabel,
+                    attempt,
+                    MAX_ATTEMPTS,
+                    e.getMessage());
+            metrics.count(<span class="hljs-string">&quot;BedrockError&quot;</span>, <span class="hljs-string">&quot;reason&quot;</span>, e.getClass().getSimpleName());
+            <span class="hljs-comment">// fall through to retry</span>
+        } <span class="hljs-keyword">catch</span> (Exception e) {
+            log.warn(<span class="hljs-string">&quot;Bedrock call failed, using rule-based fallback. label={} error={}&quot;</span>, logLabel, e.toString());
+            metrics.count(<span class="hljs-string">&quot;BedrockError&quot;</span>, <span class="hljs-string">&quot;reason&quot;</span>, e.getClass().getSimpleName());
+            <span class="hljs-keyword">return</span> Optional.empty();
         }
+    }
+
+    log.warn(
+            <span class="hljs-string">&quot;Bedrock returned invalid output {} times, using rule-based fallback. label={}&quot;</span>,
+            MAX_ATTEMPTS,
+            logLabel);
+    <span class="hljs-keyword">return</span> Optional.empty();
+}
 </code></pre>
 <blockquote>
 <p><strong>Why force a tool instead of &quot;reply in JSON&quot;?</strong> Asking for JSON in a prompt gets <em>usually</em>-valid
