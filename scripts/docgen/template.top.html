@@ -38,6 +38,11 @@
     .eyebrow { margin: 0 0 .7rem; color: #a9d9ff; font-size: .78rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
     .hero h1 { max-width: 850px; margin: 0; color: #fff; font-size: clamp(2.2rem, 5vw, 4rem); line-height: 1.08; letter-spacing: -.04em; }
     .hero p { max-width: 720px; margin: 1.2rem 0 0; color: #dceeff; font-size: 1.1rem; }
+    .hero .byline { margin: 1.1rem 0 0; color: #a9d9ff; font-size: .95rem; font-weight: 600; }
+    .hero .byline a { color: #d8edff; text-decoration-thickness: .08em; }
+    .intro { margin: 1.6rem 0 2.2rem; padding: 1.2rem 1.4rem; border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: 9px; background: var(--panel); }
+    .intro h2 { margin-top: 0; border: 0; padding: 0; font-size: 1.35rem; }
+    .intro p { margin: .6rem 0 0; }
     .notice { margin: 1.4rem 0; border-left: 4px solid var(--blue); padding: 1rem 1.1rem; background: var(--accent); }
     .notice strong { color: var(--blue-dark); }
     .notice.history { border-color: #7761a6; background: var(--history); }
@@ -87,9 +92,17 @@
         <p class="eyebrow">Code · Console · Concept</p>
         <h1 id="page-title">Learn the platform by following the data.</h1>
         <p>A practical companion for reading the Financial Intelligence Platform in code, AWS, and the design decisions that connect them.</p>
+        <p class="byline">By <a href="https://github.com/salgotraja">Jagdish Salgotra</a></p>
       </section>
 
       <div class="notice"><strong>Current architecture.</strong> The active system runs Lambdas outside a VPC and delivers new insights by 60-second polling. Retired VPC and WebSocket sections remain in the source guide as learning history and are labelled accordingly.</div>
+
+      <section class="intro" aria-labelledby="about-guide">
+        <h2 id="about-guide">About this guide</h2>
+        <p><strong>What this is.</strong> A hands-on, code-accurate walkthrough of a real serverless AWS platform: EventBridge schedules, Step Functions, Lambda with SnapStart and Spring Cloud Function, DynamoDB single-table design, Amazon Bedrock, API Gateway, and Cognito, tied together by an event-driven, scale-to-zero architecture. Every concept is taught by following real data through the actual source, with the exact commands to run and observe it.</p>
+        <p><strong>Who it is for.</strong> Engineers learning serverless AWS and Spring Cloud Function patterns who want a worked, production-shaped example instead of toy snippets. It assumes comfort with Java and AWS basics, but no prior knowledge of this codebase. Every claim links back to the code or a command you can run.</p>
+        <p><strong>The goal.</strong> By the end you can read any part of the system three ways at once, in code, in the AWS console, and in design intent: trace one ticker from the schedule to a cached API response, find which stack owns a resource and why, and reproduce every behavior the guide describes. Read it front to back once for the shape, then keep it open as a reference.</p>
+      </section>
 
       <h2 id="start-here">Start here</h2>
       <p>Choose a learning route, then use the reference section below when you need the exact resource, class, or AWS console location.</p>
