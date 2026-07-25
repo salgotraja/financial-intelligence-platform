@@ -5201,6 +5201,14 @@ than two:</li>
     <span class="hljs-title function_">set</span>({ <span class="hljs-attr">status</span>: <span class="hljs-string">&#x27;signed-out&#x27;</span>, <span class="hljs-attr">sub</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">email</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">username</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">groups</span>: [] }),
 }))
 </code></pre>
+<p>Run it: work on the frontend locally against the live dev API, or check the hosted build.</p>
+<pre><code class="hljs language-bash"><span class="hljs-comment"># run the Next.js dev server locally (talks to the live dev API Gateway + Cognito)</span>
+<span class="hljs-built_in">cd</span> frontend &amp;&amp; npm install &amp;&amp; npm run dev
+<span class="hljs-comment"># open http://localhost:3000 ; a signed-out visitor to /dashboard sees &quot;Could not load your watchlist&quot;</span>
+<span class="hljs-comment"># run the component + hook test suite</span>
+npm <span class="hljs-built_in">test</span>
+<span class="hljs-comment"># the hosted build is live at https://main.db53oxbwuxc6z.amplifyapp.com (Amplify redeploys on push to main)</span>
+</code></pre>
 <hr>
 <h2 id="15-glossary">15. Glossary</h2>
 <table>
