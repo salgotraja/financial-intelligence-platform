@@ -269,8 +269,8 @@ setData(result)</code></pre>
 
       <h2 id="current-boundaries">Current implementation boundaries</h2>
       <p>A learning guide should distinguish code that is executable through the application from code that is an internal building block or future seam.</p>
-      <div class="notice"><strong>Holdings are not an exposed application feature yet.</strong> <code>Holding</code>, <code>Lot</code>, <code>HoldingsStoreService</code>, and <code>HoldingMath</code> implement a tested persistence/domain seam under <code>USER#{sub} / HOLDING#{ticker}</code>. There is currently no API Gateway route, Spring Cloud Function operation, or frontend caller for it. Do not treat the model as a user-facing portfolio API.</div>
-      <p>The seam is still useful to study: a holding is a full replacement snapshot of purchase lots; <code>totalQty</code> and weighted <code>avgCost</code> are derived values; and a successful upsert adds the ticker to the watchlist union, allowing ingestion and daily-history backfill to see it. The absence of a route is deliberate scope information, not a broken request path.</p>
+      <div class="notice"><strong>Portfolio is a live application feature.</strong> <code>Holding</code>, <code>Lot</code>, <code>HoldingsStoreService</code>, and <code>HoldingMath</code> back lots-based holdings, valuation, and profit/loss under <code>USER#{sub} / HOLDING#{ticker}</code>, served through <code>GET/POST/DELETE /portfolio/{ticker}</code>, <code>GET /portfolio</code>, and <code>GET /portfolio/history</code> on the <code>financial-portfolio-dev</code> Lambda (bean <code>portfolio</code>), with a frontend caller in <code>use-portfolio.ts</code>. See Section 9.7 for the full walkthrough.</div>
+      <p>A holding is a full replacement snapshot of purchase lots; <code>totalQty</code> and weighted <code>avgCost</code> are derived values; and a successful upsert adds the ticker to the watchlist union, allowing ingestion and daily-history backfill to see it.</p>
 
       <h3>Use the frontend to find the correct backend entry point</h3>
       <table>
@@ -279,6 +279,7 @@ setData(result)</code></pre>
           <tr><td>View a ticker</td><td><code>app/ticker/[symbol]/page.tsx</code></td><td><code>GET /insights/{ticker}</code>, <code>GET /market-data/{ticker}</code></td><td>Query function</td></tr>
           <tr><td>Change chart range</td><td><code>DailyRangeChart</code></td><td><code>GET /market-data/{ticker}/daily?days=N</code></td><td>Query function</td></tr>
           <tr><td>Add or remove a watchlist ticker</td><td><code>WatchlistDashboard</code></td><td><code>POST</code> or <code>DELETE /watchlist/{ticker}</code></td><td>Watchlist function</td></tr>
+          <tr><td>Add, edit, or view a portfolio holding</td><td><code>use-portfolio.ts</code></td><td><code>GET/POST/DELETE /portfolio/{ticker}</code>, <code>GET /portfolio</code>, <code>GET /portfolio/history</code></td><td>Portfolio function</td></tr>
           <tr><td>Grant or withdraw consent</td><td><code>ConsentPanel</code></td><td><code>POST</code> or <code>DELETE /user/consent</code></td><td>Consent function</td></tr>
           <tr><td>Export or erase data</td><td><code>DangerZone</code></td><td><code>GET /user/export</code>, <code>DELETE /user/account</code></td><td>DSR function</td></tr>
         </tbody>
@@ -314,6 +315,7 @@ the design spec.</p>
 <li><a href="#1-how-to-use-this-guide">How to use this guide</a>
 <ul>
 <li>1.1 <a href="#11-reading-paths">Reading paths</a></li>
+<li>1.2 <a href="#12-getting-the-prerequisites">Getting the prerequisites</a></li>
 </ul>
 </li>
 <li><a href="#2-the-60-second-mental-model">The 60-second mental model</a></li>
@@ -450,7 +452,7 @@ click-path, not a reading.</li>
 </tr>
 <tr>
 <td><strong>A 401 or 403 on an API call</strong></td>
-<td>Section 9.1 (authorizer) and Section 10.2 (group-to-route), then the operator runbook's &quot;Which logs for which problem&quot; guidance.</td>
+<td>Section 9.1 (authorizer) and Section 10.2 (group-to-route); Section 1.2 gets you a fresh token to test against.</td>
 </tr>
 <tr>
 <td><strong>A slow or breaching p99</strong></td>
@@ -466,6 +468,35 @@ click-path, not a reading.</li>
 </tr>
 </tbody>
 </table>
+<h3 id="1-2-getting-the-prerequisites">1.2 Getting the prerequisites</h3>
+<p>Most &quot;Run it&quot; commands in this guide assume two environment variables are already set:
+<code>$API_URL</code> (the deployed API Gateway base URL) and <code>$ACCESS_TOKEN</code> (a Cognito access token for a
+test user). This subsection is the minimum needed to have both in your shell; the operator runbook
+is the authoritative source for full deploy, credential rotation, and teardown procedures.</p>
+<ul>
+<li>
+<p><strong><code>$API_URL</code>:</strong> written to <code>.load-run/state.env</code> by <code>scripts/deploy-ephemeral.sh</code> after it deploys
+the four CDK stacks (it reads the Query stack's CloudFormation output). Load it with:</p>
+<pre><code class="hljs language-bash"><span class="hljs-built_in">set</span> -a; <span class="hljs-built_in">source</span> .load-run/state.env; <span class="hljs-built_in">set</span> +a
+<span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>&quot;</span>
+</code></pre>
+</li>
+<li>
+<p><strong><code>$ACCESS_TOKEN</code>:</strong> minted by <code>scripts/mint-token.sh</code>, which calls Cognito
+<code>initiate-auth</code> (<code>USER_PASSWORD_AUTH</code>) against the pool and client recorded in the same state
+file, and writes the resulting <code>AccessToken</code> back into it. It needs a provisioned user first:
+<code>scripts/provision-user.sh</code> creates (or reuses) the dogfood user, sets a permanent password, adds
+the <code>readers</code>/<code>premium</code> groups, and seeds the consent record the login gate requires.</p>
+<pre><code class="hljs language-bash">./scripts/provision-user.sh          <span class="hljs-comment"># idempotent; prints the password if it generated one</span>
+TEST_USER_PASSWORD=<span class="hljs-string">&#x27;&lt;the password&gt;&#x27;</span> ./scripts/mint-token.sh
+<span class="hljs-built_in">set</span> -a; <span class="hljs-built_in">source</span> .load-run/state.env; <span class="hljs-built_in">set</span> +a
+<span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span>
+</code></pre>
+</li>
+</ul>
+<p>Both scripts, and the deploy/teardown/credential lifecycle they are part of, are documented in full
+in the operator runbook. Everywhere else in this guide &quot;the operator runbook&quot; is referenced, this
+subsection is the fastest path to a runnable shell.</p>
 <hr>
 <h2 id="2-the-60-second-mental-model">2. The 60-second mental model</h2>
 <p>The platform ingests Indian stock market data (NSE tickers like <code>RELIANCE.NS</code>) on a schedule,
@@ -510,6 +541,18 @@ terms: the read Lambda is read-only by IAM, so a bug there physically cannot cor
 <p>Hold that split in your head and most of the layout follows. Section 4 walks the write path (hops
 1-6) into the read path (hop 7). Section 8 details the write side; Section 9 details the read side.</p>
 <blockquote>
+<p><strong>A third path lives inside the Query stack: user-data mutation and compliance.</strong> Not every
+Query-stack call is a passive read. <code>POST/DELETE /watchlist/*</code>, the portfolio CRUD routes
+(Section 9.7), and <code>POST/DELETE /user/consent</code> synchronously write to DynamoDB from a
+user-facing request, and <code>DELETE /user/account</code> runs the full erasure cascade (Section 10.3)
+inline in the same request/response cycle. These are still CQRS commands, gated by the same
+consent check and the erasure lease (Section 10.1, Section 10.3) as every other write, but they
+do not run through the Ingestion stack or Step Functions: they are synchronous, low-latency,
+user-initiated writes that happen to share IAM roles and deploy unit with the read path. Keep
+this distinct from the scheduled write path when reasoning about latency, IAM scope, or where a
+given write actually happens.</p>
+</blockquote>
+<blockquote>
 <p><strong>Further reading:</strong> Martin Fowler on <a href="https://martinfowler.com/bliki/CQRS.html">CQRS</a>; AWS on
 the <a href="https://docs.aws.amazon.com/prescriptive-guidance/latest/modernization-data-persistence/cqrs-pattern.html">CQRS pattern</a>.</p>
 </blockquote>
@@ -522,21 +565,24 @@ the moment a user reads an insight. Each hop names the AWS service, the exact co
 see in the console, what to look for, and the one concept it teaches (with a pointer to the deeper
 Section 6 subsection). Region is ap-south-1 throughout.</p>
 <h3 id="4-1-hop-1-the-clock-fires-eventbridge">4.1 Hop 1: the clock fires (EventBridge)</h3>
-<p>Every 5 minutes in dev, an EventBridge rule fires and starts the pipeline. It carries no ticker,
-just <code>{&quot;source&quot;:&quot;eventbridge-schedule&quot;}</code>, because the list of tickers lives in the database, not in
-the trigger.</p>
+<p>Every 5 minutes during NSE market hours on weekdays in dev, an EventBridge rule fires and starts the
+pipeline. It carries no ticker, just <code>{&quot;source&quot;:&quot;eventbridge-schedule&quot;}</code>, because the list of
+tickers lives in the database, not in the trigger.</p>
 <ul>
 <li><strong>Service / concept:</strong> EventBridge (see <a href="#66-eventbridge">6.6</a>).</li>
 <li><strong>Resource:</strong> rule <code>financial-market-data-schedule-dev</code>.</li>
 <li><strong>Code:</strong> <code>IngestionStack.java</code>, the <code>MarketDataSchedule</code> rule (around line 470). Schedule
-expression is env-gated: dev <code>rate(5 minutes)</code>, prod <code>cron(*/1 3-10 ? * MON-FRI *)</code> (NSE market
-hours in UTC).</li>
+expression is env-gated: dev <code>cron(*/5 3-9 ? * MON-FRI *)</code>, prod <code>cron(*/1 3-9 ? * MON-FRI *)</code>
+(NSE market hours in UTC). A sibling <code>MarketDataCloseSchedule</code> rule captures the closing prints
+(dev <code>cron(0,5 10 ? * MON-FRI *)</code>, prod <code>cron(0-5 10 ? * MON-FRI *)</code>), and a third rule,
+<code>CorrelationsSchedule</code>, runs correlation grouping on <code>cron(0/15 3-9 ? * MON-FRI *)</code> in both envs.</li>
 <li><strong>Console:</strong> Amazon EventBridge &gt; Rules &gt; <code>financial-market-data-schedule-dev</code>. Look at the
 schedule expression and the Target tab (it points at the state machine, with a DLQ and 2 retries).</li>
 <li><strong>What to look for:</strong> whether the rule is <strong>Enabled</strong> or <strong>Disabled</strong>. The paid load-test tooling
 disables it (Section 7.5 explains why), so a disabled rule is often expected, not a fault.</li>
 </ul>
-<p>The rule itself, env-gated between the dev 5-minute rate and the prod NSE-hours cron:</p>
+<p>The rule itself, env-gated between the dev every-5-minute cron and the prod every-minute cron, both
+scoped to NSE market hours:</p>
 <pre><code class="hljs language-java">Rule.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;MarketDataSchedule&quot;</span>)
         .ruleName(<span class="hljs-string">&quot;financial-market-data-schedule-&quot;</span> + env)
         .description(<span class="hljs-string">&quot;Triggers the financial data pipeline during NSE market hours&quot;</span>)
@@ -1042,14 +1088,18 @@ persistent table, key, and user pool.</p>
 <li>KMS customer-managed key (annual rotation on) encrypting the table, bucket, and topics. Dev
 <code>DESTROY</code>, prod <code>RETAIN</code>.</li>
 <li>DynamoDB table <code>financial-platform-dev</code> (the single table; <code>PK</code>/<code>SK</code>; on-demand billing; PITR on;
-TTL attribute <code>ttl</code>; plus an empty GSI <code>GSI1</code> on <code>GSI1PK</code>/<code>GSI1SK</code>, reserved for a future
-by-ticker insight feed).</li>
+TTL attribute <code>ttl</code>; plus a live GSI <code>GSI1</code> on <code>GSI1PK</code>/<code>GSI1SK</code> that indexes group insights by
+member ticker, queried by <code>GET /insights</code> (Section 8.6, <code>InsightFeedQuery</code>)).</li>
 <li>DynamoDB table <code>financial-platform-audit-dev</code> (append-only audit; <code>RETAIN</code> in every env; PITR on;
 no TTL).</li>
 <li>S3 bucket <code>financial-platform-datalake-dev-&lt;account-id&gt;</code> (versioned, KMS, all public access
 blocked, SSL enforced, Intelligent-Tiering after 30 days).</li>
 <li>SNS topics <code>financial-platform-alerts-dev</code> (warnings) and <code>financial-platform-alerts-critical-dev</code>
 (pages), both KMS-encrypted with an email subscription.</li>
+<li>SES <code>EmailIdentity</code> (<code>senderIdentity</code>), a verified sender address (default <code>alerts@engnotes.dev</code>,
+the same address the alarms email) that the DSR erasure cascade (Section 10.3) uses to send the
+erasure-confirmation email. SES is in sandbox mode until production access is requested, so only
+verified recipients receive mail from it.</li>
 <li>AWS Budget (auto-generated name; see the master map) (USD 5, notify at 80% actual, 100% actual, 100%
 forecasted; EMAIL subscribers, not SNS).</li>
 </ul>
@@ -1543,8 +1593,10 @@ Read the one you need; they are self-contained.</p>
 invokes the handler per event, scaling automatically and billing per millisecond. A &quot;cold start&quot; is
 the first invocation on a new execution environment, where the runtime and your framework initialise
 before handling the event.</p>
-<p><strong>How this platform uses it.</strong> Every unit of compute here is a Lambda: the seven function handlers
-plus the Cognito PostConfirmation trigger. Each is a Spring Boot fat JAR on the <code>java25</code> runtime,
+<p><strong>How this platform uses it.</strong> Every unit of compute here is a Lambda: 17 deployed functions in
+total (4 in the Ingestion stack, 11 in the Query stack, and 2 Cognito triggers in the Security
+stack; Section 5.5 shows how several Query-stack functions share one jar via a different
+<code>SPRING_CLOUD_FUNCTION_DEFINITION</code>). Each is a Spring Boot fat JAR on the <code>java25</code> runtime,
 invoked through the Spring Cloud Function AWS adapter (<code>FunctionInvoker</code>). The handler bean is chosen
 per function by the <code>SPRING_CLOUD_FUNCTION_DEFINITION</code> environment variable.</p>
 <p><strong>SnapStart.</strong> Spring Boot's context initialisation is the expensive part of a Java cold start (5-10
@@ -1835,7 +1887,8 @@ first, then choose key shapes so each pattern is a single <code>Query</code> on 
 baselines, insights, cost records, the ticker union, user watchlists, and consent records, all keyed
 by <code>PK</code>/<code>SK</code> (full map in Section 7). Billing is <code>PAY_PER_REQUEST</code> (on-demand), so there is no
 capacity to plan. Key settings in <code>DataStack.java</code>: <code>PK</code>/<code>SK</code> strings, <code>BillingMode.PAY_PER_REQUEST</code>,
-customer-managed KMS encryption, PITR on, TTL attribute <code>ttl</code>, and an empty <code>GSI1</code>.</p>
+customer-managed KMS encryption, PITR on, TTL attribute <code>ttl</code>, and the live <code>GSI1</code> (by-ticker group
+insight feed, Section 8.6).</p>
 <p>The <code>platformTable</code> construction and its <code>GSI1</code> in <code>DataStack.java</code>:</p>
 <pre><code class="hljs language-java"><span class="hljs-comment">// DynamoDB: single-table design (spec section 4)</span>
 <span class="hljs-comment">// One table overloads every operational entity onto generic PK/SK:</span>
@@ -2036,10 +2089,13 @@ aws stepfunctions list-executions --state-machine-arn <span class="hljs-string">
 cron/rate schedule) and route them to targets, with optional input transformation, retries, and a
 dead-letter queue for undeliverable events.</p>
 <p><strong>How this platform uses it.</strong> One scheduled rule, <code>financial-market-data-schedule-dev</code>, starts the
-ingestion state machine. Dev is <code>rate(5 minutes)</code>; prod is <code>cron(*/1 3-10 ? * MON-FRI *)</code> (NSE market
-hours 09:15-15:30 IST plus margin, expressed in UTC: 03:00-10:59 UTC = 08:30-16:29 IST), which
-saves roughly 75% of invocations versus 24/7 (40 of 168 weekly hours remain). The
-target carries a fixed input <code>{&quot;source&quot;:&quot;eventbridge-schedule&quot;}</code>, a DLQ, and <code>retryAttempts(2)</code>.</p>
+ingestion state machine. Dev is <code>cron(*/5 3-9 ? * MON-FRI *)</code> (every 5 minutes); prod is
+<code>cron(*/1 3-9 ? * MON-FRI *)</code> (every minute); both are scoped to 03:00-09:59 UTC on weekdays
+(~08:30-15:29 IST, the NSE session plus margin), which saves roughly 75% of invocations versus
+24/7. A sibling <code>MarketDataCloseSchedule</code> rule fires once more just after close to capture the
+closing prints, and a third rule, <code>CorrelationsSchedule</code>, runs correlation grouping on
+<code>cron(0/15 3-9 ? * MON-FRI *)</code> in the same market-hours envelope. The target carries a fixed input
+<code>{&quot;source&quot;:&quot;eventbridge-schedule&quot;}</code>, a DLQ, and <code>retryAttempts(2)</code>.</p>
 <p>The <code>MarketDataSchedule</code> rule, with its market-hours cron expressions for dev and prod:</p>
 <pre><code class="hljs language-java">Rule.Builder.create(<span class="hljs-built_in">this</span>, <span class="hljs-string">&quot;MarketDataSchedule&quot;</span>)
         .ruleName(<span class="hljs-string">&quot;financial-market-data-schedule-&quot;</span> + env)
@@ -2055,7 +2111,9 @@ target carries a fixed input <code>{&quot;source&quot;:&quot;eventbridge-schedul
 </code></pre>
 <blockquote>
 <p><strong>Why market-hours cron in prod?</strong> Outside trading hours the price is flat, so the z-score is always
-0 and no anomaly can fire; running the pipeline then would only burn invocations. The dev <code>rate(5 minutes)</code> keeps a steady trickle for development regardless of the clock.</p>
+0 and no anomaly can fire; running the pipeline then would only burn invocations. The dev cron keeps
+a steady trickle for development, five minutes at a time, but only during the same market-hours
+window as prod.</p>
 </blockquote>
 <p><strong>Run it:</strong> the <code>enable-rule</code>/<code>disable-rule</code> commands and every rule's live state are in Section 4.1;
 from here, the one-line check across all three rules at once:</p>
@@ -2781,6 +2839,36 @@ there is one table where the key patterns tell the entities apart. Concept and r
 <td>insight Lambda (<code>InsightStoreService</code>)</td>
 </tr>
 <tr>
+<td>Daily rollup (live or backfilled)</td>
+<td><code>TICKER#RELIANCE.NS</code></td>
+<td><code>DAY#&lt;yyyy-MM-dd&gt;</code></td>
+<td>fetch Lambda (<code>DailyRollupService</code>, <code>HistoryBackfillService</code>)</td>
+</tr>
+<tr>
+<td>Correlation group metadata</td>
+<td><code>GROUP#&lt;groupId&gt;</code></td>
+<td><code>META</code></td>
+<td>insight Lambda (<code>CorrelationStoreService</code>)</td>
+</tr>
+<tr>
+<td>Group insight (latest / history)</td>
+<td><code>GROUP#&lt;groupId&gt;</code></td>
+<td><code>INSIGHT#LATEST</code>, <code>INSIGHT#&lt;iso8601&gt;</code></td>
+<td>insight Lambda (<code>GroupInsightStoreService</code>)</td>
+</tr>
+<tr>
+<td>Group insight, GSI1 mirror per member ticker</td>
+<td><code>GROUP#&lt;groupId&gt;</code></td>
+<td><code>INSIGHT#&lt;iso8601&gt;#&lt;member&gt;</code> (indexed by <code>GSI1PK=TICKER#&lt;member&gt;</code>, <code>GSI1SK=INSIGHT#&lt;iso8601&gt;</code>)</td>
+<td>insight Lambda (<code>GroupInsightStoreService</code>); read via <code>GSI1</code> by query Lambda (<code>InsightFeedQuery</code>)</td>
+</tr>
+<tr>
+<td>Distinct correlation-group index</td>
+<td><code>GROUPSET</code></td>
+<td><code>GROUP#&lt;groupId&gt;</code></td>
+<td>insight Lambda (<code>CorrelationStoreService</code>)</td>
+</tr>
+<tr>
 <td>Bedrock daily total</td>
 <td><code>COST#&lt;yyyy-MM-dd&gt;</code></td>
 <td><code>TOTAL</code></td>
@@ -2809,6 +2897,18 @@ there is one table where the key patterns tell the entities apart. Concept and r
 <td><code>USER#&lt;sub&gt;</code></td>
 <td><code>CONSENT</code></td>
 <td>consent Lambda</td>
+</tr>
+<tr>
+<td>Portfolio holding (lots snapshot)</td>
+<td><code>USER#&lt;sub&gt;</code></td>
+<td><code>HOLDING#RELIANCE.NS</code></td>
+<td>portfolio Lambda (<code>HoldingsStoreService</code>)</td>
+</tr>
+<tr>
+<td>Erasure lease / profile record</td>
+<td><code>USER#&lt;sub&gt;</code></td>
+<td><code>PROFILE</code></td>
+<td>DSR Lambda (<code>UserErasureService</code>), the <code>deletion_pending</code> lease used by Section 10.3's erasure cascade</td>
 </tr>
 </tbody>
 </table>
@@ -3037,9 +3137,12 @@ ingestion. The gate is the write path's single biggest cost control: on most run
 <code>InsightSkipped</code> branch.</p>
 </blockquote>
 <blockquote>
-<p><strong>Gotcha (a known follow-up):</strong> the baseline read-modify-write is safe for the single-ticker
-skeleton, but concurrent ingests of the same ticker would race. Hardening it to an atomic conditional
-update is a documented future step.</p>
+<p><strong>Fixed: concurrent baseline updates are optimistically locked.</strong> A naive read-modify-write would
+race under concurrent Distributed Map fan-out for the same ticker. <code>AnomalyDetectionService</code>
+instead persists the folded-in baseline under a conditional put
+(<code>attribute_not_exists(version) OR version = :expected</code>); a losing writer re-reads the committed
+baseline, refolds the same observation, and retries with jittered backoff up to three attempts,
+dropping the sample (with a warning logged) only if every attempt loses the race.</p>
 </blockquote>
 <p><strong>Run it: observe the gate on a live run</strong>, either from the fetch Lambda's own log line or straight
 from the stored <code>BASELINE</code> item it just updated:</p>
@@ -3444,11 +3547,11 @@ ticker accumulates going forward. <code>HistoryBackfillService</code> fills that
 up to ~250 daily bars and writes each as an ordinary <code>DAY#{yyyy-MM-dd}</code> item, exactly the shape
 <code>DailyRollupService</code> writes on the live path, tagged <code>backfilled=true</code> for provenance.</p>
 <ul>
-<li><strong>Trigger:</strong> the same DynamoDB Stream the notifier reads (Section 5.6), a second consumer
-(<code>HistoryBackfillFn</code>) filtered to <code>eventName=INSERT</code> on <code>PK=WATCHSET</code> only, so it fires once when a
-ticker is added to a watchlist and stays silent on the high-volume <code>TS#</code>/<code>INSIGHT#</code> traffic sharing
-the same stream. <code>scripts/backfill-history.sh</code> sweeps the existing <code>WATCHSET</code> once, for tickers added
-before this shipped.</li>
+<li><strong>Trigger:</strong> the platform table's DynamoDB Stream, via <code>HistoryBackfillFn</code>, filtered to
+<code>eventName=INSERT</code> on <code>PK=WATCHSET</code> only, so it fires once when a ticker is added to a watchlist.
+This is the stream's only consumer today: the notifier that used to share the stream was retired
+with the Realtime stack (Section 5.6). <code>scripts/backfill-history.sh</code> sweeps the existing <code>WATCHSET</code>
+once, for tickers added before this shipped.</li>
 <li><strong>Idempotency: <code>attribute_not_exists(PK) AND attribute_not_exists(SK)</code>.</strong> Every put is conditional on
 the day not already existing. A rerun of the sweep script, or a stream retry, is a cheap no-op on every
 day the live rollup (or an earlier backfill) already owns; only genuine gaps get written. This is the
@@ -4070,11 +4173,31 @@ that rule's groups:</p>
 </thead>
 <tbody>
 <tr>
-<td><code>GET /insights/*</code>, <code>GET /market/*</code></td>
+<td><code>GET /insights</code>, <code>GET /insights/*</code></td>
 <td>readers, premium, admins</td>
 </tr>
 <tr>
-<td><code>GET /watchlist</code>, <code>POST/DELETE /watchlist/*</code>, <code>POST /ingest/*</code></td>
+<td><code>GET /market-data/*</code></td>
+<td>readers, premium, admins</td>
+</tr>
+<tr>
+<td><code>GET /stories/*</code></td>
+<td>readers, premium, admins</td>
+</tr>
+<tr>
+<td><code>GET /analysis/*</code></td>
+<td>readers, premium, admins</td>
+</tr>
+<tr>
+<td><code>GET /watchlist</code>, <code>POST /watchlist/*</code>, <code>DELETE /watchlist/*</code></td>
+<td>premium, admins</td>
+</tr>
+<tr>
+<td><code>GET /portfolio</code>, <code>GET /portfolio/*</code>, <code>POST /portfolio/*</code>, <code>DELETE /portfolio/*</code></td>
+<td>premium, admins</td>
+</tr>
+<tr>
+<td><code>POST /ingest/*</code></td>
 <td>premium, admins</td>
 </tr>
 <tr>
@@ -4082,11 +4205,17 @@ that rule's groups:</p>
 <td>readers, premium, admins</td>
 </tr>
 <tr>
-<td><code>GET /user/export</code>, <code>DELETE /user/account</code></td>
+<td><code>GET /user/export</code></td>
+<td>readers, premium, admins</td>
+</tr>
+<tr>
+<td><code>DELETE /user/account</code></td>
 <td>readers, premium, admins</td>
 </tr>
 </tbody>
 </table>
+<p><code>readers</code> is read only; <code>premium</code> is read plus watchlist/portfolio CRUD and on-demand ingest;
+<code>admins</code> gets everything, including every <code>premium</code> route.</p>
 <ul>
 <li><strong>Code:</strong> <code>policy/RoutePolicy.java</code> (the <code>RULES</code> list) and <code>AuthorizerHandler.java</code> (bean <code>authorize</code>).</li>
 <li><strong>Console:</strong> API Gateway &gt; <code>financial-intelligence-api-dev</code> &gt; Authorizers &gt;
@@ -4141,8 +4270,8 @@ curl -s <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</sp
 <p>One Lambda (<code>DsrHandler</code>, bean <code>dsr</code>) serves both data-subject rights.</p>
 <ul>
 <li><strong>Export</strong> (<code>GET /user/export</code>, operation <code>EXPORT</code>): returns all personal data inline as JSON, the
-consent record + watchlist + audit trail (<code>UserDataExportService</code>), and writes a <code>DATA_EXPORTED</code> audit
-event.</li>
+consent record + watchlist + portfolio holdings + audit trail (<code>UserDataExportService</code>), and writes
+a <code>DATA_EXPORTED</code> audit event.</li>
 <li><strong>Erasure</strong> (<code>DELETE /user/account</code>, operation <code>ERASE</code>): a <strong>synchronous cascade</strong> inside the DSR
 Lambda (<code>ErasureService</code>; the Step Functions workflow was collapsed 2026-07-19): acquire the
 <code>deletion_pending</code> lease on <code>USER#&lt;sub&gt;/PROFILE</code> (so the ingest and insight write paths skip the
@@ -4192,7 +4321,7 @@ stream to follow the steps). The DSR IAM role is the only one granted Cognito
 </ul>
 <p><strong>Run it: pull your own data, then erase the account.</strong> Both routes sit behind the same authorizer
 as every other call — send the caller's own access token, no request body needed.</p>
-<pre><code class="hljs language-bash"><span class="hljs-comment"># right to access: inline JSON export (consent record + watchlist + audit trail)</span>
+<pre><code class="hljs language-bash"><span class="hljs-comment"># right to access: inline JSON export (consent record + watchlist + portfolio holdings + audit trail)</span>
 curl -s <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/user/export&quot;</span> -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> | jq
 
 <span class="hljs-comment"># right to erasure: runs the synchronous cascade and returns the completed result</span>
@@ -4410,8 +4539,8 @@ and watch the graph; drill into the Map Run. This is the write path made visible
 <code>IngestionStack.java</code>. <em>Teaches:</em> Distributed Map fan-out and the anomaly gate. If a state is red,
 see Section 8's per-item retry and DLQ routing (and Section 6.5 for the Distributed Map's failure
 isolation).</li>
-<li><strong>Lambda &gt; Functions.</strong> Filter on <code>financial-</code>. You will see all seven functions (plus
-postconfirmation). Open <code>financial-query-dev</code> and notice the <code>live</code> alias and the env vars
+<li><strong>Lambda &gt; Functions.</strong> Filter on <code>financial-</code>. You will see all 17 functions (4 Ingestion, 11
+Query, 2 Cognito triggers; Section 6.1). Open <code>financial-query-dev</code> and notice the <code>live</code> alias and the env vars
 (<code>SPRING_CLOUD_FUNCTION_DEFINITION=serveInsight</code>). Code: <code>QueryHandler.java</code> and the stacks. <em>Teaches:</em>
 the Spring Cloud Function handler model and SnapStart aliases.</li>
 <li><strong>X-Ray &gt; Traces (CloudWatch &gt; Traces).</strong> Pick a recent request to see the API -&gt; authorizer -&gt; query
@@ -4491,8 +4620,9 @@ empty), and mint a fresh token. <code>scripts/deploy-ephemeral.sh</code> rewrite
 reason; a raw <code>cdk deploy</code> does not.</li>
 <li><strong>Lesson:</strong> CloudFormation restores <em>infrastructure</em>, not <em>identity state</em>. Users, group memberships,
 and issued tokens live in the pool instance, and die with it. The same applies to the ingestion
-schedule: a raw deploy re-creates the EventBridge rule ENABLED at <code>rate(5 minutes)</code>, regardless of
-whether you had disabled it before teardown, so scheduled Bedrock spend silently resumes. Code:
+schedule: a raw deploy re-creates the EventBridge rule ENABLED at its market-hours cron (dev
+<code>cron(*/5 3-9 ? * MON-FRI *)</code>), regardless of whether you had disabled it before teardown, so
+scheduled Bedrock spend silently resumes. Code:
 <code>SecurityStack.java</code> (pool + client), <code>scripts/lib/common.sh</code> (<code>save_state</code>/<code>load_state</code>),
 <code>AuthorizerHandler.java</code> (issuer-bound JWT verification). See also Section 9.1.</li>
 </ul>
@@ -4579,6 +4709,14 @@ code regression. Code: <code>IngestionStack.java</code> (<code>FanOutTickers.max
 the operator runbook's &quot;Lambda concurrency (account quota)&quot; section.</li>
 </ul>
 <h3 id="13-8-a-new-hosting-origin-must-be-trusted-in-three-separate-places-not-one">13.8 A new hosting origin must be trusted in three separate places, not one</h3>
+<blockquote>
+<p><strong>Partly historical:</strong> this was true as of 2026-07-13, when three services (Cognito, API Gateway,
+and the WebSocket API) each independently gated a browser origin. The WebSocket leg is RETIRED
+(kept as history) along with the rest of the Realtime stack (Section 5.6); today a new origin needs
+trust in the two remaining places, Cognito and API Gateway CORS. The lesson, that a shared trust
+boundary is not automatically shared by the services enforcing it, still applies to whatever set of
+services gates an origin.</p>
+</blockquote>
 <ul>
 <li><strong>Symptom (live, 2026-07-13):</strong> the Amplify-hosted frontend loads, but clicking &quot;Sign in&quot; bounces to
 the Cognito Hosted UI and immediately fails with <code>redirect_mismatch</code> — before the user ever sees a
@@ -4801,20 +4939,26 @@ step on. Pin the clock; add the case for the other side of the boundary. Code:
 <code>functions/ingestion-function/src/test/java/dev/engnotes/ingestion/it/IngestionBeanIT.java</code>.</li>
 </ul>
 <h3 id="13-15-a-dynamodb-stream-tops-out-at-two-lambda-consumers">13.15 A DynamoDB Stream tops out at two Lambda consumers</h3>
+<blockquote>
+<p><strong>Partly historical:</strong> the two-consumer ceiling this lesson describes was hit while the notifier
+Lambda (Section 5.6, RETIRED) and the history-backfill trigger briefly shared the stream. The
+notifier is gone; <code>HistoryBackfillFn</code> is the stream's sole consumer today. The AWS limit itself,
+and the design lesson, remain true and worth knowing before adding a second stream-driven Lambda.</p>
+</blockquote>
 <ul>
-<li><strong>Symptom:</strong> wiring a second <code>addEventSource(DynamoEventSource...)</code> onto the platform table's stream
-(for the history-backfill trigger, alongside the existing notifier consumer) works fine; a third
-would not — AWS caps a single DynamoDB Stream at two Lambda event source mappings, full stop, no
-quota-increase request will raise it.</li>
+<li><strong>Symptom (as it happened):</strong> wiring a second <code>addEventSource(DynamoEventSource...)</code> onto the
+platform table's stream (for the history-backfill trigger, alongside the then-existing notifier
+consumer) worked fine; a third would not — AWS caps a single DynamoDB Stream at two Lambda event
+source mappings, full stop, no quota-increase request will raise it.</li>
 <li><strong>Cause:</strong> this is a hard platform limit on the stream itself (not a per-function or per-account
 quota), because each Lambda event source mapping owns a shard iterator per shard and the stream's
 internal fan-out only provisions for two independent readers.</li>
 <li><strong>Fix (design-time, not a bug fix):</strong> keep every stream consumer's filter as narrow as possible
-(<code>FilterCriteria</code> on <code>eventName</code> + the specific <code>PK</code>) so the two slots stay cheap and single-purpose
-— the backfill trigger filters to <code>WATCHSET</code> INSERTs only, so it shares the stream with the notifier
-without competing for its <code>INSIGHT#</code> records. A genuine third consumer needs a fan-out redesign (e.g.
-relay through SNS or EventBridge Pipes to as many downstream targets as needed), not a third
-<code>addEventSource</code> call, which CDK will let you write but AWS will reject at deploy time.</li>
+(<code>FilterCriteria</code> on <code>eventName</code> + the specific <code>PK</code>) so the available slots stay cheap and
+single-purpose — the backfill trigger filters to <code>WATCHSET</code> INSERTs only. A genuine second (now
+that the notifier is gone) or third consumer needs a fan-out redesign (e.g. relay through SNS or
+EventBridge Pipes to as many downstream targets as needed), not another <code>addEventSource</code> call,
+which CDK will let you write but AWS will reject at deploy time past the cap.</li>
 <li><strong>Lesson:</strong> before adding a second (or worrying about a third) stream-driven Lambda, check this limit
 first — it is easy to design past it by accident on a single-table system where multiple features
 each want their own stream trigger. Code: <code>IngestionStack.java</code> (<code>HistoryBackfillFn</code>,
@@ -4932,6 +5076,13 @@ Section 6 subsection that teaches it.</p>
 <td>Alarm notifications (warnings + pages)</td>
 </tr>
 <tr>
+<td>SES</td>
+<td>SES &gt; Verified identities &gt; <code>alerts@engnotes.dev</code></td>
+<td><code>DataStack.java</code></td>
+<td>10.3</td>
+<td>Verified sender identity; sends the erasure-confirmation email (sandbox mode: verified recipients only)</td>
+</tr>
+<tr>
 <td>Budgets</td>
 <td>Billing &gt; Budgets &gt; <code>FinancialPlatform-Data-dev-MonthlyCostBudget-*</code> (auto-named: a fixed name breaks budget replacement, see the operator runbook's &quot;Deploy&quot; section)</td>
 <td><code>DataStack.java</code></td>
@@ -4957,7 +5108,7 @@ Section 6 subsection that teaches it.</p>
 <td>Rules &gt; <code>financial-market-data-schedule-dev</code></td>
 <td><code>IngestionStack.java</code></td>
 <td>6.6</td>
-<td>5-min (dev) schedule that starts the pipeline</td>
+<td>Market-hours cron (dev every 5 min, prod every 1 min) that starts the pipeline</td>
 </tr>
 <tr>
 <td>Step Functions</td>
@@ -5261,7 +5412,7 @@ npm <span class="hljs-built_in">test</span>
 </tr>
 <tr>
 <td><strong>GSI</strong></td>
-<td>Global Secondary Index; here <code>GSI1</code> exists but is empty, reserved for a future by-ticker insight feed (Section 6.4).</td>
+<td>Global Secondary Index; here <code>GSI1</code> is live, indexing group insights by member ticker for the by-ticker insight feed (Section 6.4, Section 8.6).</td>
 </tr>
 <tr>
 <td><strong>IAM least-privilege</strong></td>
@@ -5333,8 +5484,9 @@ each function's handler is small. The inline comments in this codebase are unusu
 <li>The platform design spec is the design of record: section 4 (the full single-table access-pattern list), section
 5 (ingestion), section 6 (anomaly detection), section 9 (Bedrock), section 11 (identity and DPDP),
 section 15 (the walking-skeleton build sequence), and section 16 (all tunable defaults in one table).
-Where this guide and the spec differ, the code (and this guide) win: the spec describes some targets
-the code has not reached (WebSocket delivery, correlation grouping, the <code>GSI1</code> feed).</li>
+Where this guide and the spec differ, the code (and this guide) win: correlation grouping and the
+<code>GSI1</code> by-ticker feed have since shipped (Section 8.6); WebSocket delivery shipped and was later
+retired in favor of polling (Section 5.6).</li>
 <li>A status tracker records what is built versus planned.</li>
 <li>An architecture write-up and the diagram under <code>docs/assets/</code> show the system visually.</li>
 <li>A security document covers the security posture; a recorded load-test run has

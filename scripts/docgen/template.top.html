@@ -269,8 +269,8 @@ setData(result)</code></pre>
 
       <h2 id="current-boundaries">Current implementation boundaries</h2>
       <p>A learning guide should distinguish code that is executable through the application from code that is an internal building block or future seam.</p>
-      <div class="notice"><strong>Holdings are not an exposed application feature yet.</strong> <code>Holding</code>, <code>Lot</code>, <code>HoldingsStoreService</code>, and <code>HoldingMath</code> implement a tested persistence/domain seam under <code>USER#{sub} / HOLDING#{ticker}</code>. There is currently no API Gateway route, Spring Cloud Function operation, or frontend caller for it. Do not treat the model as a user-facing portfolio API.</div>
-      <p>The seam is still useful to study: a holding is a full replacement snapshot of purchase lots; <code>totalQty</code> and weighted <code>avgCost</code> are derived values; and a successful upsert adds the ticker to the watchlist union, allowing ingestion and daily-history backfill to see it. The absence of a route is deliberate scope information, not a broken request path.</p>
+      <div class="notice"><strong>Portfolio is a live application feature.</strong> <code>Holding</code>, <code>Lot</code>, <code>HoldingsStoreService</code>, and <code>HoldingMath</code> back lots-based holdings, valuation, and profit/loss under <code>USER#{sub} / HOLDING#{ticker}</code>, served through <code>GET/POST/DELETE /portfolio/{ticker}</code>, <code>GET /portfolio</code>, and <code>GET /portfolio/history</code> on the <code>financial-portfolio-dev</code> Lambda (bean <code>portfolio</code>), with a frontend caller in <code>use-portfolio.ts</code>. See Section 9.7 for the full walkthrough.</div>
+      <p>A holding is a full replacement snapshot of purchase lots; <code>totalQty</code> and weighted <code>avgCost</code> are derived values; and a successful upsert adds the ticker to the watchlist union, allowing ingestion and daily-history backfill to see it.</p>
 
       <h3>Use the frontend to find the correct backend entry point</h3>
       <table>
@@ -279,6 +279,7 @@ setData(result)</code></pre>
           <tr><td>View a ticker</td><td><code>app/ticker/[symbol]/page.tsx</code></td><td><code>GET /insights/{ticker}</code>, <code>GET /market-data/{ticker}</code></td><td>Query function</td></tr>
           <tr><td>Change chart range</td><td><code>DailyRangeChart</code></td><td><code>GET /market-data/{ticker}/daily?days=N</code></td><td>Query function</td></tr>
           <tr><td>Add or remove a watchlist ticker</td><td><code>WatchlistDashboard</code></td><td><code>POST</code> or <code>DELETE /watchlist/{ticker}</code></td><td>Watchlist function</td></tr>
+          <tr><td>Add, edit, or view a portfolio holding</td><td><code>use-portfolio.ts</code></td><td><code>GET/POST/DELETE /portfolio/{ticker}</code>, <code>GET /portfolio</code>, <code>GET /portfolio/history</code></td><td>Portfolio function</td></tr>
           <tr><td>Grant or withdraw consent</td><td><code>ConsentPanel</code></td><td><code>POST</code> or <code>DELETE /user/consent</code></td><td>Consent function</td></tr>
           <tr><td>Export or erase data</td><td><code>DangerZone</code></td><td><code>GET /user/export</code>, <code>DELETE /user/account</code></td><td>DSR function</td></tr>
         </tbody>
