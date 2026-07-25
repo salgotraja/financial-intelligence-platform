@@ -65,6 +65,12 @@ function stripMarkdownLinks(tokens) {
 }
 
 export function renderBody(markdown, { repoRoot }) {
+  // Content between <!-- skip-in-html --> and <!-- /skip-in-html --> lives in the markdown so the raw
+  // document is complete (title, byline, intro), but is dropped from the rendered body because the
+  // HTML template already presents it in the landing zone. Keeps markdown and HTML in sync without
+  // duplicating the front matter.
+  markdown = markdown.replace(/<!--\s*skip-in-html\s*-->[\s\S]*?<!--\s*\/skip-in-html\s*-->\s*/g, "");
+
   const md = new MarkdownIt({
     html: true,
     linkify: false,
