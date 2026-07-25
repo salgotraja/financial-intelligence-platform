@@ -1026,4 +1026,12 @@ class QueryStackTest {
             assertNull(match.get("AlarmActions"), name + " must be non-paging (no SNS action)");
         }
     }
+
+    @Test
+    void platformHealthCompositeAlarmPagesCriticalTopic() {
+        synth().hasResourceProperties(
+                        "AWS::CloudWatch::CompositeAlarm",
+                        Match.objectLike(Map.of(
+                                "AlarmName", "financial-platform-health-dev", "AlarmActions", Match.anyValue())));
+    }
 }

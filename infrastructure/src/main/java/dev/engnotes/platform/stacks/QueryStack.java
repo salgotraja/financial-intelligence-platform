@@ -1262,6 +1262,17 @@ public class QueryStack extends Stack {
                 .treatMissingData(TreatMissingData.NOT_BREACHING)
                 .build();
 
+        // == PlatformHealth composite ==
+        // Single health rollup of the two existing P1 pagers. Conservative posture: the composite ORs
+        // only the pager-grade alarms; the non-paging business alarms are deliberately excluded from the
+        // pager path (they are dashboard-visible only). Wired to the same critical SNS topic as the P1s.
+        var platformHealth = CompositeAlarm.Builder.create(this, "PlatformHealthAlarm")
+                .compositeAlarmName("financial-platform-health-" + env)
+                .alarmDescription("[P1] Platform health rollup: fires when API latency OR 5XX-rate P1 breaches.")
+                .alarmRule(AlarmRule.anyOf(p99LatencyAlarm, api5xxRateAlarm))
+                .build();
+        platformHealth.addAlarmAction(new SnsAction(data.getCriticalTopic()));
+
         // == Platform dashboard ==
         // One pane aggregating user-facing symptoms (API, Lambda) and diagnostic causes (ingestion,
         // data). Built here in the DAG-sink stack so every widget uses real construct refs.
@@ -1485,12 +1496,16 @@ public class QueryStack extends Stack {
                         .build());
 
         dashboard.addWidgets(AlarmStatusWidget.Builder.create()
-                .title("Alarms (P1 + P2)")
+                .title("Alarms (health + P1 + P2 + business)")
                 .alarms(List.of(
+                        platformHealth,
                         p99LatencyAlarm,
                         api5xxRateAlarm,
                         ingestion.getPipelineFailedAlarm(),
-                        ingestion.getDlqDepthAlarm()))
+                        ingestion.getDlqDepthAlarm(),
+                        dataFreshnessAlarm,
+                        bedrockErrorAlarm,
+                        authDeniedAlarm))
                 .width(24)
                 .build());
 
