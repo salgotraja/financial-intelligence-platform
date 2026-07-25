@@ -3,7 +3,6 @@ package dev.engnotes.platform.stacks;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -1010,51 +1009,25 @@ class QueryStackTest {
         }
     }
 
+    // CloudWatch rejects ANY alarm whose expression contains SEARCH ("SEARCH is not supported on
+    // Metric Alarms") - confirmed at deploy time, not caught by synth. The three business metrics are
+    // emitted only as per-dimension EMF series, so there is no single dimensionless series to alarm on
+    // without a SEARCH. They are therefore dashboard-only; no threshold alarm is created for them.
+    // This guards against reintroducing a SEARCH-backed business alarm (which would break deploy).
     @Test
     @SuppressWarnings("unchecked")
-    void businessAlarmsAreNonPagingWithMissingDataNotBreaching() {
+    void noSearchBackedBusinessAlarmsAreCreated() {
         var alarms = synth().findResources("AWS::CloudWatch::Alarm");
-        var businessNames =
+        var forbiddenNames =
                 List.of("financial-data-freshness-dev", "financial-bedrock-error-dev", "financial-auth-denied-dev");
-        for (var name : businessNames) {
-            var match = alarms.values().stream()
-                    .map(r -> (Map<String, Object>) r.get("Properties"))
-                    .filter(p -> name.equals(p.get("AlarmName")))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("missing business alarm " + name));
-            assertEquals("notBreaching", match.get("TreatMissingData"), name + " must not breach on missing data");
-            assertNull(match.get("AlarmActions"), name + " must be non-paging (no SNS action)");
-        }
-    }
-
-    // CloudWatch rejects a bare SEARCH() as an alarm metric at deploy time: SEARCH returns multiple
-    // time series and an alarm can only watch one. CDK synth does not catch this (found in review),
-    // so each business alarm's MathExpression must wrap SEARCH in a single-series aggregation
-    // (MAX/SUM). This guards against a regression back to a bare SEARCH expression.
-    @Test
-    @SuppressWarnings("unchecked")
-    void businessAlarmSearchExpressionsAreAggregated() {
-        var alarms = synth().findResources("AWS::CloudWatch::Alarm");
-        var businessNames =
-                List.of("financial-data-freshness-dev", "financial-bedrock-error-dev", "financial-auth-denied-dev");
-        for (var name : businessNames) {
-            var props = alarms.values().stream()
-                    .map(r -> (Map<String, Object>) r.get("Properties"))
-                    .filter(p -> name.equals(p.get("AlarmName")))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("missing business alarm " + name));
-            var metrics = (List<Map<String, Object>>) props.get("Metrics");
-            assertNotNull(metrics, name + " must carry a Metrics array");
-            var aggregatedSearchExpressions = metrics.stream()
-                    .map(m -> (String) m.get("Expression"))
-                    .filter(Objects::nonNull)
-                    .filter(expr -> expr.contains("SEARCH(") && (expr.startsWith("MAX(") || expr.startsWith("SUM(")))
-                    .toList();
-            assertEquals(
-                    1,
-                    aggregatedSearchExpressions.size(),
-                    name + " must have exactly one MAX(SEARCH(...)) or SUM(SEARCH(...)) expression, found: " + metrics);
-        }
+        var present = alarms.values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .map(p -> (String) p.get("AlarmName"))
+                .filter(forbiddenNames::contains)
+                .toList();
+        assertTrue(
+                present.isEmpty(),
+                "business metrics are dashboard-only; no alarm should be created, found: " + present);
     }
 
     @Test

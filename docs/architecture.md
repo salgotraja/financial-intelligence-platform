@@ -132,11 +132,12 @@ correlation id plus X-Ray trace id through the SLF4J MDC, and log structured JSO
 Identity is never a metric dimension. The `financial-platform-{env}` dashboard carries a Business
 row (insights generated, serve-time data-freshness age, Bedrock token cost, auth denials, and API
 Gateway cache hit/miss) built with dimension-agnostic CloudWatch `SEARCH` expressions, so it renders
-regardless of which dimension combinations were emitted. Alarms are three-tier: P1 pagers (p99
+regardless of which dimension combinations were emitted. Alarms are two-tier: P1 pagers (p99
 latency, 5XX rate) rolled up by the `financial-platform-health-{env}` composite alarm to the
-critical SNS topic; P2 diagnostics (pipeline-failed, DLQ depth); and non-paging P3 business alarms
-(stale data, Bedrock error, auth-denial spike) that treat missing data as not-breaching and surface
-on the dashboard only. Log retention is 14 days across all groups.
+critical SNS topic, and P2 diagnostics (pipeline-failed, DLQ depth). The business metrics are
+dashboard-only: CloudWatch forbids `SEARCH` in an alarm expression, and the EMF metrics are emitted
+only as per-dimension series, so threshold alarms on them are deferred until the functions emit
+dimensionless rollup metrics. Log retention is 14 days across all groups.
 
 For component responsibilities, the single-table data model, tunable defaults, security,
 observability, cost guardrails, and the build sequence, see [`spec.md`](./spec.md).
