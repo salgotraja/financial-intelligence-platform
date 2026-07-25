@@ -125,5 +125,18 @@ purpose, so withdrawing consent irrecoverably destroys it. Right-to-access (`GET
 aggregates Cognito attributes plus all `USER#{sub}` items (holdings included) and logs an
 `access_event`.
 
+Observability: all Lambdas run managed X-Ray tracing (`Tracing.ACTIVE`; no OTel/ADOT collector,
+see ADR 0001). The seven handler functions emit business metrics as CloudWatch Embedded Metric
+Format (EMF) under namespace `FinancialPlatform` (no collector, SnapStart-safe), thread a
+correlation id plus X-Ray trace id through the SLF4J MDC, and log structured JSON (ECS format).
+Identity is never a metric dimension. The `financial-platform-{env}` dashboard carries a Business
+row (insights generated, serve-time data-freshness age, Bedrock token cost, auth denials, and API
+Gateway cache hit/miss) built with dimension-agnostic CloudWatch `SEARCH` expressions, so it renders
+regardless of which dimension combinations were emitted. Alarms are three-tier: P1 pagers (p99
+latency, 5XX rate) rolled up by the `financial-platform-health-{env}` composite alarm to the
+critical SNS topic; P2 diagnostics (pipeline-failed, DLQ depth); and non-paging P3 business alarms
+(stale data, Bedrock error, auth-denial spike) that treat missing data as not-breaching and surface
+on the dashboard only. Log retention is 14 days across all groups.
+
 For component responsibilities, the single-table data model, tunable defaults, security,
 observability, cost guardrails, and the build sequence, see [`spec.md`](./spec.md).
