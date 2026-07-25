@@ -91,8 +91,8 @@ public class DataStack extends Stack {
                 .removalPolicy(statefulRemoval)
                 .build();
 
-        // GSI1 (insight-by-ticker): reserved for the by-ticker insight feed once correlation
-        // grouping moves insights under GROUP# keys. Empty until items carry GSI1PK/GSI1SK.
+        // GSI1 (insight-by-ticker): live. Group insights write GSI1PK/GSI1SK so the by-ticker
+        // insight feed (GET /insights) can query a ticker's latest insight across correlation groups.
         platformTable.addGlobalSecondaryIndex(GlobalSecondaryIndexProps.builder()
                 .indexName("GSI1")
                 .partitionKey(Attribute.builder()
