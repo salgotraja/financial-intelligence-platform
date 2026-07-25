@@ -52,3 +52,16 @@ test("non-md links are left intact", () => {
   const html = renderBody("[AWS](https://aws.amazon.com/lambda).\n", { repoRoot });
   assert.ok(html.includes('href="https://aws.amazon.com/lambda"'));
 });
+
+test("embed: image src becomes a base64 data URI", () => {
+  const md = "![Arch](embed:docs/assets/financial_intelligence_platform_architecture.drawio.png)\n";
+  const realRoot = new URL("../../../", import.meta.url).pathname;
+  const html = renderBody(md, { repoRoot: realRoot });
+  assert.match(html, /<img[^>]+src="data:image\/png;base64,/);
+  assert.ok(!html.includes("embed:"), "embed: prefix is resolved away");
+});
+
+test("embed: on a missing image fails loudly", () => {
+  const realRoot = new URL("../../../", import.meta.url).pathname;
+  assert.throws(() => renderBody("![x](embed:docs/assets/nope.png)\n", { repoRoot: realRoot }), /nope\.png/);
+});

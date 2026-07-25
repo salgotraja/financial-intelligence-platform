@@ -1,7 +1,27 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import MarkdownIt from "markdown-it";
 import hljs from "highlight.js";
 import { slugify } from "./slug.mjs";
 import { resolveInclude } from "./include.mjs";
+
+const MIME_BY_EXT = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", svg: "image/svg+xml", gif: "image/gif" };
+
+// Embed a repo image as a base64 data URI so the published HTML is fully self-contained (no external
+// asset needed to release the file). Triggered by an image whose src starts with "embed:".
+function embedImage(src, repoRoot) {
+  const path = src.slice("embed:".length);
+  const ext = path.split(".").pop().toLowerCase();
+  const mime = MIME_BY_EXT[ext];
+  if (!mime) throw new Error(`embed: unsupported image type ".${ext}" for ${path}`);
+  let bytes;
+  try {
+    bytes = readFileSync(join(repoRoot, path));
+  } catch (e) {
+    throw new Error(`embed: cannot read image ${path}: ${e.message}`);
+  }
+  return `data:${mime};base64,${bytes.toString("base64")}`;
+}
 
 function highlight(code, lang) {
   if (lang && hljs.getLanguage(lang)) {
@@ -82,6 +102,17 @@ export function renderBody(markdown, { repoRoot }) {
       token.info = lang; // keep only the language for highlight()
     }
     return defaultFence(tokens, idx, options, env, self);
+  };
+
+  // Image rule: base64-embed any src prefixed with "embed:" so diagrams ship inside the HTML.
+  const defaultImage = md.renderer.rules.image.bind(md.renderer.rules);
+  md.renderer.rules.image = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    const srcIdx = token.attrIndex("src");
+    if (srcIdx >= 0 && token.attrs[srcIdx][1].startsWith("embed:")) {
+      token.attrs[srcIdx][1] = embedImage(token.attrs[srcIdx][1], repoRoot);
+    }
+    return defaultImage(tokens, idx, options, env, self);
   };
 
   // Heading ids via the shared slug (skip the leading H1).
