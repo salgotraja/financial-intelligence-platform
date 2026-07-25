@@ -294,13 +294,13 @@ open and jump to the section you need.</p>
 link to the official documentation so you can go deeper.</li>
 </ul>
 <p>Nothing here is aspirational. Every resource name, file path, route, and attribute below was read
-out of the actual source in this repo. Where the spec (<code>docs/spec.md</code>) describes a target that the
+out of the actual source in this repo. Where the design spec describes a target that the
 code has not reached yet, this guide follows the code and says so. When in doubt, the file named in
 each row is the source of truth.</p>
 <p>This is a <strong>local learning document</strong>. For runnable commands (deploy, verify, load test, tail
-logs, mint a token), this guide points you at <code>USER-GUIDE.md</code> by command name rather than
-duplicating shell. For the authoritative design and the &quot;why&quot; behind each decision, see
-<code>docs/spec.md</code>.</p>
+logs, mint a token), this guide points you at the operator command reference by command name rather
+than duplicating shell. For the authoritative design and the &quot;why&quot; behind each decision, see
+the design spec.</p>
 <hr>
 <h2 id="table-of-contents">Table of contents</h2>
 <ol>
@@ -438,11 +438,11 @@ click-path, not a reading.</li>
 </tr>
 <tr>
 <td><strong>A failing ingestion run</strong></td>
-<td>Section 8 (write path), then <code>USER-GUIDE.md</code> -&gt; &quot;Step Functions&quot; and &quot;Dead-letter queue&quot;.</td>
+<td>Section 8 (write path), then the operator runbook's &quot;Step Functions&quot; and &quot;Dead-letter queue&quot; steps.</td>
 </tr>
 <tr>
 <td><strong>A 401 or 403 on an API call</strong></td>
-<td>Section 9.1 (authorizer) and Section 10.2 (group-to-route), then <code>USER-GUIDE.md</code> -&gt; &quot;Which logs for which problem&quot;.</td>
+<td>Section 9.1 (authorizer) and Section 10.2 (group-to-route), then the operator runbook's &quot;Which logs for which problem&quot; guidance.</td>
 </tr>
 <tr>
 <td><strong>A slow or breaching p99</strong></td>
@@ -454,7 +454,7 @@ click-path, not a reading.</li>
 </tr>
 <tr>
 <td><strong>To make a change safely</strong></td>
-<td>Section 5 (which stack owns it), Section 6.13 (IAM), Section 13 (the traps), then <code>USER-GUIDE.md</code> -&gt; &quot;Deploy&quot; and &quot;Cost control&quot;.</td>
+<td>Section 5 (which stack owns it), Section 6.13 (IAM), Section 13 (the traps), then the operator runbook's &quot;Deploy&quot; and &quot;Cost control&quot; steps.</td>
 </tr>
 </tbody>
 </table>
@@ -766,8 +766,8 @@ frontend polling). The wiring lives in <code>FinancialPlatformApp.java</code>.</
 a USD 5 budget. The costly resources (historically the NAT gateway ~$1/day and the Bedrock
 interface endpoint, both gone since ADR 0004; prod
 provisioned concurrency) all live in the ephemeral stacks; you can <code>cdk destroy</code> them nightly and
-rebuild in one command without ever risking the data. See <code>USER-GUIDE.md</code> -&gt; &quot;Cost control&quot; for the
-exact <code>cdk destroy</code> / <code>cdk deploy</code> commands. Cross-stack references are wired as CloudFormation
+rebuild in one command without ever risking the data. See the operator runbook's &quot;Cost control&quot;
+section for the exact <code>cdk destroy</code> / <code>cdk deploy</code> commands. Cross-stack references are wired as CloudFormation
 exports (each stack's <code>CfnOutput</code> with an <code>exportName</code>), which is how the ephemeral stacks find the
 persistent table, key, and user pool.</p>
 </blockquote>
@@ -1873,7 +1873,7 @@ single-tenant learning platform, and the key policy plus per-role grants still e
 for what.</p>
 </blockquote>
 <blockquote>
-<p><strong>Gotcha (in <code>USER-GUIDE.md</code>):</strong> the dev CMK is <code>DESTROY</code> so teardown does not orphan keys; the old
+<p><strong>Gotcha (from the operator runbook):</strong> the dev CMK is <code>DESTROY</code> so teardown does not orphan keys; the old
 monolithic stack's key was <code>RETAIN</code> and survives as a ~$1/mo orphan until scheduled for deletion.</p>
 </blockquote>
 <blockquote>
@@ -2195,7 +2195,7 @@ Gateway, and Step Functions emit trace segments themselves, so there is no depre
 any JAR (the root pom deliberately manages no X-Ray SDK). When code-level custom spans become
 necessary, the agreed path is OpenTelemetry (ADOT layer) exporting to CloudWatch, not a
 self-managed backend like Tempo, whose always-on compute does not fit this account's budget.
-Decision of record: <code>docs/adr/0001-tracing-opentelemetry-direction.md</code>.</p>
+Decision of record: ADR 0001 (the tracing / OpenTelemetry direction).</p>
 </blockquote>
 <blockquote>
 <p><strong>Further reading:</strong> <a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/WhatIsCloudWatch.html">CloudWatch user guide</a>;
@@ -2452,8 +2452,8 @@ unless you have re-enabled the schedule, the table may contain only insight rows
 is the opposite state: schedule enabled, real rows flowing, no synthetic seeds.)</p>
 </blockquote>
 <p>To get real data flowing, re-enable the schedule and trigger a run. The exact commands
-(<code>aws events enable-rule</code>, starting the state machine, <code>POST /ingest/{ticker}</code>) are in <code>USER-GUIDE.md</code>
--&gt; &quot;Verify a deployment&quot;. Within a few minutes the next scheduled run populates real <code>TS#</code> market rows
+(<code>aws events enable-rule</code>, starting the state machine, <code>POST /ingest/{ticker}</code>) are in the operator
+runbook's &quot;Verify a deployment&quot; section. Within a few minutes the next scheduled run populates real <code>TS#</code> market rows
 (and <code>INSIGHT#</code> rows on any ticker that trips the anomaly gate).</p>
 <hr>
 <h2 id="8-the-write-path-in-depth">8. The write path in depth</h2>
@@ -2619,8 +2619,8 @@ before Marketplace will even evaluate the agreement or the quota. That supersede
 Marketplace-agreement read above and an earlier 0-tokens/day-quota read: each was a genuine symptom
 of the same underlying gap (no payment method), not an independent root cause. First-party Nova
 models are entitled in this account but daily-token-throttled, so they are not a working substitute
-either. See USER-GUIDE.md &quot;Exercising the insight (Bedrock) leg&quot; and &quot;Lambda concurrency (account
-quota)&quot;.</p>
+either. See the operator runbook's &quot;Exercising the insight (Bedrock) leg&quot; and &quot;Lambda concurrency
+(account quota)&quot; sections.</p>
 <p><strong>Resolved 2026-07-16:</strong> the payment instrument was fixed and the Marketplace agreement for
 <code>anthropic.claude-sonnet-4-6</code> then completed (<code>create-foundation-model-agreement</code>,
 <code>agreementAvailability: AVAILABLE</code>). Invokes no longer AccessDeny — they throttle on the account's
@@ -2846,8 +2846,8 @@ is simply no WAF layer available for it. Do not try to attach one.</p>
 <blockquote>
 <p><strong>Load testing trips the rate rule.</strong> A 10 rps single-IP load run exceeds 300/5min and starts drawing
 <code>403</code>s from the WAF, which is the rule working. Read a clean SLO from a 1 rps warm run (client p99
-~310ms) or from CloudWatch server-side percentiles (steady-state p99 ~15.5ms). See <code>USER-GUIDE.md</code>
-&quot;Load-testing the query path.&quot;</p>
+~310ms) or from CloudWatch server-side percentiles (steady-state p99 ~15.5ms). See the operator
+runbook's &quot;Load-testing the query path&quot; section.</p>
 </blockquote>
 <h3 id="9-5-deep-analysis-compute-on-read-over-the-day-projection">9.5 Deep analysis: compute-on-read over the DAY# projection</h3>
 <p><code>GET /analysis/{ticker}</code> (<code>DeepAnalysisService</code>, bean <code>serveDeepAnalysis</code>) computes deterministic
@@ -3087,8 +3087,8 @@ invariants at the IAM boundary, not in a service method a future bug could bypas
 <hr>
 <h2 id="11-the-proof-layer-how-you-know-it-works">11. The proof layer (how you know it works)</h2>
 <p>Depth means the slice is proven, not just deployed. Three levels of proof exist, and the exact commands
-live in <code>USER-GUIDE.md</code> (its &quot;Load-testing the query path&quot; and &quot;Verify a deployment&quot; sections). Do not
-re-derive them here; run them from there.</p>
+live in the operator runbook (its &quot;Load-testing the query path&quot; and &quot;Verify a deployment&quot; sections). Do
+not re-derive them here; run them from there.</p>
 <ul>
 <li><strong>LocalStack integration tests (free, Docker):</strong> real AWS behaviour against a local emulator, opt-in
 via <code>./mvnw verify -Pintegration-tests</code>. Plain <code>verify</code> stays Docker-free. Only Cognito is mocked
@@ -3102,7 +3102,7 @@ with no cloud spend (no auth / API Gateway / VPC).</li>
 a k6 load test; <code>scripts/teardown.sh</code> drops everything except the persistent Data stack. Only this run
 proves the auth / API Gateway / VPC / SnapStart behaviour, which LocalStack Community cannot emulate.</li>
 </ul>
-<p><strong>The recorded run</strong> is in <code>docs/load-test/2026-07-11-query-path-results.md</code>: 601 requests, zero
+<p><strong>The recorded load-test run</strong> (2026-07-11): 601 requests, zero
 failures, 10 req/s for 60s over 8 rotating tickers. <strong>Client-side p99 was ~193ms</strong> (the headline: real
 end-to-end experience from Mumbai, RTT included; p50 ~74ms). Server-side API Gateway Latency is bimodal:
 ~2ms on cache hits (the 60s stage cache serves them without touching the Lambda) up to ~163ms on
@@ -3121,7 +3121,7 @@ completely uninstrumented (no <code>.exec</code> files, no jacoco output at all)
 where Docker is already required for LocalStack.</p>
 <blockquote>
 <p><strong>The 80% number was the backstop, not the driver.</strong> Measuring the baseline before adding a single
-IT (<code>docs/STATUS.md</code>, 2026-07-17) found all 8 modules were <em>already</em> at 91-98% merged line coverage
+IT (an earlier coverage baseline, 2026-07-17) found all 8 modules were <em>already</em> at 91-98% merged line coverage
 from unit tests alone (<code>authorizer-function</code> lowest at 91.4%, <code>dsr-function</code> highest at 98.3%). A
 line-percentage gate alone would have demanded nothing here: the modules had already crossed 80%
 before the IT-coverage plan added a single test. What the plan actually added was a mandated
@@ -3167,7 +3167,7 @@ DynamoDB capacity, and an alarm-status widget. Built in <code>QueryStack.java</c
 plus the P2 ingestion alarms.</li>
 <li><strong>X-Ray &gt; Traces:</strong> tracing is on across API Gateway, Lambda, Step Functions, and DynamoDB, so a single
 request or pipeline run shows as one end-to-end trace with per-hop latency. Every log line also carries
-a <code>correlationId</code> to follow one request across services (see <code>USER-GUIDE.md</code>).</li>
+a <code>correlationId</code> to follow one request across services (see the operator runbook).</li>
 </ul>
 <hr>
 <h2 id="12-guided-aws-console-tour">12. Guided AWS console tour</h2>
@@ -3347,7 +3347,7 @@ either function's own logs; the only place the cause is visible is the <strong>A
 log</strong>, which names the throttling explicitly. If every authorized route and every WebSocket
 handshake fail at once with clean application logs, check account concurrency before suspecting a
 code regression. Code: <code>IngestionStack.java</code> (<code>FanOutTickers.maxConcurrency</code>). See
-USER-GUIDE.md &quot;Lambda concurrency (account quota)&quot;.</li>
+the operator runbook's &quot;Lambda concurrency (account quota)&quot; section.</li>
 </ul>
 <h3 id="13-8-a-new-hosting-origin-must-be-trusted-in-three-separate-places-not-one">13.8 A new hosting origin must be trusted in three separate places, not one</h3>
 <ul>
@@ -3373,7 +3373,7 @@ added explicitly before a prod hosting deploy).</li>
 CORS, and the WebSocket API are three independent trust boundaries that happen to gate the same
 browser tab, and each one has to be told about the origin separately. <code>cdk diff</code> will happily show
 a clean update to just the stack you touched; it will not tell you the other two stacks were never
-updated. See USER-GUIDE.md &quot;Amplify Hosting: LIVE&quot;.</li>
+updated. See the operator runbook's &quot;Amplify Hosting: LIVE&quot; section.</li>
 </ul>
 <p>CORS on the two default Gateway Responses, needed because an authorizer 401/403 or an unmapped 5XX
 short-circuits before any integration (and its CORS headers) ever runs:</p>
@@ -3395,7 +3395,7 @@ api.addGatewayResponse(
 <li><strong>Symptom (live, 2026-07-13):</strong> two related bugs from one root cause. In review: <code>/watchlist</code>,
 <code>/user/consent</code>, <code>/user/export</code> sit behind the QueryStack's 60s stage cache with no cache key
 beyond the request itself — a second user's <code>GET /watchlist</code> within the same 60s window could be
-served the first user's cached response (flagged, not fixed this cycle; see STATUS.md). In the
+served the first user's cached response (flagged, not fixed this cycle; see the status tracker). In the
 frontend: after <code>POST /watchlist</code> (add a ticker), the dashboard's refetch of <code>GET /watchlist</code> kept
 returning the pre-mutation list for up to 60s — the mutation landed, but the read was served stale.</li>
 <li><strong>Cause:</strong> API Gateway's stage cache keys on whatever you tell it to (see 13.2 — a path parameter
@@ -3824,8 +3824,8 @@ Section 6 subsection that teaches it.</p>
 <h3 id="14-1-frontend-architecture-not-a-cdk-stack">14.1 Frontend architecture (not a CDK stack)</h3>
 <p>The frontend (<code>frontend/</code>, Next.js 16) is deliberately not built as a CDK stack — it is a client of the
 platform, not an AWS resource defined in <code>FinancialPlatformApp.java</code> — even though it is now hosted on
-AWS (Amplify Hosting, live at https://main.db53oxbwuxc6z.amplifyapp.com; see USER-GUIDE.md &quot;Amplify
-Hosting: LIVE&quot; for the exact <code>aws amplify</code> command sequence, not repeated here). Five ideas explain
+AWS (Amplify Hosting, live at https://main.db53oxbwuxc6z.amplifyapp.com; see the operator runbook's
+&quot;Amplify Hosting: LIVE&quot; section for the exact <code>aws amplify</code> command sequence, not repeated here). Five ideas explain
 how it is put together:</p>
 <ul>
 <li><strong>Git-connected monorepo hosting.</strong> Amplify Hosting builds directly from the connected GitHub
@@ -3840,7 +3840,7 @@ instead of only serving pre-rendered HTML.</li>
 <li><strong>Auto-build-on-push.</strong> The <code>main</code> branch was created with <code>--enable-auto-build</code>, so every push to
 <code>main</code> (a merge, or a direct push) triggers a new Amplify build and release with no manual
 <code>start-job</code> step — the same &quot;push triggers deploy&quot; shape as the GitHub Actions CDK pipeline
-(Section &quot;CI/CD pipeline&quot; in USER-GUIDE.md), except here the trigger and the build both live inside
+(the operator runbook's &quot;CI/CD pipeline&quot; section), except here the trigger and the build both live inside
 Amplify rather than in a workflow file.</li>
 <li><strong>SSR shell, client-side data fetch.</strong> Every route renders its static shell on the server (or at
 build time — <code>/</code>, <code>/dashboard</code>, <code>/privacy</code> are pre-rendered; <code>/ticker/[symbol]</code> is server-rendered
@@ -3858,7 +3858,7 @@ subsequent REST call (<code>lib/api.ts</code> → <code>apiFetch</code>) and Web
 follows, Section 9.1) fresh off <code>fetchAuthSession()</code> on each call, so Amplify's own silent-refresh
 handles token expiry transparently; the app never caches a token itself. <code>cognito:groups</code> off that
 same token (<code>lib/auth.ts</code> → <code>parseGroups</code>) drives the readers/premium/admins UI gating described in
-USER-GUIDE.md's &quot;Frontend (Next.js)&quot; section — the same claim, the same groups, as the backend
+the operator runbook's &quot;Frontend (Next.js)&quot; section — the same claim, the same groups, as the backend
 policy in Section 10.2, read twice by two different layers for two different purposes (UX vs
 enforcement).</li>
 <li><strong>WebSocket reconnect (retired with the push path, ADR 0005; kept as the reconnect lesson).</strong>
@@ -3992,42 +3992,43 @@ each function's handler is small. The inline comments in this codebase are unusu
 &quot;why&quot; that this guide summarises.</p>
 <p><strong>2. Use the authoritative documents in this repo.</strong></p>
 <ul>
-<li><code>docs/spec.md</code> is the design of record: section 4 (the full single-table access-pattern list), section
+<li>The platform design spec is the design of record: section 4 (the full single-table access-pattern list), section
 5 (ingestion), section 6 (anomaly detection), section 9 (Bedrock), section 11 (identity and DPDP),
 section 15 (the walking-skeleton build sequence), and section 16 (all tunable defaults in one table).
 Where this guide and the spec differ, the code (and this guide) win: the spec describes some targets
 the code has not reached (WebSocket delivery, correlation grouping, the <code>GSI1</code> feed).</li>
-<li><code>docs/STATUS.md</code> tracks what is built versus planned.</li>
-<li><code>docs/architecture.md</code> and the diagram under <code>docs/assets/</code> show the system visually.</li>
-<li><code>docs/security.md</code> covers the security posture; <code>docs/load-test/2026-07-11-query-path-results.md</code> has
+<li>A status tracker records what is built versus planned.</li>
+<li>An architecture write-up and the diagram under <code>docs/assets/</code> show the system visually.</li>
+<li>A security document covers the security posture; a recorded load-test run has
 the recorded p50/p99 numbers (Section 11).</li>
-<li><code>docs/adr/</code> holds the Architecture Decision Records; ADR 0001 (tracing: managed active tracing
-now, OpenTelemetry to CloudWatch when custom spans are needed) is the model to follow when you
-make the next non-trivial design decision.</li>
+<li>A set of Architecture Decision Records captures each non-trivial design decision; ADR 0001 (tracing:
+managed active tracing now, OpenTelemetry to CloudWatch when custom spans are needed) is the model to
+follow when you make the next one.</li>
 </ul>
-<p><strong>3. Run it and watch it.</strong> <code>USER-GUIDE.md</code> is the command reference this guide deliberately does not
-duplicate. The commands worth knowing by name:</p>
+<p><strong>3. Run it and watch it.</strong> The operator command reference is the command reference this guide
+deliberately does not duplicate. The commands worth knowing by name:</p>
 <ul>
 <li><strong>Build / test:</strong> <code>./mvnw clean verify</code> (the CI gate), <code>./mvnw verify -Pintegration-tests</code> (LocalStack
 ITs).</li>
 <li><strong>Deploy / tear down:</strong> <code>cdk deploy --all --context env=dev</code>; the ephemeral teardown is
 <code>./scripts/teardown.sh</code> (destroys Query/Ingestion/Network/Security, keeps only Data — and
-Section 13.5 explains what a Security re-deploy costs you). See <code>USER-GUIDE.md</code> -&gt; &quot;Cost control&quot;.</li>
-<li><strong>Verify a live deploy:</strong> <code>USER-GUIDE.md</code> -&gt; &quot;Verify a deployment&quot; (WATCHSET, start an execution, check
+Section 13.5 explains what a Security re-deploy costs you). See the operator runbook's &quot;Cost control&quot; section.</li>
+<li><strong>Verify a live deploy:</strong> the operator runbook's &quot;Verify a deployment&quot; section (WATCHSET, start an execution, check
 the Map Run, read a market row, confirm the DLQ is empty, curl an insight).</li>
 <li><strong>Load test:</strong> <code>scripts/local-load.sh</code> (free) or <code>scripts/run-all.sh</code> then <code>scripts/teardown.sh</code>
-(paid). See <code>USER-GUIDE.md</code> -&gt; &quot;Load-testing the query path&quot;.</li>
+(paid). See the operator runbook's &quot;Load-testing the query path&quot; section.</li>
 <li><strong>Tail logs:</strong> <code>aws logs tail /aws/lambda/financial-&lt;fn&gt;-dev --follow</code>, and grep a <code>correlationId</code>
-across services. See <code>USER-GUIDE.md</code> -&gt; &quot;Logs and observability&quot; and &quot;Which logs for which problem&quot;.</li>
+across services. See the operator runbook's &quot;Logs and observability&quot; and &quot;Which logs for which problem&quot; sections.</li>
 <li><strong>Exercise the Bedrock leg on demand:</strong> seed a tight baseline so a small move trips z=3, then trigger
-one run. See <code>USER-GUIDE.md</code> -&gt; &quot;Exercising the insight (Bedrock) leg&quot;.</li>
+one run. See the operator runbook's &quot;Exercising the insight (Bedrock) leg&quot; section.</li>
 </ul>
 <p><strong>4. Deepen the concepts</strong> with the official documentation linked in each Section 6 &quot;Further reading&quot;, and
 the two Spring references: <a href="https://docs.spring.io/spring-boot/index.html">Spring Boot</a> and
 <a href="https://docs.spring.io/spring-cloud-function/reference/">Spring Cloud Function</a>.</p>
 <hr>
 <p><em>This is a local learning document. For runnable commands (deploy, verify, load test, debug), see
-<code>USER-GUIDE.md</code>. For the authoritative design and the &quot;why&quot; behind each decision, see <code>docs/spec.md</code>.</em></p>
+the operator command reference. For the authoritative design and the &quot;why&quot; behind each decision, see
+the design spec.</em></p>
 
 </section>
       <p class="source-note">Generated from the platform's Markdown learning guide. The HTML adds navigation, responsive presentation, current-state context, and repository-backed examples.</p>

@@ -10,3 +10,20 @@ test("buildHtml produces a self-contained page with the real chrome and rendered
   assert.ok(!/<script src=|<link [^>]*href="http/.test(html)); // no external refs
   assert.ok(html.includes("</html>"));
 });
+
+import { assertNoMarkdownReferences } from "../generate.mjs";
+
+test("assertNoMarkdownReferences throws when a .md filename appears", () => {
+  assert.throws(
+    () => assertNoMarkdownReferences("<p>see USER-GUIDE.md for details</p>"),
+    /USER-GUIDE\.md/
+  );
+  assert.throws(
+    () => assertNoMarkdownReferences("<p>(docs/STATUS.md, 2026)</p>"),
+    /STATUS\.md/
+  );
+});
+
+test("assertNoMarkdownReferences passes clean html", () => {
+  assert.doesNotThrow(() => assertNoMarkdownReferences("<p>see the operator guide</p>"));
+});
