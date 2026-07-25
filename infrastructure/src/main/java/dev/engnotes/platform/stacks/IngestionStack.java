@@ -72,7 +72,8 @@ public class IngestionStack extends Stack {
         // end::ingestion-dlq[]
 
         // == IAM Role for ingestion Lambdas ==
-        // Single shared role, least privilege via specific resource ARNs (no wildcards).
+        // Single shared role, least privilege via narrowly scoped resource ARNs, with two bounded
+        // wildcards: the cross-region foundation-model ARN and the financial-platform/* secrets prefix.
         Role ingestionRole = Role.Builder.create(this, "IngestionLambdaRole")
                 .roleName("financial-ingestion-lambda-role-" + env)
                 .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))

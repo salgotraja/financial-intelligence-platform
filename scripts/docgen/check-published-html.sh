@@ -13,29 +13,32 @@ status=0
 
 # `|| true` on each grep: a no-match (grep exit 1) is the PASS case for md/ext and
 # must not abort under `set -e -o pipefail`.
-md=$( { grep -oE '[A-Za-z0-9._/-]*\.md\b' "$HTML" || true; } | wc -l | tr -d ' ')
+md=$( { grep -oiE '[A-Za-z0-9._/-]*\.md\b' "$HTML" || true; } | wc -l | tr -d ' ')
 if [ "$md" -ne 0 ]; then
   echo "FAIL: $md markdown-file reference(s) in $HTML (the .md source is not published):"
-  { grep -oE '[A-Za-z0-9._/-]*\.md\b' "$HTML" || true; } | sort -u | sed 's/^/  - /'
+  { grep -oiE '[A-Za-z0-9._/-]*\.md\b' "$HTML" || true; } | sort -u | sed 's/^/  - /'
   status=1
 fi
 
-ext=$( { grep -oiE 'src="https?://' "$HTML" || true; } | wc -l | tr -d ' ')
+# External LOADED resources defeat "self-contained": src= (img/script/iframe), external <link>
+# stylesheets, CSS @import, and url(http...). Plain <a href> hyperlinks (e.g. AWS docs) are fine and
+# deliberately excluded - they are navigation, not a fetched dependency.
+ext=$( { grep -oiE "src=[\"']https?://|<link[^>]*href=[\"']?https?://|@import[^;]*https?://|url\([\"' ]*https?://" "$HTML" || true; } | wc -l | tr -d ' ')
 if [ "$ext" -ne 0 ]; then
-  echo "FAIL: $ext external image/script src in $HTML (page must be self-contained)"
+  echo "FAIL: $ext external loaded resource(s) (src/link/@import/url) in $HTML (page must be self-contained)"
+  status=1
+fi
+
+# House style: no em-dashes/en-dashes, including their HTML entities.
+dashents=$( { grep -oiE '—|–|&mdash;|&ndash;|&#8212;|&#8211;|&#x201[34];' "$HTML" || true; } | wc -l | tr -d ' ')
+if [ "$dashents" -ne 0 ]; then
+  echo "FAIL: $dashents em/en-dash(es) or entity in $HTML (use commas or colons)"
   status=1
 fi
 
 svg=$( { grep -o 'data:image/svg' "$HTML" || true; } | wc -l | tr -d ' ')
 if [ "$svg" -lt 1 ]; then
   echo "FAIL: no embedded (data:) diagrams in $HTML (assets not inlined)"
-  status=1
-fi
-
-# House style: no em-dashes or en-dashes used as dashes.
-dashes=$( { grep -o '—\|–' "$HTML" || true; } | wc -l | tr -d ' ')
-if [ "$dashes" -ne 0 ]; then
-  echo "FAIL: $dashes em/en-dash(es) in $HTML (use commas or colons)"
   status=1
 fi
 
