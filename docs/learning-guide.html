@@ -993,8 +993,8 @@ else can be rebuilt from source, this cannot:</p>
         .removalPolicy(statefulRemoval)
         .build();
 
-<span class="hljs-comment">// GSI1 (insight-by-ticker): reserved for the by-ticker insight feed once correlation</span>
-<span class="hljs-comment">// grouping moves insights under GROUP# keys. Empty until items carry GSI1PK/GSI1SK.</span>
+<span class="hljs-comment">// GSI1 (insight-by-ticker): live. Group insights write GSI1PK/GSI1SK so the by-ticker</span>
+<span class="hljs-comment">// insight feed (GET /insights) can query a ticker&#x27;s latest insight across correlation groups.</span>
 platformTable.addGlobalSecondaryIndex(GlobalSecondaryIndexProps.builder()
         .indexName(<span class="hljs-string">&quot;GSI1&quot;</span>)
         .partitionKey(Attribute.builder()
@@ -1921,8 +1921,8 @@ insight feed, Section 8.6).</p>
         .removalPolicy(statefulRemoval)
         .build();
 
-<span class="hljs-comment">// GSI1 (insight-by-ticker): reserved for the by-ticker insight feed once correlation</span>
-<span class="hljs-comment">// grouping moves insights under GROUP# keys. Empty until items carry GSI1PK/GSI1SK.</span>
+<span class="hljs-comment">// GSI1 (insight-by-ticker): live. Group insights write GSI1PK/GSI1SK so the by-ticker</span>
+<span class="hljs-comment">// insight feed (GET /insights) can query a ticker&#x27;s latest insight across correlation groups.</span>
 platformTable.addGlobalSecondaryIndex(GlobalSecondaryIndexProps.builder()
         .indexName(<span class="hljs-string">&quot;GSI1&quot;</span>)
         .partitionKey(Attribute.builder()
@@ -2723,7 +2723,7 @@ aws cloudwatch describe-alarms --alarm-name-prefix financial \
 <span class="hljs-comment"># the dashboard itself has no CLI render; open it in the console:</span>
 <span class="hljs-comment"># CloudWatch &gt; Dashboards &gt; financial-platform-dev (ap-south-1)</span>
 
-<span class="hljs-comment"># tail one function&#x27;s log group live (Ctrl-C to stop); swap the function name for any of the seven</span>
+<span class="hljs-comment"># tail one function&#x27;s log group live (Ctrl-C to stop); swap the function name for any of the 17</span>
 aws logs <span class="hljs-built_in">tail</span> /aws/lambda/financial-query-dev --follow --format short
 </code></pre>
 <blockquote>

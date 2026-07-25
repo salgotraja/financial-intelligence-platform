@@ -21,8 +21,8 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
  * Persists a generated group insight (Task 7): {@code GROUP#{groupId}/INSIGHT#LATEST} overwritten
  * for the anti-spam check, {@code GROUP#{groupId}/INSIGHT#{iso8601}} as 7-day TTL history, and one
  * GSI1 mirror item per member ticker ({@code GSI1PK=TICKER#{member}}, {@code
- * GSI1SK=INSIGHT#{iso8601}}) so a future per-user feed can query group insights by ticker without
- * scanning every group (DataStack's GSI1 was reserved for exactly this). The mirror's own table key
+ * GSI1SK=INSIGHT#{iso8601}}) so the by-ticker insight feed (GET /insights) can query group insights
+ * by ticker without scanning every group (this is DataStack's live GSI1). The mirror's own table key
  * is {@code GROUP#{groupId}/INSIGHT#{iso8601}#{member}}, distinct from the canonical history item so
  * the two writes never collide.
  *
