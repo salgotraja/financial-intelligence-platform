@@ -1352,6 +1352,76 @@ public class QueryStack extends Stack {
                         .width(12)
                         .build());
 
+        // == Business row ==
+        // Plan-2 EMF metrics (namespace FinancialPlatform) are emitted with the aws-embedded-metrics
+        // default dimension set plus optional custom dimensions, so we graph them with dimension-agnostic
+        // SEARCH expressions on metric name rather than exact-dimension Metric refs. Cache hit/miss comes
+        // from native API Gateway metrics (the Lambda never runs on a cache hit, so it cannot emit them).
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("Insights generated (by mode)")
+                        .left(List.of(MathExpression.Builder.create()
+                                .expression(
+                                        "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"InsightGenerated\"', 'Sum', 300)")
+                                .label("InsightGenerated")
+                                .usingMetrics(Map.of())
+                                .period(Duration.minutes(5))
+                                .build()))
+                        .width(8)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("Data freshness (serve-time age, max)")
+                        .left(List.of(MathExpression.Builder.create()
+                                .expression(
+                                        "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"DataFreshnessSeconds\"', 'Maximum', 300)")
+                                .label("DataFreshnessSeconds")
+                                .usingMetrics(Map.of())
+                                .period(Duration.minutes(5))
+                                .build()))
+                        .width(8)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("Bedrock token cost (in/out)")
+                        .left(List.of(
+                                MathExpression.Builder.create()
+                                        .expression(
+                                                "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"BedrockInputTokens\"', 'Sum', 300)")
+                                        .label("BedrockInputTokens")
+                                        .usingMetrics(Map.of())
+                                        .period(Duration.minutes(5))
+                                        .build(),
+                                MathExpression.Builder.create()
+                                        .expression(
+                                                "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"BedrockOutputTokens\"', 'Sum', 300)")
+                                        .label("BedrockOutputTokens")
+                                        .usingMetrics(Map.of())
+                                        .period(Duration.minutes(5))
+                                        .build()))
+                        .width(8)
+                        .build());
+
+        dashboard.addWidgets(
+                GraphWidget.Builder.create()
+                        .title("Auth denials (by reason)")
+                        .left(List.of(MathExpression.Builder.create()
+                                .expression(
+                                        "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"AuthDenied\"', 'Sum', 300)")
+                                .label("AuthDenied")
+                                .usingMetrics(Map.of())
+                                .period(Duration.minutes(5))
+                                .build()))
+                        .width(12)
+                        .build(),
+                GraphWidget.Builder.create()
+                        .title("API Gateway cache hit / miss")
+                        .left(List.of(
+                                api.metricCacheHitCount(
+                                        MetricOptions.builder().statistic("Sum").build()),
+                                api.metricCacheMissCount(
+                                        MetricOptions.builder().statistic("Sum").build())))
+                        .width(12)
+                        .build());
+
         dashboard.addWidgets(AlarmStatusWidget.Builder.create()
                 .title("Alarms (P1 + P2)")
                 .alarms(List.of(

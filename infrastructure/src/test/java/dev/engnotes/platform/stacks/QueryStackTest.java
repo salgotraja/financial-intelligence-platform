@@ -182,6 +182,23 @@ class QueryStackTest {
         synth().resourceCountIs("AWS::CloudWatch::Dashboard", 1);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void dashboardGraphsBusinessMetricsViaSearch() {
+        var dashboards = synth().findResources("AWS::CloudWatch::Dashboard");
+        assertEquals(1, dashboards.size(), "expected exactly one dashboard");
+        var body = dashboards.values().stream()
+                .map(r -> (Map<String, Object>) r.get("Properties"))
+                .map(p -> String.valueOf(p.get("DashboardBody")))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(body.contains("InsightGenerated"), "business row graphs InsightGenerated");
+        assertTrue(body.contains("DataFreshnessSeconds"), "business row graphs DataFreshnessSeconds");
+        assertTrue(body.contains("BedrockInputTokens"), "business row graphs Bedrock token cost");
+        assertTrue(body.contains("AuthDenied"), "business row graphs AuthDenied");
+        assertTrue(body.contains("FinancialPlatform"), "business row targets the FinancialPlatform namespace");
+    }
+
     // API Gateway evaluates selection patterns against an EMPTY errorMessage on successful
     // invocations, so a 500 pattern matching "" hijacks every 200 into a 500 (real-AWS-only bug).
     @Test
