@@ -59,6 +59,7 @@ public class IngestionStack extends Stack {
         // Deploy the table/key (data) before this stack.
         this.addDependency(data);
 
+        // tag::ingestion-dlq[]
         // == Dead Letter Queue ==
         // The catch path publishes failed executions here; the EventBridge target
         // also lands start-failures here. In prod a Lambda subscriber pages on-call.
@@ -68,6 +69,7 @@ public class IngestionStack extends Stack {
                 .encryptionMasterKey(data.getEncryptionKey())
                 .retentionPeriod(Duration.days(14))
                 .build();
+        // end::ingestion-dlq[]
 
         // == IAM Role for ingestion Lambdas ==
         // Single shared role, least privilege via specific resource ARNs (no wildcards).
@@ -84,6 +86,7 @@ public class IngestionStack extends Stack {
         // KMS encrypt/decrypt for DynamoDB and S3.
         data.getEncryptionKey().grantEncryptDecrypt(ingestionRole);
 
+        // tag::ingestion-bedrock-grant[]
         // Bedrock invoke. Claude is INFERENCE_PROFILE-only in ap-south-1: the bare
         // foundation-model id is not invocable on demand. We call the global cross-region
         // profile, so the policy must allow BOTH the inference-profile ARN and the underlying
@@ -99,6 +102,7 @@ public class IngestionStack extends Stack {
                                 + ":inference-profile/global.anthropic.claude-sonnet-4-6",
                         "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6"))
                 .build());
+        // end::ingestion-bedrock-grant[]
 
         // Secrets Manager read - market data provider API key path only.
         ingestionRole.addToPolicy(PolicyStatement.Builder.create()
@@ -433,6 +437,7 @@ public class IngestionStack extends Stack {
                 .build();
         readWatchset.addCatch(sendToDlq, catchToDlq);
 
+        // tag::fan-out-map[]
         // == State 2: Distributed Map fan-out over the tickers ==
         // Bounded concurrency respects provider rate limits (Alpha Vantage free tier ~5 req/min).
         // Per-ticker failures are tolerated so one bad ticker never fails the whole run; each failure
@@ -463,6 +468,7 @@ public class IngestionStack extends Stack {
                         .mode(ProcessorMode.DISTRIBUTED)
                         .executionType(ProcessorType.STANDARD)
                         .build());
+        // end::fan-out-map[]
         fanOut.addCatch(sendToDlq, catchToDlq);
 
         // On-demand (spec section 5): POST /ingest/{ticker} starts this machine with a ticker in the
@@ -487,6 +493,7 @@ public class IngestionStack extends Stack {
 
         Chain pipelineChain = Chain.start(triggerType);
 
+        // tag::ingestion-state-machine[]
         StateMachine stateMachine = StateMachine.Builder.create(this, "IngestionStateMachine")
                 .stateMachineName("financial-ingestion-pipeline-" + env)
                 .definitionBody(DefinitionBody.fromChainable(pipelineChain))
@@ -506,6 +513,7 @@ public class IngestionStack extends Stack {
                         .build())
                 .build();
         this.stateMachine = stateMachine;
+        // end::ingestion-state-machine[]
 
         // == Symptom alarms (P2/TICKET -> warning topic) ==
         // Ingestion is async/batch, so these page no one in real time; they open a ticket to act today.
@@ -593,6 +601,7 @@ public class IngestionStack extends Stack {
         //   close: 15:30 & 15:35 IST (10:00/10:05 UTC), capturing the closing prints.
         // prod polls every minute, dev every 5.
         boolean prod = env.equals("prod");
+        // tag::market-data-schedule[]
         Rule.Builder.create(this, "MarketDataSchedule")
                 .ruleName("financial-market-data-schedule-" + env)
                 .description("Triggers the financial data pipeline during NSE market hours")
@@ -604,6 +613,7 @@ public class IngestionStack extends Stack {
                         .retryAttempts(2)
                         .build()))
                 .build();
+        // end::market-data-schedule[]
 
         Rule.Builder.create(this, "MarketDataCloseSchedule")
                 .ruleName("financial-market-data-close-schedule-" + env)

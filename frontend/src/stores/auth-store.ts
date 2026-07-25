@@ -13,6 +13,7 @@ interface AuthState {
   markSignedOut: () => void
 }
 
+// tag::auth-store[]
 export const useAuthStore = create<AuthState>((set) => ({
   status: 'loading',
   sub: null,
@@ -36,3 +37,4 @@ export const useAuthStore = create<AuthState>((set) => ({
   markSignedOut: () =>
     set({ status: 'signed-out', sub: null, email: null, username: null, groups: [] }),
 }))
+// end::auth-store[]

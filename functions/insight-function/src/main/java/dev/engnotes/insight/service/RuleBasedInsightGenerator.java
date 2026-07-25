@@ -32,6 +32,7 @@ public class RuleBasedInsightGenerator {
         this.fallbackConfidence = fallbackConfidence;
     }
 
+    // tag::rule-based-fallback-logic[]
     public StructuredInsight generate(InsightRequest data) {
         boolean breakoutHigh = isBreakoutHigh(data);
         boolean breakdownLow = isBreakdownLow(data);
@@ -101,4 +102,5 @@ public class RuleBasedInsightGenerator {
                 && data.getLow52Week() != null
                 && data.getPrice().compareTo(data.getLow52Week()) < 0;
     }
+    // end::rule-based-fallback-logic[]
 }

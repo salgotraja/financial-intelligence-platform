@@ -10,6 +10,7 @@ public final class HoldingMath {
 
     private HoldingMath() {}
 
+    // tag::holding-math[]
     /** Sum of quantities across all lots. */
     public static long totalQty(List<Lot> lots) {
         return lots.stream().mapToLong(Lot::qty).sum();
@@ -27,4 +28,5 @@ public final class HoldingMath {
         BigDecimal totalQty = BigDecimal.valueOf(totalQty(lots));
         return totalCost.divide(totalQty, MoneyScale.INTERNAL, RoundingMode.HALF_UP);
     }
+    // end::holding-math[]
 }

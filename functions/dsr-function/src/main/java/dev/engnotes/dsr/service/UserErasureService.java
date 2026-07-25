@@ -69,6 +69,7 @@ public class UserErasureService {
      * than the 5-minute lease). The winner runs the cascade, a concurrent duplicate gets {@code false},
      * and a crashed cascade's stale lease is taken over on the next request.
      */
+    // tag::erasure-lease[]
     public boolean acquireDeletionLease(String subjectSub, String requestedAt) {
         Map<String, AttributeValue> item = new HashMap<>();
         item.put("PK", AttributeValues.s("USER#" + subjectSub));
@@ -93,6 +94,7 @@ public class UserErasureService {
             return false;
         }
     }
+    // end::erasure-lease[]
 
     /** Clears the deletion-pending flag. Idempotent: deleting an absent key is a no-op. */
     public void clearDeletionPending(String subjectSub) {

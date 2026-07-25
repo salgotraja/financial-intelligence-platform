@@ -189,6 +189,7 @@ public class BedrockInsightService {
      * Calls Bedrock for the given prompt, retrying once on invalid output; empty triggers the
      * caller's rule-based fallback. {@code logLabel} is the ticker or groupId, for logging only.
      */
+    // tag::bedrock-invoke[]
     private Optional<StructuredInsight> tryBedrock(String logLabel, String correlationId, String promptText) {
         String requestBody = buildToolRequest(promptText);
 
@@ -237,7 +238,9 @@ public class BedrockInsightService {
                 logLabel);
         return Optional.empty();
     }
+    // end::bedrock-invoke[]
 
+    // tag::forced-tool-schema[]
     private String buildToolRequest(String promptText) {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("anthropic_version", ANTHROPIC_VERSION);
@@ -289,6 +292,7 @@ public class BedrockInsightService {
 
         return objectMapper.writeValueAsString(body);
     }
+    // end::forced-tool-schema[]
 
     /** Reads token usage from the Bedrock response and records the invocation's cost. */
     private void recordCost(String correlationId, String responseJson, String logLabel) {

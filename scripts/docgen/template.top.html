@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A practical technical guide to the Financial Intelligence Platform.">
+  <title>Financial Intelligence Platform · Learning Guide</title>
+  <style>
+    :root { --ink: #1b2533; --muted: #5c6879; --line: #dce3eb; --panel: #f7f9fc; --blue: #0f5ea8; --blue-dark: #073c70; --accent: #eaf4ff; --warning: #fff8e4; --history: #f4f1fa; --code: #132032; --shadow: 0 12px 32px rgba(25, 53, 85, .09); }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; color: var(--ink); font: 16px/1.65 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fff; }
+    a { color: var(--blue); text-decoration-thickness: .08em; text-underline-offset: .14em; }
+    a:hover { color: var(--blue-dark); }
+    code { padding: .1rem .3rem; border-radius: 4px; color: #163a60; background: #edf2f7; font: .87em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    pre { position: relative; overflow: auto; padding: 1.1rem 1.25rem; border-radius: 8px; background: var(--code); color: #e7eff8; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+    pre code { padding: 0; color: inherit; background: transparent; font-size: .88rem; }
+    .hljs-keyword, .hljs-built_in, .hljs-type { color: #7dc4ff; }
+    .hljs-string, .hljs-regexp { color: #a8d98a; }
+    .hljs-comment, .hljs-quote { color: #7c8aa0; font-style: italic; }
+    .hljs-number, .hljs-literal { color: #f0b87d; }
+    .hljs-title, .hljs-title.function_, .hljs-title.class_ { color: #f2d472; }
+    .hljs-attr, .hljs-attribute, .hljs-property { color: #c9a8f0; }
+    .copy { position: absolute; top: .65rem; right: .65rem; border: 1px solid #6681a1; border-radius: 5px; padding: .22rem .5rem; color: #dbeafa; background: #1e324b; font-size: .75rem; cursor: pointer; }
+    .site-header { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; min-height: 64px; padding: 0 2rem; color: #fff; background: #102a43; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+    .brand { color: #fff; font-weight: 700; text-decoration: none; }
+    .version { margin-left: .7rem; padding: .12rem .45rem; border: 1px solid #6994bf; border-radius: 99px; color: #d8edff; font-size: .75rem; }
+    .menu { display: none; margin-left: auto; border: 1px solid #6994bf; border-radius: 5px; padding: .38rem .58rem; color: #fff; background: transparent; }
+    .layout { display: grid; grid-template-columns: 275px minmax(0, 1fr); max-width: 1540px; margin: 0 auto; }
+    aside { position: sticky; top: 64px; height: calc(100vh - 64px); overflow-y: auto; border-right: 1px solid var(--line); padding: 1.2rem 1rem 2rem; background: #fbfcfe; }
+    .nav-title { margin: .25rem .55rem .65rem; color: var(--muted); font-size: .73rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    #guide-nav a { display: block; padding: .32rem .55rem; border-radius: 5px; color: #405065; font-size: .84rem; text-decoration: none; }
+    #guide-nav a:hover, #guide-nav a.active { color: var(--blue-dark); background: #e8f3ff; }
+    #guide-nav .depth-3 { padding-left: 1.25rem; font-size: .8rem; }
+    main { min-width: 0; padding: 2.75rem clamp(1.5rem, 5vw, 5.5rem) 5rem; }
+    article { max-width: 900px; }
+    .hero { margin: -2.75rem calc(clamp(1.5rem, 5vw, 5.5rem) * -1) 2.8rem; padding: 4.2rem clamp(1.5rem, 5vw, 5.5rem) 3.4rem; color: #fff; background: linear-gradient(125deg, #0e4f89, #123658); }
+    .eyebrow { margin: 0 0 .7rem; color: #a9d9ff; font-size: .78rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .hero h1 { max-width: 850px; margin: 0; color: #fff; font-size: clamp(2.2rem, 5vw, 4rem); line-height: 1.08; letter-spacing: -.04em; }
+    .hero p { max-width: 720px; margin: 1.2rem 0 0; color: #dceeff; font-size: 1.1rem; }
+    .notice { margin: 1.4rem 0; border-left: 4px solid var(--blue); padding: 1rem 1.1rem; background: var(--accent); }
+    .notice strong { color: var(--blue-dark); }
+    .notice.history { border-color: #7761a6; background: var(--history); }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1.5rem 0 2rem; }
+    .card { border: 1px solid var(--line); border-radius: 9px; padding: 1.15rem; background: #fff; box-shadow: 0 3px 10px rgba(26,54,83,.04); }
+    .card h3 { margin: 0 0 .35rem; font-size: 1rem; }
+    .card p { margin: 0; color: var(--muted); font-size: .92rem; }
+    .flow { display: grid; grid-template-columns: repeat(7, 1fr); gap: .45rem; margin: 1.5rem 0 2rem; padding: 0; list-style: none; }
+    .flow li { position: relative; min-height: 78px; padding: .75rem; border-radius: 8px; color: #12395e; background: #edf6ff; font-size: .8rem; font-weight: 700; }
+    .flow li:not(:last-child)::after { position: absolute; z-index: 1; top: 30px; right: -.42rem; color: #3b79ae; content: "→"; }
+    .figure { overflow: hidden; margin: 2rem 0; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+    .figure img { display: block; width: 100%; height: auto; }
+    .figure figcaption { padding: .65rem 1rem; color: var(--muted); font-size: .85rem; }
+    /* Content images (embedded diagrams) render responsive and never overflow; click to zoom. */
+    #reference img, .figure img { max-width: 100%; height: auto; }
+    #reference p > img { display: block; margin: 1.6rem auto; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: .5rem; cursor: zoom-in; }
+    .zoom-overlay { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 2.5rem; background: rgba(9, 20, 34, .88); cursor: zoom-out; overflow: auto; }
+    .zoom-overlay.open { display: flex; }
+    .zoom-overlay img { max-width: none; max-height: none; width: auto; height: auto; background: #fff; border-radius: 6px; box-shadow: 0 24px 60px rgba(0,0,0,.5); }
+    .zoom-hint { position: fixed; top: 1rem; right: 1.2rem; z-index: 51; color: #cfe4fb; font-size: .8rem; pointer-events: none; }
+    h1, h2, h3, h4 { color: #15283c; line-height: 1.22; scroll-margin-top: 86px; }
+    article > h1 { display: none; }
+    h2 { margin-top: 3.25rem; padding-bottom: .55rem; border-bottom: 1px solid var(--line); font-size: 1.75rem; letter-spacing: -.02em; }
+    h3 { margin-top: 2rem; font-size: 1.28rem; }
+    h4 { margin-top: 1.5rem; font-size: 1.06rem; }
+    table { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; margin: 1.4rem 0; font-size: .9rem; }
+    th, td { min-width: 110px; border: 1px solid var(--line); padding: .65rem .75rem; text-align: left; vertical-align: top; }
+    th { color: #183b61; background: #eef5fb; }
+    blockquote { margin: 1.4rem 0; border-left: 4px solid #91bce2; padding: .3rem 1rem; color: #405065; background: #f8fbfe; }
+    hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
+    .anchor { margin-left: .35rem; color: #91a1b2; font-size: .78em; opacity: 0; text-decoration: none; }
+    h2:hover .anchor, h3:hover .anchor, h4:hover .anchor { opacity: 1; }
+    .source-note { margin-top: 3rem; color: var(--muted); font-size: .85rem; }
+    @media (max-width: 940px) { .layout { display: block; } aside { display: none; top: 64px; height: auto; max-height: calc(100vh - 64px); border-bottom: 1px solid var(--line); } aside.open { display: block; position: sticky; z-index: 3; } .menu { display: block; } .flow { grid-template-columns: repeat(2, 1fr); } .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 560px) { .site-header { padding: 0 1rem; } .version { display: none; } main { padding-top: 2rem; } .hero { margin-top: -2rem; padding-top: 3rem; } .flow { grid-template-columns: 1fr; } .flow li:not(:last-child)::after { top: auto; bottom: -.42rem; right: 50%; transform: rotate(90deg); } }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top">Financial Intelligence Platform</a><span class="version">Learning guide · July 2026</span>
+    <button class="menu" type="button" aria-expanded="false" aria-controls="sidebar">Sections</button>
+  </header>
+  <div class="layout">
+    <aside id="sidebar" aria-label="Guide navigation"><p class="nav-title">On this page</p><nav id="guide-nav"></nav></aside>
+    <main id="top"><article>
+      <section class="hero" aria-labelledby="page-title">
+        <p class="eyebrow">Code · Console · Concept</p>
+        <h1 id="page-title">Learn the platform by following the data.</h1>
+        <p>A practical companion for reading the Financial Intelligence Platform in code, AWS, and the design decisions that connect them.</p>
+      </section>
+
+      <div class="notice"><strong>Current architecture.</strong> The active system runs Lambdas outside a VPC and delivers new insights by 60-second polling. Retired VPC and WebSocket sections remain in the source guide as learning history and are labelled accordingly.</div>
+
+      <h2 id="start-here">Start here</h2>
+      <p>Choose a learning route, then use the reference section below when you need the exact resource, class, or AWS console location.</p>
+      <div class="grid">
+        <section class="card"><h3>Understand the whole system</h3><p>Read the architecture overview, then follow one ticker from the schedule to a cached API response.</p></section>
+        <section class="card"><h3>Debug a real issue</h3><p>Start with the affected path: ingestion for missing data, query for API failures, and compliance for access or consent problems.</p></section>
+        <section class="card"><h3>Make a safe change</h3><p>Locate the owning stack, inspect its IAM boundary, then use the matching test and deployment evidence.</p></section>
+      </div>
+
+      <h2 id="architecture-at-a-glance">Architecture at a glance</h2>
+      <ol class="flow" aria-label="Market-data flow"><li>EventBridge<br>schedule</li><li>Step Functions<br>orchestrates</li><li>Distributed Map<br>fans out</li><li>Fetch Lambda<br>validates</li><li>DynamoDB + S3<br>store</li><li>Bedrock or rules<br>explain</li><li>API Gateway<br>serves</li></ol>
+      <figure class="figure"><img src="embed:docs/assets/financial_intelligence_platform_architecture.drawio.svg" alt="Architecture of the platform, showing the write and read paths."><figcaption>Write and read paths are separate. Stored data is their intentional boundary.</figcaption></figure>
+
+      <h2 id="repository-examples">Repository examples</h2>
+      <p>These examples are taken from the implementation, trimmed only to focus on the learning point. They show the operational conventions used throughout this repository.</p>
+
+      <h3 id="example-function">1. A Lambda is a named function bean</h3>
+      <p>Spring Cloud Function keeps the handler signature focused on the request and response. CDK selects the deployed bean through <code>SPRING_CLOUD_FUNCTION_DEFINITION</code>.</p>
+      <pre><code>@Bean
+public Function&lt;MarketDataRequest, MarketDataResponse&gt; fetchMarketData(
+        MarketDataFetchService fetchService,
+        AnomalyDetectionService anomalyService,
+        MarketDataStoreService storeService,
+        Clock clock) {
+    return request -&gt; {
+        String ticker = TickerValidator.validate(request.ticker());
+        MarketDataResponse marketData = fetchService.fetch(ticker, request.correlationId());
+        marketData = anomalyService.evaluate(marketData, request.correlationId());
+        return storeService.store(marketData, request.correlationId());
+    };
+}</code></pre>
+      <p><strong>Use it when:</strong> you want business logic that can be exercised directly in unit/integration tests while Lambda supplies the event adapter.</p>
+
+      <h3 id="example-fan-out">2. Fan out safely instead of looping</h3>
+      <p>The ingestion workflow treats each ticker as an independent item. Its bounded concurrency protects external providers and leaves headroom for the user-facing API.</p>
+      <pre><code>DistributedMap fanOut = DistributedMap.Builder.create(this, "FanOutTickers")
+        .itemsPath("$.watchset.Items")
+        .maxConcurrency(2)
+        .toleratedFailurePercentage(100)
+        .build();</code></pre>
+      <p><strong>Use it when:</strong> one item failing must not block the rest of a batch, and retries or DLQ handling need to be observable per item.</p>
+
+      <h3 id="example-boundary">3. Validate at the boundary, then trust the system</h3>
+      <p>A ticker is decoded before a strict allowlist check. This prevents malformed values from becoming DynamoDB keys, provider URLs, or log content.</p>
+      <pre><code>private static final Pattern ALLOWED = Pattern.compile("^[A-Z0-9.^-]{1,15}$");
+
+static String validated(String raw) {
+    String ticker = decode(raw);
+    if (ticker == null || !ALLOWED.matcher(ticker).matches()) {
+        throw new IllegalArgumentException("Invalid ticker: " + raw);
+    }
+    return ticker;
+}</code></pre>
+      <p><strong>Use it when:</strong> data crosses from HTTP or an external provider into internal identifiers. Validate once at that trust boundary; downstream code can use the typed, validated value.</p>
+
+      <h3 id="example-cache">4. Cache keys are part of authorization design</h3>
+      <p>The user-scoped insight feed includes the authorization header in its API Gateway cache key, preventing one caller’s feed from being served to another.</p>
+      <pre><code>.cacheKeyParameters(List.of("method.request.header.Authorization"))</code></pre>
+      <p><strong>Use it when:</strong> a cached response depends on identity, tenant, locale, query parameters, or any other request value. Every response-shaping value belongs in the cache key.</p>
+
+      <h2 id="guided-labs">Guided labs</h2>
+      <p>Use these labs to turn a passive read into a traceable learning exercise. Start in development or LocalStack; do not use a production account for exploratory requests.</p>
+
+      <h3>Lab 1. Trace one on-demand ticker refresh</h3>
+      <ol>
+        <li>Choose a valid ticker such as <code>RELIANCE.NS</code>. The boundary rule permits uppercase letters, digits, dots, carets, and hyphens only.</li>
+        <li>Call <code>POST /ingest/{ticker}</code> with a valid premium or admin access token. The API starts the Step Functions execution; it does not call a Lambda synchronously.</li>
+        <li>In Step Functions, open the execution and follow the correlation ID through <code>ReadWatchset</code>, <code>FanOutTickers</code>, <code>FetchMarketData</code>, and the insight branch.</li>
+        <li>Confirm the hot <code>TICKER#RELIANCE.NS</code> data in DynamoDB and the cold object in S3. Then query <code>GET /insights/RELIANCE.NS</code>.</li>
+      </ol>
+      <p><strong>Expected behaviour:</strong> on-demand refreshes deliberately force the insight branch even if the z-score does not cross the scheduled-ingestion threshold. This is covered by <code>IngestionHandlerTest#onDemandSourceForcesAnomalyWhenEvaluatorFoundNone</code>.</p>
+
+      <h3>Lab 2. Prove the read path is read-only</h3>
+      <ol>
+        <li>Seed or generate two insights for one ticker with different ISO-8601 timestamps.</li>
+        <li>Call <code>GET /insights/TCS.NS</code> and inspect the response.</li>
+        <li>Read <code>InsightQueryIT#returnsLatestInsightForTicker</code> alongside the DynamoDB query implementation.</li>
+      </ol>
+      <p><strong>Expected behaviour:</strong> the newest <code>INSIGHT#</code> sort key wins; no Bedrock call runs on this route. An empty result is represented as <code>found: false</code>, not as a failed pipeline.</p>
+
+      <h3>Lab 3. Follow one compliance request</h3>
+      <ol>
+        <li>Sign in, then read consent with <code>GET /user/consent</code>.</li>
+        <li>Grant or withdraw consent through the matching route and verify that the authenticated user identity comes from authorizer context rather than the request body.</li>
+        <li>Read <code>DsrBeanIT</code> to see the export and erasure cascade tested against LocalStack: user items are removed and audit records survive.</li>
+      </ol>
+      <p><strong>Expected behaviour:</strong> consent and data-subject requests are scoped to the caller’s Cognito <code>sub</code>. A user cannot select another subject through JSON input.</p>
+
+      <h2 id="api-and-data-examples">API and data examples</h2>
+      <p>These are representative response shapes from the Java records. Values are illustrative; names and semantics match the implementation.</p>
+
+      <h3>Read the latest insight</h3>
+      <pre><code>GET /insights/TCS.NS
+Authorization: Bearer &lt;access-token&gt;
+
+{
+  "ticker": "TCS.NS",
+  "generatedAt": "2026-06-30T10:00:00Z",
+  "signal": "BUY",
+  "confidence": 0.80,
+  "rationale": "strong momentum",
+  "drivers": ["volume", "price"],
+  "source": "RULE_BASED",
+  "insightText": "BUY signal",
+  "modelId": "rule-v1",
+  "found": true
+}</code></pre>
+      <p><strong>Interpretation:</strong> <code>source</code> makes the generation path explicit. A rule-based result is a valid, deterministic fallback, not an error or a hidden degraded state.</p>
+
+      <h3>Add a watchlist entry</h3>
+      <pre><code>POST /watchlist/RELIANCE.NS
+Authorization: Bearer &lt;access-token&gt;
+
+{
+  "status": "added",
+  "ticker": "RELIANCE.NS",
+  "tickers": []
+}</code></pre>
+      <p><strong>Use case:</strong> adding a valid ticker updates the caller’s watchlist and the distinct <code>WATCHSET</code> union that scheduled ingestion reads. The authenticated owner is injected by API Gateway; the client never supplies it.</p>
+
+      <h2 id="failure-paths">Failure paths worth learning</h2>
+      <div class="grid">
+        <section class="card"><h3>Invalid ticker</h3><p>URL-decode first, then reject values outside the strict allowlist. This keeps malformed input out of provider URLs, DynamoDB keys, S3 tags, and logs.</p></section>
+        <section class="card"><h3>Provider or Bedrock trouble</h3><p>The write path can fail over between providers; Bedrock throttling, invalid structured output, or an open budget circuit produces a deterministic rule-based insight.</p></section>
+        <section class="card"><h3>Concurrent erasure</h3><p>A conditional deletion lease makes a duplicate request report in-progress instead of running a second cascade. A stale lease can be safely taken over.</p></section>
+      </div>
+      <p>When investigating, identify the boundary first: API input validation, workflow retry/DLQ, provider fallback, or durable audit record. This prevents treating an expected business outcome, such as <code>found: false</code>, as a system failure.</p>
+
+      <h2 id="code-to-proof-map">Code-to-proof map</h2>
+      <table>
+        <thead><tr><th>Learn this behaviour</th><th>Start in code</th><th>Read this proof</th></tr></thead>
+        <tbody>
+          <tr><td>On-demand ingest forces an insight</td><td><code>IngestionHandler#fetchMarketData</code></td><td><code>IngestionHandlerTest#onDemandSourceForcesAnomalyWhenEvaluatorFoundNone</code></td></tr>
+          <tr><td>Newest stored insight is served</td><td><code>InsightQuery</code></td><td><code>InsightQueryIT#returnsLatestInsightForTicker</code></td></tr>
+          <tr><td>Stories remain deterministic</td><td><code>RuleBasedStoryComposer</code></td><td><code>RuleBasedStoryComposerTest</code></td></tr>
+          <tr><td>Consent and erasure respect subject boundaries</td><td><code>ConsentHandler</code>, <code>DsrHandler</code></td><td><code>DsrBeanIT</code></td></tr>
+          <tr><td>API cache keys isolate callers</td><td><code>QueryStack</code></td><td><code>QueryStackTest</code></td></tr>
+        </tbody>
+      </table>
+      <p>A useful habit: read the implementation, then its focused test, then the integration test. The three layers explain intent, local behaviour, and the AWS-shaped boundary respectively.</p>
+
+      <h2 id="application-code-map">How the current web application uses the platform</h2>
+      <p>The frontend is not a second backend. It is a Next.js client that obtains a Cognito access token, calls the REST API, and presents the data already enforced by the API Gateway authorizer. Read these four paths to understand the application as it exists today.</p>
+
+      <h3>1. Authentication starts in the browser; authorization stays at the API edge</h3>
+      <p><code>AuthProvider</code> configures Amplify, refreshes the session after sign-in or token refresh, and stores the resulting state. <code>AuthGate</code> changes the visible UI for signed-out users, but it is not the security control. Every API call in <code>frontend/src/lib/api.ts</code> obtains a fresh <strong>access token</strong>; API Gateway and the authorizer enforce the actual route and group policy.</p>
+      <pre><code>const token = await getAccessToken()
+const response = await fetch(`${appConfig.apiUrl}${path}`, {
+  headers: { Authorization: `Bearer ${token}` },
+})</code></pre>
+      <p><strong>Why access versus ID token matters:</strong> the access token carries the authorization claim used by the backend. The frontend reads the ID token only for display-only identity fields such as email.</p>
+
+      <h3>2. The dashboard protects the account-wide Lambda quota</h3>
+      <p><code>WatchlistDashboard</code> loads the caller’s watchlist, then <code>useWatchlistDashboard</code> retrieves market data, insight, and optional daily history for each ticker. Work is bounded to three tickers at once: at most nine calls can be in flight, leaving room under the account’s ten-Lambda quota for auth and other traffic.</p>
+      <pre><code>const [marketData, insight, dailyData] = await Promise.all([
+  getMarketData(ticker),
+  getInsight(ticker),
+  getDailyMarketData(ticker, WEEKLY_CHIP_FETCH_DAYS).catch(() =&gt; null),
+])</code></pre>
+      <p><strong>Learning point:</strong> daily history improves a weekly UI chip, so its failure is deliberately non-fatal. Market data and the latest insight are the card’s primary state and fail together.</p>
+
+      <h3>3. Polling complements cached reads; it does not replace the first load</h3>
+      <p>The ticker page first loads market data and the insight in parallel. <code>useInsightPoll</code> then polls insights every 60 seconds only during NSE market hours. That interval matches API Gateway’s response-cache TTL: polling sooner would just read the same cached response. After a manual ingest request, the UI reloads after 35 seconds and again after 75 seconds so it can cross the cache boundary.</p>
+      <pre><code>const POLL_INTERVAL_MS = 60_000
+const FETCH_CONCURRENCY = 3
+
+const timer = setInterval(() =&gt; void poll(), POLL_INTERVAL_MS)</code></pre>
+      <p><strong>Learning point:</strong> “live” here means periodically refreshed data, not a WebSocket connection. The former WebSocket implementation is historical material.</p>
+
+      <h3>4. UI mutations must outrank stale cached reads</h3>
+      <p>Adding a ticker succeeds before the API Gateway watchlist cache necessarily expires. The dashboard therefore updates local state from the confirmed mutation rather than immediately refetching a potentially stale list. <code>useAsyncData</code> also assigns a sequence number to each load, so an older request cannot overwrite a newer reload or confirmed mutation.</p>
+      <pre><code>const seq = ++seqRef.current
+const result = await fetcherRef.current()
+if (!mountedRef.current || seq !== seqRef.current) return
+setData(result)</code></pre>
+      <p><strong>Read the proof:</strong> <code>useAsyncData.test.ts</code> covers both stale-response suppression and mutation invalidation; <code>useInsightPoll.test.ts</code> covers the 60-second, market-hours-only polling contract.</p>
+
+      <h2 id="current-boundaries">Current implementation boundaries</h2>
+      <p>A learning guide should distinguish code that is executable through the application from code that is an internal building block or future seam.</p>
+      <div class="notice"><strong>Portfolio is a live application feature.</strong> <code>Holding</code>, <code>Lot</code>, <code>HoldingsStoreService</code>, and <code>HoldingMath</code> back lots-based holdings, valuation, and profit/loss under <code>USER#{sub} / HOLDING#{ticker}</code>, served through <code>GET/POST/DELETE /portfolio/{ticker}</code>, <code>GET /portfolio</code>, and <code>GET /portfolio/history</code> on the <code>financial-portfolio-dev</code> Lambda (bean <code>portfolio</code>), with a frontend caller in <code>use-portfolio.ts</code>. See Section 9.7 for the full walkthrough.</div>
+      <p>A holding is a full replacement snapshot of purchase lots; <code>totalQty</code> and weighted <code>avgCost</code> are derived values; and a successful upsert adds the ticker to the watchlist union, allowing ingestion and daily-history backfill to see it.</p>
+
+      <h3>Use the frontend to find the correct backend entry point</h3>
+      <table>
+        <thead><tr><th>User action</th><th>Frontend entry point</th><th>API call</th><th>Backend owner</th></tr></thead>
+        <tbody>
+          <tr><td>View a ticker</td><td><code>app/ticker/[symbol]/page.tsx</code></td><td><code>GET /insights/{ticker}</code>, <code>GET /market-data/{ticker}</code></td><td>Query function</td></tr>
+          <tr><td>Change chart range</td><td><code>DailyRangeChart</code></td><td><code>GET /market-data/{ticker}/daily?days=N</code></td><td>Query function</td></tr>
+          <tr><td>Add or remove a watchlist ticker</td><td><code>WatchlistDashboard</code></td><td><code>POST</code> or <code>DELETE /watchlist/{ticker}</code></td><td>Watchlist function</td></tr>
+          <tr><td>Add, edit, or view a portfolio holding</td><td><code>use-portfolio.ts</code></td><td><code>GET/POST/DELETE /portfolio/{ticker}</code>, <code>GET /portfolio</code>, <code>GET /portfolio/history</code></td><td>Portfolio function</td></tr>
+          <tr><td>Grant or withdraw consent</td><td><code>ConsentPanel</code></td><td><code>POST</code> or <code>DELETE /user/consent</code></td><td>Consent function</td></tr>
+          <tr><td>Export or erase data</td><td><code>DangerZone</code></td><td><code>GET /user/export</code>, <code>DELETE /user/account</code></td><td>DSR function</td></tr>
+        </tbody>
+      </table>
+
+      <div class="notice history"><strong>Historical material is intentional.</strong> The reference guide preserves retired VPC and WebSocket designs because their trade-offs are useful lessons. The deployment status in the introductory notice takes precedence for implementation work.</div>
+
+      <section id="reference">

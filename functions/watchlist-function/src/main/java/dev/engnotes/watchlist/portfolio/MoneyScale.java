@@ -6,6 +6,7 @@ import java.math.RoundingMode;
 /** Scale conventions for money math: {@link #INTERNAL} for computation, {@link #DISPLAY} at the API boundary. */
 public final class MoneyScale {
 
+    // tag::money-scale[]
     public static final int INTERNAL = 4;
     public static final int DISPLAY = 2;
 
@@ -15,4 +16,5 @@ public final class MoneyScale {
     public static BigDecimal toDisplay(BigDecimal value) {
         return value.setScale(DISPLAY, RoundingMode.HALF_UP);
     }
+    // end::money-scale[]
 }

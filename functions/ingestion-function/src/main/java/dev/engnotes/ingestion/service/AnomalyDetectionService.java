@@ -67,6 +67,7 @@ public class AnomalyDetectionService {
         this.minSamples = minSamples;
     }
 
+    // tag::anomaly-evaluate[]
     /**
      * Evaluates the point against the ticker's baseline, updates the baseline, and returns a copy of
      * {@code data} carrying the anomaly verdict.
@@ -104,6 +105,7 @@ public class AnomalyDetectionService {
                     correlationId);
 
             return data.withAnomaly(anomaly, reason);
+            // end::anomaly-evaluate[]
 
         } catch (Exception e) {
             // Best-effort: never let the gate fail ingestion or spend Bedrock on a degraded path.

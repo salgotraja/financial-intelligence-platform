@@ -1009,6 +1009,7 @@ class QueryStackTest {
         }
     }
 
+    // tag::search-alarm-guard-test[]
     // CloudWatch rejects ANY alarm whose expression contains SEARCH ("SEARCH is not supported on
     // Metric Alarms") - confirmed at deploy time, not caught by synth. The three business metrics are
     // emitted only as per-dimension EMF series, so there is no single dimensionless series to alarm on
@@ -1029,6 +1030,7 @@ class QueryStackTest {
                 present.isEmpty(),
                 "business metrics are dashboard-only; no alarm should be created, found: " + present);
     }
+    // end::search-alarm-guard-test[]
 
     @Test
     void platformHealthCompositeAlarmPagesCriticalTopic() {

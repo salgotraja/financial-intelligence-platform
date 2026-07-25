@@ -42,6 +42,7 @@ public class AuthorizerHandler {
     }
 
     @Bean
+    // tag::authorizer-decision[]
     public Function<APIGatewayCustomAuthorizerEvent, Map<String, Object>> authorize(
             JwtVerifier verifier, Metrics metrics) {
         return event -> {
@@ -69,6 +70,7 @@ public class AuthorizerHandler {
             }
         };
     }
+    // end::authorizer-decision[]
 
     private static String stripBearer(String token) {
         if (token == null) {

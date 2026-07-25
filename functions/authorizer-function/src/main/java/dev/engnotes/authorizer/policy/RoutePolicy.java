@@ -18,6 +18,7 @@ import java.util.Set;
  */
 public final class RoutePolicy {
 
+    // tag::route-policy-rules[]
     public record Rule(String httpMethod, String resourcePattern, Set<String> allowedGroups) {}
 
     private static final List<Rule> RULES = List.of(
@@ -48,4 +49,5 @@ public final class RoutePolicy {
                 .filter(rule -> rule.allowedGroups().stream().anyMatch(groups::contains))
                 .toList();
     }
+    // end::route-policy-rules[]
 }

@@ -429,13 +429,16 @@ public class QueryStack extends Stack {
                 .version(authorizerFn.getCurrentVersion())
                 .build();
 
+        // tag::token-authorizer[]
         var apiAuthorizer = TokenAuthorizer.Builder.create(this, "ApiAuthorizer")
                 .authorizerName("financial-cognito-authorizer-" + env)
                 .handler(authorizerFnAlias)
                 .identitySource("method.request.header.Authorization")
                 .resultsCacheTtl(Duration.minutes(5))
                 .build();
+        // end::token-authorizer[]
 
+        // tag::query-live-alias[]
         // Invoke the query Lambda via a published-version alias so SnapStart engages; invoking
         // $LATEST would run the full Spring Boot init (~5-10s) on every cold start. No provisioned
         // concurrency: AWS rejects it on a SnapStart-enabled version/alias.
@@ -443,6 +446,7 @@ public class QueryStack extends Stack {
                 .aliasName("live")
                 .version(queryFn.getCurrentVersion())
                 .build();
+        // end::query-live-alias[]
 
         // Same SnapStart rule for the remaining API Lambdas: only a published version restores from
         // the snapshot, so every integration below targets a live alias, never $LATEST.
@@ -511,6 +515,7 @@ public class QueryStack extends Stack {
         // the preflight alone does not cover the actual GET/POST/DELETE response the browser reads.
         String allowOrigin = env.equals("prod") ? "https://engnotes.dev" : "*";
 
+        // tag::rest-api-cors[]
         var api = RestApi.Builder.create(this, "FinancialApi")
                 .restApiName("financial-intelligence-api-" + env)
                 .description("Financial Intelligence Platform API")
@@ -531,11 +536,13 @@ public class QueryStack extends Stack {
                         .allowMethods(List.of("GET", "POST", "DELETE", "OPTIONS"))
                         .build())
                 .build();
+        // end::rest-api-cors[]
 
         // Authorizer 401/403 and default 4XX/5XX are API Gateway Gateway Responses, not method
         // responses: they short-circuit before any integration runs, so the CORS headers configured
         // above on methods/integrations never apply. Without these, browsers surface a CORS error
         // instead of the real 401/403/5xx status.
+        // tag::cors-gateway-response[]
         api.addGatewayResponse(
                 "Default4xxCors",
                 GatewayResponseOptions.builder()
@@ -548,6 +555,7 @@ public class QueryStack extends Stack {
                         .type(ResponseType.DEFAULT_5_XX)
                         .responseHeaders(Map.of("Access-Control-Allow-Origin", "'" + allowOrigin + "'"))
                         .build());
+        // end::cors-gateway-response[]
 
         // == WAF (spec s12, Task 13) ==
         // Regional Web ACL on the deployed stage, every env (user accepted the cost). Rules run in
@@ -596,6 +604,7 @@ public class QueryStack extends Stack {
                 .visibilityConfig(knownBadInputsVisibility)
                 .build();
 
+        // tag::waf-rate-limit-rule[]
         var rateLimitVisibility = CfnWebACL.VisibilityConfigProperty.builder()
                 .sampledRequestsEnabled(true)
                 .cloudWatchMetricsEnabled(true)
@@ -631,6 +640,7 @@ public class QueryStack extends Stack {
                         .metricName("financial-waf-acl-" + env)
                         .build())
                 .build();
+        // end::waf-rate-limit-rule[]
 
         // Stage ARN is derived from the RestApi construct (restApiId + deployed stage name), not
         // hardcoded: arn:aws:apigateway:{region}::/restapis/{restApiId}/stages/{stageName}.
@@ -645,6 +655,7 @@ public class QueryStack extends Stack {
         // Explicit dependency: associating before the stage exists fails the deploy.
         webAclAssociation.getNode().addDependency(deployedStage);
 
+        // tag::query-integration[]
         // Non-proxy: the request template maps the path ticker + request id onto the function's
         // QueryRequest record. With the default proxy integration the template is ignored and the
         // raw event arrives, so the ticker resolves to null.
@@ -674,6 +685,7 @@ public class QueryStack extends Stack {
                                 .requestParameters(Map.of("method.request.path.ticker", true))
                                 .methodResponses(standardMethodResponses())
                                 .build());
+        // end::query-integration[]
 
         // /insights - protected (readers+), watchlist-scoped insight feed (no ticker). Bare resource,
         // separate from /insights/{ticker} above and from RoutePolicy's "insights/*" rule.
@@ -865,6 +877,7 @@ public class QueryStack extends Stack {
                         .methodResponses(conflictAwareMethodResponses())
                         .build());
 
+        // tag::watchlist-cache-key[]
         watchlistResource.addMethod(
                 "GET",
                 LambdaIntegration.Builder.create(watchlistFnAlias)
@@ -885,6 +898,7 @@ public class QueryStack extends Stack {
                         .requestParameters(Map.of("method.request.header.Authorization", true))
                         .methodResponses(standardMethodResponses())
                         .build());
+        // end::watchlist-cache-key[]
 
         // Portfolio routes (non-proxy): POST/DELETE carry {ticker}; POST also forwards the lots array
         // from the body; GET lists. Same jar as watchlist, portfolio bean.
@@ -1209,6 +1223,7 @@ public class QueryStack extends Stack {
         // rollup metrics (a Plans 1+2 change); tracked as backlog. See the observability design Plan-3
         // amendment and the real-AWS-only-defects note (bare/aggregated SEARCH both fail at deploy).
 
+        // tag::platform-health-alarm[]
         // == PlatformHealth composite ==
         // Single health rollup of the two existing P1 pagers, wired to the same critical SNS topic.
         // No SEARCH here, so this deploys cleanly.
@@ -1218,6 +1233,7 @@ public class QueryStack extends Stack {
                 .alarmRule(AlarmRule.anyOf(p99LatencyAlarm, api5xxRateAlarm))
                 .build();
         platformHealth.addAlarmAction(new SnsAction(data.getCriticalTopic()));
+        // end::platform-health-alarm[]
 
         // == Platform dashboard ==
         // One pane aggregating user-facing symptoms (API, Lambda) and diagnostic causes (ingestion,
@@ -1491,6 +1507,7 @@ public class QueryStack extends Stack {
     // Non-proxy integrations never emit response headers unless every IntegrationResponse maps them
     // explicitly; the stage-level defaultCorsPreflightOptions only covers the OPTIONS preflight, not
     // the real GET/POST/DELETE response the browser actually reads for the CORS check.
+    // tag::selection-pattern-500[]
     private static List<IntegrationResponse> errorAwareIntegrationResponses(String allowOrigin) {
         return List.of(
                 IntegrationResponse.builder()
@@ -1512,6 +1529,7 @@ public class QueryStack extends Stack {
                         .responseTemplates(Map.of("application/json", "{\"error\":\"internal error\"}"))
                         .build());
     }
+    // end::selection-pattern-500[]
 
     private static List<MethodResponse> standardMethodResponses() {
         return List.of(

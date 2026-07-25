@@ -21,6 +21,7 @@ public final class LotMutationDetector {
      * pure addition, where every old lot is still present with at least its original multiplicity,
      * returns {@code false}.
      */
+    // tag::lot-mutation-detector[]
     public static boolean isExistingLotMutation(List<Lot> oldLots, List<Lot> newLots) {
         if (oldLots.isEmpty()) {
             return false;
@@ -33,4 +34,5 @@ public final class LotMutationDetector {
         return oldCounts.entrySet().stream()
                 .anyMatch(entry -> newCounts.getOrDefault(entry.getKey(), 0L) < entry.getValue());
     }
+    // end::lot-mutation-detector[]
 }

@@ -12,7 +12,7 @@ import software.amazon.awssdk.services.s3.S3Client;
  * the optional aws.endpoint-url hook. Service-layer ITs can use ddb()/s3() directly.
  */
 public abstract class AbstractLocalStackIT {
-
+    // tag::localstack-it-base[]
     private static final DynamoDbClient DDB = LocalStackSupport.dynamoDbClient();
     private static final S3Client S3 = LocalStackSupport.s3Client();
 
@@ -37,4 +37,5 @@ public abstract class AbstractLocalStackIT {
     protected S3Client s3() {
         return S3;
     }
+    // end::localstack-it-base[]
 }
