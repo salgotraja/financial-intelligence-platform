@@ -32,6 +32,13 @@ if [ "$svg" -lt 1 ]; then
   status=1
 fi
 
+# House style: no em-dashes or en-dashes used as dashes.
+dashes=$( { grep -o '—\|–' "$HTML" || true; } | wc -l | tr -d ' ')
+if [ "$dashes" -ne 0 ]; then
+  echo "FAIL: $dashes em/en-dash(es) in $HTML (use commas or colons)"
+  status=1
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "OK: $HTML is self-contained (md-refs=$md, embedded-diagrams=$svg, external-src=$ext)"
 fi

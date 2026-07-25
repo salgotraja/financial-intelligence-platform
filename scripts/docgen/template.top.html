@@ -197,7 +197,7 @@ Authorization: Bearer &lt;access-token&gt;
   "modelId": "rule-v1",
   "found": true
 }</code></pre>
-      <p><strong>Interpretation:</strong> <code>source</code> makes the generation path explicit. A rule-based result is a valid, deterministic fallback—not an error or a hidden degraded state.</p>
+      <p><strong>Interpretation:</strong> <code>source</code> makes the generation path explicit. A rule-based result is a valid, deterministic fallback, not an error or a hidden degraded state.</p>
 
       <h3>Add a watchlist entry</h3>
       <pre><code>POST /watchlist/RELIANCE.NS
@@ -216,7 +216,7 @@ Authorization: Bearer &lt;access-token&gt;
         <section class="card"><h3>Provider or Bedrock trouble</h3><p>The write path can fail over between providers; Bedrock throttling, invalid structured output, or an open budget circuit produces a deterministic rule-based insight.</p></section>
         <section class="card"><h3>Concurrent erasure</h3><p>A conditional deletion lease makes a duplicate request report in-progress instead of running a second cascade. A stale lease can be safely taken over.</p></section>
       </div>
-      <p>When investigating, identify the boundary first: API input validation, workflow retry/DLQ, provider fallback, or durable audit record. This prevents treating an expected business outcome—such as <code>found: false</code>—as a system failure.</p>
+      <p>When investigating, identify the boundary first: API input validation, workflow retry/DLQ, provider fallback, or durable audit record. This prevents treating an expected business outcome, such as <code>found: false</code>, as a system failure.</p>
 
       <h2 id="code-to-proof-map">Code-to-proof map</h2>
       <table>

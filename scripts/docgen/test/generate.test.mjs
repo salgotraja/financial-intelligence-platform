@@ -35,3 +35,10 @@ test("assertNoMarkdownReferences stays fast on multi-MB base64 (no catastrophic 
   assert.doesNotThrow(() => assertNoMarkdownReferences(`<img src="${blob}">`));
   assert.ok(Date.now() - start < 2000, "guard must scan multi-MB input in well under 2s");
 });
+
+import { assertNoEmDashes } from "../generate.mjs";
+
+test("assertNoEmDashes throws on an em-dash and passes clean text", () => {
+  assert.throws(() => assertNoEmDashes("<p>fast, deterministic — not an error</p>"), /em\/en-dash/);
+  assert.doesNotThrow(() => assertNoEmDashes("<p>fast, deterministic, not an error</p>"));
+});

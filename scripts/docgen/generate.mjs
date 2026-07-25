@@ -31,6 +31,18 @@ function embedTemplateAssets(html) {
   return html.replace(/src="embed:([^"]+)"/g, (_m, path) => `src="${embedImage("embed:" + path, repoRoot)}"`);
 }
 
+// House style forbids em-dashes (and en-dashes used as dashes). They keep creeping back into prose,
+// so the build enforces their absence: use commas, colons, or a restructured sentence instead.
+export function assertNoEmDashes(html) {
+  const matches = [...html.matchAll(/.{0,30}[—–].{0,30}/g)].map((m) => m[0]);
+  if (matches.length > 0) {
+    throw new Error(
+      `learning-guide.html contains ${matches.length} em/en-dash(es) - replace with commas/colons. ` +
+        `First: "${matches[0].replace(/\s+/g, " ")}"`
+    );
+  }
+}
+
 export function buildHtml() {
   const md = readFileSync(MD_PATH, "utf8");
   const top = readFileSync(join(scriptDir, "template.top.html"), "utf8");
@@ -38,6 +50,7 @@ export function buildHtml() {
   const body = renderBody(md, { repoRoot });
   const html = embedTemplateAssets(assemble(body, { top, bottom }));
   assertNoMarkdownReferences(html);
+  assertNoEmDashes(html);
   return html;
 }
 
