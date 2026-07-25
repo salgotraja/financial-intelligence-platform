@@ -1213,7 +1213,7 @@ public class QueryStack extends Stack {
                         + "First action: check the Ingestion executions + Business rows on the dashboard.")
                 .metric(MathExpression.Builder.create()
                         .expression(
-                                "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"DataFreshnessSeconds\"', 'Maximum', 300)")
+                                "MAX(SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"DataFreshnessSeconds\"', 'Maximum', 300))")
                         .label("DataFreshnessSeconds")
                         .usingMetrics(Map.of())
                         .period(Duration.minutes(5))
@@ -1232,7 +1232,8 @@ public class QueryStack extends Stack {
                         + "Likely causes: cost breaker open, model throttle, 0-token quota, model error.\n"
                         + "First action: check the Business row (Bedrock token cost) + insight-function logs.")
                 .metric(MathExpression.Builder.create()
-                        .expression("SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"BedrockError\"', 'Sum', 300)")
+                        .expression(
+                                "SUM(SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"BedrockError\"', 'Sum', 300))")
                         .label("BedrockError")
                         .usingMetrics(Map.of())
                         .period(Duration.minutes(5))
@@ -1251,7 +1252,8 @@ public class QueryStack extends Stack {
                         + "Likely causes: authorizer misconfig, expired tokens, credential probing.\n"
                         + "First action: check the Business row (Auth denials by reason) + authorizer logs.")
                 .metric(MathExpression.Builder.create()
-                        .expression("SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"AuthDenied\"', 'Sum', 300)")
+                        .expression(
+                                "SUM(SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"AuthDenied\"', 'Sum', 300))")
                         .label("AuthDenied")
                         .usingMetrics(Map.of())
                         .period(Duration.minutes(5))
