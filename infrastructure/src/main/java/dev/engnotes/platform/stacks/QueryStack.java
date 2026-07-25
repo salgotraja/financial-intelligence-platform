@@ -1200,6 +1200,68 @@ public class QueryStack extends Stack {
                 .build();
         api5xxRateAlarm.addAlarmAction(new SnsAction(data.getCriticalTopic()));
 
+        // == Business alarms (non-paging; dashboard-visible only) ==
+        // Conservative posture: no SNS action, NOT_BREACHING on missing data. These become pager-wired
+        // later once data volume justifies it. See the observability design Plan-3 amendment.
+
+        // Stale market data: serve-time freshness age exceeds ~15 min during a session.
+        var dataFreshnessAlarm = Alarm.Builder.create(this, "DataFreshnessAlarm")
+                .alarmName("financial-data-freshness-" + env)
+                .alarmDescription("[P3/non-paging] Market data is stale.\n"
+                        + "Symptom: DataFreshnessSeconds (serve-time age) max > 900s for 15 min.\n"
+                        + "Likely causes: ingestion schedule disabled, Yahoo fetch failing, no recent writes.\n"
+                        + "First action: check the Ingestion executions + Business rows on the dashboard.")
+                .metric(MathExpression.Builder.create()
+                        .expression(
+                                "SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"DataFreshnessSeconds\"', 'Maximum', 300)")
+                        .label("DataFreshnessSeconds")
+                        .usingMetrics(Map.of())
+                        .period(Duration.minutes(5))
+                        .build())
+                .threshold(900)
+                .evaluationPeriods(3)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build();
+
+        // Bedrock errors sustained (breaker trips, throttles, model errors).
+        var bedrockErrorAlarm = Alarm.Builder.create(this, "BedrockErrorAlarm")
+                .alarmName("financial-bedrock-error-" + env)
+                .alarmDescription("[P3/non-paging] Bedrock insight generation is failing.\n"
+                        + "Symptom: BedrockError sum >= 5 over 15 min.\n"
+                        + "Likely causes: cost breaker open, model throttle, 0-token quota, model error.\n"
+                        + "First action: check the Business row (Bedrock token cost) + insight-function logs.")
+                .metric(MathExpression.Builder.create()
+                        .expression("SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"BedrockError\"', 'Sum', 300)")
+                        .label("BedrockError")
+                        .usingMetrics(Map.of())
+                        .period(Duration.minutes(5))
+                        .build())
+                .threshold(5)
+                .evaluationPeriods(3)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build();
+
+        // Auth-denial spike (possible misconfig or probing).
+        var authDeniedAlarm = Alarm.Builder.create(this, "AuthDeniedAlarm")
+                .alarmName("financial-auth-denied-" + env)
+                .alarmDescription("[P3/non-paging] Elevated authorization denials.\n"
+                        + "Symptom: AuthDenied sum >= 20 over 15 min.\n"
+                        + "Likely causes: authorizer misconfig, expired tokens, credential probing.\n"
+                        + "First action: check the Business row (Auth denials by reason) + authorizer logs.")
+                .metric(MathExpression.Builder.create()
+                        .expression("SEARCH('Namespace=\"FinancialPlatform\" MetricName=\"AuthDenied\"', 'Sum', 300)")
+                        .label("AuthDenied")
+                        .usingMetrics(Map.of())
+                        .period(Duration.minutes(5))
+                        .build())
+                .threshold(20)
+                .evaluationPeriods(3)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build();
+
         // == Platform dashboard ==
         // One pane aggregating user-facing symptoms (API, Lambda) and diagnostic causes (ingestion,
         // data). Built here in the DAG-sink stack so every widget uses real construct refs.

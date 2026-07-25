@@ -3,6 +3,7 @@ package dev.engnotes.platform.stacks;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -1006,6 +1007,23 @@ class QueryStackTest {
                     responseParameters != null
                             && responseParameters.containsKey("gatewayresponse.header.Access-Control-Allow-Origin"),
                     "expected Access-Control-Allow-Origin on gateway response " + props);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void businessAlarmsAreNonPagingWithMissingDataNotBreaching() {
+        var alarms = synth().findResources("AWS::CloudWatch::Alarm");
+        var businessNames =
+                List.of("financial-data-freshness-dev", "financial-bedrock-error-dev", "financial-auth-denied-dev");
+        for (var name : businessNames) {
+            var match = alarms.values().stream()
+                    .map(r -> (Map<String, Object>) r.get("Properties"))
+                    .filter(p -> name.equals(p.get("AlarmName")))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("missing business alarm " + name));
+            assertEquals("notBreaching", match.get("TreatMissingData"), name + " must not breach on missing data");
+            assertNull(match.get("AlarmActions"), name + " must be non-paging (no SNS action)");
         }
     }
 }
