@@ -1594,6 +1594,11 @@ milliseconds. In the code, every function sets <code>snapStart(SnapStartConf.ON_
 </tbody>
 </table>
 <blockquote>
+<p><strong>Predict first:</strong> if the API Gateway integration pointed at <code>$LATEST</code> instead of the <code>live</code> alias,
+what happens to p99 latency? Nothing (SnapStart follows the function regardless), a small increase,
+or a jump back to the 5-10 second cold-start range on every cold invocation? Decide, then read on.</p>
+</blockquote>
+<blockquote>
 <p><strong>Gotcha (this bit real, see Section 13.4):</strong> SnapStart snapshots a <strong>published version</strong>. Invoking
 <code>$LATEST</code> gets no snapshot and runs the full Spring init on every cold start. That is why every
 hot-path function is invoked through its <code>live</code> alias (API Gateway and Step Functions both target
@@ -3018,8 +3023,8 @@ new <code>INSIGHT#</code> rows). Contrast that with the captured insight's drive
 number was verified by unfolding Welford from the persisted baseline (the algorithm is exactly
 reversible): at 22:35 the <em>prior</em> baseline was <code>count=5, mean=0.0, M2=0.0004</code>, so <code>stdDev = 0.01</code>
 and <code>z = (2.19 - 0) / 0.01 = 219.00</code> — mathematically exact. And that prior baseline is no
-accident: <code>count=5, mean=0, M2=0.0004</code> is byte-for-byte the seeded baseline from USER-GUIDE's
-&quot;Exercising the insight (Bedrock) leg&quot; procedure — the anomaly fired because the exercise was run,
+accident: <code>count=5, mean=0, M2=0.0004</code> is byte-for-byte the seeded baseline from the operator
+runbook's &quot;Exercising the insight (Bedrock) leg&quot; procedure — the anomaly fired because the exercise was run,
 which is the procedure working as designed. It <em>looks</em> like <code>changePercent x 100</code> only because the
 seeded stdDev is exactly 0.01, making <code>z = value x 100</code> for any value. Same input value, wildly different z — the z-score is a property of the value
 <em>and</em> the baseline at evaluation time, and a quiet series self-normalises: each identical
@@ -3532,8 +3537,9 @@ Lambda -&gt; DynamoDB. It is entirely read-only and Bedrock-free (CQRS, Section 
 <ol>
 <li><strong>Verifies the JWT</strong> (<code>JwtVerifier</code>). Signing keys come from the pool's JWKS endpoint
 (<code>{issuer}/.well-known/jwks.json</code>) via <code>UrlJwkProvider</code> wrapped in a <code>GuavaCachedJwkProvider</code>, so
-keys are cached across authorizations. It checks <code>iss</code> (issuer), <code>client_id</code> (app client),
-<code>token_use = access</code>, and expiry.</li>
+keys are cached across authorizations. That fetch-and-cache is <code>JwksSigningKeyResolver</code>, the piece
+that would need to handle key rotation if Cognito ever rotated its signing key without a matching
+<code>kid</code>. It checks <code>iss</code> (issuer), <code>client_id</code> (app client), <code>token_use = access</code>, and expiry.</li>
 <li><strong>Extracts groups</strong> from the <code>cognito:groups</code> claim.</li>
 <li><strong>Builds an allow/deny IAM policy by hand</strong> as a <code>Map</code>, not the SDK policy object (Section 13.3),
 because API Gateway rejects a statement carrying a null <code>Condition</code>.</li>
@@ -3990,7 +3996,9 @@ false (fail closed).</li>
 purges the watchlist. A concurrent watchlist <code>ADD</code> must observe that flip, so the gate reads
 strong-consistent and denies on an absent record, a false flag, or any read error. Order matters: the
 handler flips consent first (so the gate blocks concurrent adds) <em>then</em> purges. Purge deletes each
-<code>USER#&lt;sub&gt;/WATCH#{ticker}</code> and its <code>WATCHSET/TICKER#{ticker}</code> mirror.</p>
+<code>USER#&lt;sub&gt;/WATCH#{ticker}</code> and its <code>WATCHSET/TICKER#{ticker}</code> mirror. The purge itself is
+<code>UserWatchlistPurgeService</code>, draining <code>UnprocessedItems</code> through the same <code>DynamoBatch</code> batch-delete
+pattern that the erasure cascade in Section 10.3 reuses.</p>
 </blockquote>
 <p><strong>Login gate (preAuthentication).</strong> Consent now also gates login through a Cognito <code>preAuthentication</code>
 trigger (bean <code>preAuthentication</code>, <code>ConsentStoreService.gateLogin</code>). It reads the same <code>CONSENT</code> record
@@ -4145,7 +4153,11 @@ send an SES confirmation email, then clear the lease and write the erasure audit
 DynamoDB conditional write (succeed only if the flag is absent, false, or older than 5 minutes):
 a concurrent duplicate <code>DELETE</code> gets an <code>inProgress</code> response and no second cascade, and a
 crashed cascade's stale lease is taken over by the next request. The route returns 200 with the
-completed <code>ErasureResult</code>.</li>
+completed <code>ErasureResult</code>. <code>ErasureService</code> and <code>UserErasureService</code> orchestrate the cascade itself;
+three smaller collaborators do the specific side effects: <code>Hashing</code> (the SHA-256 digest that
+pseudonymizes the subject's <code>sub</code> in audit records so the append-only table stays useful after the
+user is gone), <code>CognitoUserService</code> (wraps the <code>AdminDeleteUser</code> call), and <code>ErasureEmailService</code>
+(sends the SES confirmation and reports <code>emailSent</code> honestly).</li>
 </ul>
 <p>The conditional-write lease that fences a cascade against concurrent duplicates and stale crashes:</p>
 <pre><code class="hljs language-java"><span class="hljs-keyword">public</span> <span class="hljs-type">boolean</span> <span class="hljs-title function_">acquireDeletionLease</span><span class="hljs-params">(String subjectSub, String requestedAt)</span> {
@@ -4386,7 +4398,8 @@ teardown and why.</li>
 <code>MarketDataStoreService.java</code>, <code>InsightStoreService.java</code>. <em>Teaches:</em> single-table design, made
 visible.</li>
 <li><strong>API Gateway &gt; <code>financial-intelligence-api-dev</code> &gt; Resources.</strong> These are the routes. Click <code>GET /insights/{ticker}</code> and note its custom authorizer and cache-key parameter. Code: <code>QueryStack.java</code>.
-<em>Teaches:</em> authorizers, non-proxy integrations, caching.</li>
+<em>Teaches:</em> authorizers, non-proxy integrations, caching. If a clean-looking request comes back 500
+or a wrong ticker's data, see Sections 13.6 and 13.2.</li>
 <li><strong>Cognito &gt; User pools &gt; <code>financial-platform-users-dev</code>.</strong> Look at Groups (readers/premium/admins) and
 the consent custom attributes. Code: <code>SecurityStack.java</code>, <code>policy/RoutePolicy.java</code>. <em>Teaches:</em>
 identity as the policy anchor.</li>
@@ -4394,7 +4407,9 @@ identity as the policy anchor.</li>
 <code>QueryStack.java</code> (the <code>Dashboard</code> block). <em>Teaches:</em> symptom-based observability.</li>
 <li><strong>Step Functions &gt; State machines &gt; <code>financial-ingestion-pipeline-dev</code>.</strong> Open the latest execution
 and watch the graph; drill into the Map Run. This is the write path made visible. Code:
-<code>IngestionStack.java</code>. <em>Teaches:</em> Distributed Map fan-out and the anomaly gate.</li>
+<code>IngestionStack.java</code>. <em>Teaches:</em> Distributed Map fan-out and the anomaly gate. If a state is red,
+see Section 8's per-item retry and DLQ routing (and Section 6.5 for the Distributed Map's failure
+isolation).</li>
 <li><strong>Lambda &gt; Functions.</strong> Filter on <code>financial-</code>. You will see all seven functions (plus
 postconfirmation). Open <code>financial-query-dev</code> and notice the <code>live</code> alias and the env vars
 (<code>SPRING_CLOUD_FUNCTION_DEFINITION=serveInsight</code>). Code: <code>QueryHandler.java</code> and the stacks. <em>Teaches:</em>
@@ -4421,6 +4436,10 @@ time, not at synth.</li>
 is not proof the resource is valid. Code: <code>SecurityStack.java</code> custom attributes.</li>
 </ul>
 <h3 id="13-2-api-gateway-caching-needs-the-path-param-as-an-explicit-cache-key">13.2 API Gateway caching needs the path param as an explicit cache key</h3>
+<blockquote>
+<p><strong>Predict first:</strong> with the response cache on, does <code>GET /market-data/TCS.NS</code> return TCS's own
+data, or whatever ticker happened to hit that path first and get cached? Decide, then read on.</p>
+</blockquote>
 <ul>
 <li><strong>Symptom:</strong> with caching on, every ticker returns the same insight (whichever was cached first).</li>
 <li><strong>Cause:</strong> the stage cache keys on the request, but a path parameter is not a cache key unless you
@@ -4478,6 +4497,10 @@ whether you had disabled it before teardown, so scheduled Bedrock spend silently
 <code>AuthorizerHandler.java</code> (issuer-bound JWT verification). See also Section 9.1.</li>
 </ul>
 <h3 id="13-6-api-gateway-selection-patterns-are-evaluated-against-an-empty-errormessage-on-success">13.6 API Gateway selection patterns are evaluated against an EMPTY errorMessage on success</h3>
+<blockquote>
+<p><strong>Predict first:</strong> a non-proxy integration's 500 <code>selectionPattern</code> is <code>^((?!Invalid ticker|...)(.|\n))*$</code>, built to catch &quot;anything that isn't a known client error.&quot; On a completely
+successful invocation, does that pattern match the (empty) error message? Decide, then read on.</p>
+</blockquote>
 <ul>
 <li><strong>Symptom (live, 2026-07-12):</strong> authed <code>GET /insights/RELIANCE</code> returns HTTP 500 with the mapped
 body <code>{&quot;error&quot;:&quot;internal error&quot;}</code>, yet the query Lambda's log shows a clean run:
@@ -4729,7 +4752,7 @@ template really is byte-different every synth.</li>
 <li><strong>Fix:</strong> an <code>OrderedMap</code> helper (a <code>LinkedHashMap</code>, insertion-order-stable across JVM runs, fail-fast
 on a duplicate key to keep <code>Map.of</code>'s contract) applied to every multi-entry map that feeds
 synthesized content. Single-entry <code>Map.of</code> calls are fine (nothing to reorder). Verified by a
-double-synth producing byte-identical <code>*.template.json</code> for all six stacks, and by <code>cdk diff --all</code>
+double-synth producing byte-identical <code>*.template.json</code> for all four stacks, and by <code>cdk diff --all</code>
 returning &quot;Number of stacks with differences: 0&quot; after the redeploy.</li>
 <li><strong>Lesson:</strong> never let <code>Map.of</code>/<code>Set.of</code> ordering reach anything that gets serialized deterministically
 downstream (a CloudFormation template, a hash, a signature, a golden file). &quot;It works on my machine&quot;
