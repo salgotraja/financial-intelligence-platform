@@ -1,0 +1,23 @@
+</section>
+      <p class="source-note">Generated from <a href="LEARNING-GUIDE.md">LEARNING-GUIDE.md</a>. The HTML adds navigation, responsive presentation, current-state context, and repository-backed examples; the Markdown source remains unchanged.</p>
+    </article></main>
+  </div>
+  <script>
+    document.querySelectorAll('#reference h1 span, #reference h2 span, #reference h3 span, #reference h4 span').forEach((anchor) => anchor.remove());
+    const sourceToc = [...document.querySelectorAll('#reference h2')].find((heading) => heading.textContent.trim() === 'Table of contents');
+    if (sourceToc) { let next = sourceToc.nextElementSibling; sourceToc.remove(); while (next && !(next.tagName === 'H2' && next.textContent.startsWith('1. '))) { const current = next; next = next.nextElementSibling; current.remove(); } }
+    const headings = [...document.querySelectorAll('article h2, article h3, article h4')];
+    const nav = document.querySelector('#guide-nav');
+    headings.forEach((heading) => {
+      if (!heading.id) heading.id = heading.textContent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const anchor = document.createElement('a'); anchor.href = `#${heading.id}`; anchor.textContent = heading.textContent;
+      anchor.className = `depth-${heading.tagName.slice(1)}`; nav.append(anchor);
+      const permalink = document.createElement('a'); permalink.className = 'anchor'; permalink.href = `#${heading.id}`; permalink.textContent = '#'; permalink.setAttribute('aria-label', `Link to ${heading.textContent}`); heading.append(permalink);
+    });
+    const observer = new IntersectionObserver((entries) => entries.forEach((entry) => { if (entry.isIntersecting) { document.querySelectorAll('#guide-nav a').forEach((link) => link.classList.toggle('active', link.getAttribute('href') === `#${entry.target.id}`)); } }), { rootMargin: '-15% 0px -75% 0px' });
+    headings.forEach((heading) => observer.observe(heading));
+    document.querySelectorAll('pre').forEach((pre) => { const button = document.createElement('button'); button.className = 'copy'; button.type = 'button'; button.textContent = 'Copy'; button.addEventListener('click', async () => { await navigator.clipboard.writeText(pre.innerText); button.textContent = 'Copied'; setTimeout(() => button.textContent = 'Copy', 1500); }); pre.append(button); });
+    const menu = document.querySelector('.menu'); const sidebar = document.querySelector('#sidebar'); menu.addEventListener('click', () => { const open = sidebar.classList.toggle('open'); menu.setAttribute('aria-expanded', open); });
+  </script>
+</body>
+</html>
