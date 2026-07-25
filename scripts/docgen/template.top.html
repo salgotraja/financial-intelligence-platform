@@ -51,6 +51,13 @@
     .figure { overflow: hidden; margin: 2rem 0; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
     .figure img { display: block; width: 100%; height: auto; }
     .figure figcaption { padding: .65rem 1rem; color: var(--muted); font-size: .85rem; }
+    /* Content images (embedded diagrams) render responsive and never overflow; click to zoom. */
+    #reference img, .figure img { max-width: 100%; height: auto; }
+    #reference p > img { display: block; margin: 1.6rem auto; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: .5rem; cursor: zoom-in; }
+    .zoom-overlay { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 2.5rem; background: rgba(9, 20, 34, .88); cursor: zoom-out; overflow: auto; }
+    .zoom-overlay.open { display: flex; }
+    .zoom-overlay img { max-width: none; max-height: none; width: auto; height: auto; background: #fff; border-radius: 6px; box-shadow: 0 24px 60px rgba(0,0,0,.5); }
+    .zoom-hint { position: fixed; top: 1rem; right: 1.2rem; z-index: 51; color: #cfe4fb; font-size: .8rem; pointer-events: none; }
     h1, h2, h3, h4 { color: #15283c; line-height: 1.22; scroll-margin-top: 86px; }
     article > h1 { display: none; }
     h2 { margin-top: 3.25rem; padding-bottom: .55rem; border-bottom: 1px solid var(--line); font-size: 1.75rem; letter-spacing: -.02em; }
@@ -94,7 +101,7 @@
 
       <h2 id="architecture-at-a-glance">Architecture at a glance</h2>
       <ol class="flow" aria-label="Market-data flow"><li>EventBridge<br>schedule</li><li>Step Functions<br>orchestrates</li><li>Distributed Map<br>fans out</li><li>Fetch Lambda<br>validates</li><li>DynamoDB + S3<br>store</li><li>Bedrock or rules<br>explain</li><li>API Gateway<br>serves</li></ol>
-      <figure class="figure"><img src="assets/financial_intelligence_platform_architecture.drawio.svg" alt="Architecture of the platform, showing the write and read paths."><figcaption>Write and read paths are separate. Stored data is their intentional boundary.</figcaption></figure>
+      <figure class="figure"><img src="embed:docs/assets/financial_intelligence_platform_architecture.drawio.svg" alt="Architecture of the platform, showing the write and read paths."><figcaption>Write and read paths are separate. Stored data is their intentional boundary.</figcaption></figure>
 
       <h2 id="repository-examples">Repository examples</h2>
       <p>These examples are taken from the implementation, trimmed only to focus on the learning point. They show the operational conventions used throughout this repository.</p>

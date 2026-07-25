@@ -18,6 +18,20 @@
     headings.forEach((heading) => observer.observe(heading));
     document.querySelectorAll('pre').forEach((pre) => { const button = document.createElement('button'); button.className = 'copy'; button.type = 'button'; button.textContent = 'Copy'; button.addEventListener('click', async () => { await navigator.clipboard.writeText(pre.innerText); button.textContent = 'Copied'; setTimeout(() => button.textContent = 'Copy', 1500); }); pre.append(button); });
     const menu = document.querySelector('.menu'); const sidebar = document.querySelector('#sidebar'); menu.addEventListener('click', () => { const open = sidebar.classList.toggle('open'); menu.setAttribute('aria-expanded', open); });
+    // Click any content diagram to zoom it full-size in an overlay; click the overlay or press Escape to restore.
+    (() => {
+      const overlay = document.createElement('div'); overlay.className = 'zoom-overlay';
+      const big = document.createElement('img'); big.alt = '';
+      const hint = document.createElement('div'); hint.className = 'zoom-hint'; hint.textContent = 'click anywhere or press Esc to close';
+      overlay.append(big); overlay.append(hint); document.body.append(overlay);
+      const close = () => { overlay.classList.remove('open'); big.removeAttribute('src'); };
+      overlay.addEventListener('click', close);
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+      document.querySelectorAll('#reference p > img, .figure img').forEach((img) => {
+        img.style.cursor = 'zoom-in';
+        img.addEventListener('click', () => { big.src = img.currentSrc || img.src; big.alt = img.alt || ''; overlay.classList.add('open'); });
+      });
+    })();
   </script>
 </body>
 </html>

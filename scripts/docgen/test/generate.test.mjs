@@ -27,3 +27,11 @@ test("assertNoMarkdownReferences throws when a .md filename appears", () => {
 test("assertNoMarkdownReferences passes clean html", () => {
   assert.doesNotThrow(() => assertNoMarkdownReferences("<p>see the operator guide</p>"));
 });
+
+test("assertNoMarkdownReferences stays fast on multi-MB base64 (no catastrophic backtracking)", () => {
+  // A ~3MB base64-like blob full of '/' chars (as in embedded SVG data URIs) must not hang the guard.
+  const blob = "data:image/svg+xml;base64," + "aB9/x-Z.q0".repeat(320000);
+  const start = Date.now();
+  assert.doesNotThrow(() => assertNoMarkdownReferences(`<img src="${blob}">`));
+  assert.ok(Date.now() - start < 2000, "guard must scan multi-MB input in well under 2s");
+});

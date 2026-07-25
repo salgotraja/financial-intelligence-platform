@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { renderBody } from "./lib/render.mjs";
+import { renderBody, embedImage } from "./lib/render.mjs";
 import { assemble } from "./lib/template.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -13,14 +13,22 @@ const HTML_PATH = join(repoRoot, "docs", "learning-guide.html");
 // all - not as a link, and not as a prose or code mention of a filename. This guard fails the build
 // if any `*.md` token survives, so a reader of the HTML never sees a pointer to an unpublished file.
 export function assertNoMarkdownReferences(html) {
-  const matches = [...html.matchAll(/[A-Za-z0-9._/-]*\.md\b/g)].map((m) => m[0]);
-  if (matches.length > 0) {
-    const unique = [...new Set(matches)].sort();
-    throw new Error(
-      `learning-guide.html references ${matches.length} markdown file(s) - inline the content or ` +
-        `reword instead. Offending tokens: ${unique.join(", ")}`
-    );
-  }
+  // Cheap linear check first: a bare `.md\b` scan has no greedy prefix, so it stays fast even on the
+  // multi-MB base64 data URIs of embedded diagrams (a greedy `[\w./-]*\.md` prefix would backtrack
+  // catastrophically over base64 runs). Only on an actual hit do we extract the filename for the error.
+  if (!/\.md\b/.test(html)) return;
+  const matches = [...html.matchAll(/[A-Za-z0-9._/-]{0,80}?\.md\b/g)].map((m) => m[0].replace(/^[^A-Za-z0-9]+/, ""));
+  const unique = [...new Set(matches)].sort();
+  throw new Error(
+    `learning-guide.html references ${matches.length} markdown file(s) - inline the content or ` +
+      `reword instead. Offending tokens: ${unique.join(", ")}`
+  );
+}
+
+// Resolve `embed:PATH` inside src="" attributes that come from the static template (the markdown path
+// is already resolved in renderBody). Keeps template-hosted diagrams self-contained too.
+function embedTemplateAssets(html) {
+  return html.replace(/src="embed:([^"]+)"/g, (_m, path) => `src="${embedImage("embed:" + path, repoRoot)}"`);
 }
 
 export function buildHtml() {
@@ -28,7 +36,7 @@ export function buildHtml() {
   const top = readFileSync(join(scriptDir, "template.top.html"), "utf8");
   const bottom = readFileSync(join(scriptDir, "template.bottom.html"), "utf8");
   const body = renderBody(md, { repoRoot });
-  const html = assemble(body, { top, bottom });
+  const html = embedTemplateAssets(assemble(body, { top, bottom }));
   assertNoMarkdownReferences(html);
   return html;
 }

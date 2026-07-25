@@ -9,7 +9,7 @@ const MIME_BY_EXT = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", s
 
 // Embed a repo image as a base64 data URI so the published HTML is fully self-contained (no external
 // asset needed to release the file). Triggered by an image whose src starts with "embed:".
-function embedImage(src, repoRoot) {
+export function embedImage(src, repoRoot) {
   const path = src.slice("embed:".length);
   const ext = path.split(".").pop().toLowerCase();
   const mime = MIME_BY_EXT[ext];
