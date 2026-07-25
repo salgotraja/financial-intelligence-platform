@@ -13,6 +13,7 @@ public final class PortfolioValidator {
 
     private PortfolioValidator() {}
 
+    // tag::portfolio-validator[]
     /** Each lot's buyDate must not be in the future (per {@code clock}) and not before the NSE electronic era floor. */
     public static void validateLots(List<Lot> lots, Clock clock) {
         LocalDate today = LocalDate.now(clock);
@@ -27,4 +28,5 @@ public final class PortfolioValidator {
             }
         }
     }
+    // end::portfolio-validator[]
 }

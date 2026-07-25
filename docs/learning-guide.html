@@ -385,6 +385,7 @@ the design spec.</p>
 <li>9.4 <a href="#94-waf-rate-limiting-and-aws-managed-rules">WAF: rate limiting and AWS managed rules</a></li>
 <li>9.5 <a href="#95-deep-analysis-compute-on-read-over-the-day-projection">Deep analysis: compute-on-read over the DAY# projection</a></li>
 <li>9.6 <a href="#96-stories-the-narrative-composer-seam-and-the-honesty-gate">Stories: the narrative composer seam and the honesty gate</a></li>
+<li>9.7 <a href="#9-7-the-portfolio-lots-valuation-and-mutation-detection">The portfolio: lots, valuation, and mutation detection</a></li>
 </ul>
 </li>
 <li><a href="#10-the-compliance-layer-dpdp">The compliance layer (DPDP)</a>
@@ -3849,6 +3850,122 @@ never approximated. Code: <code>RuleBasedStoryComposer.bandSentence</code>, <cod
 <pre><code class="hljs language-bash">curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/stories/RELIANCE.NS&quot;</span> | jq <span class="hljs-string">&#x27;.story&#x27;</span>
 </code></pre>
 <hr>
+<h3 id="9-7-the-portfolio-lots-valuation-and-mutation-detection">9.7 The portfolio: lots, valuation, and mutation detection</h3>
+<p><code>GET/POST/DELETE /portfolio/{ticker}</code>, <code>GET /portfolio</code>, and <code>GET /portfolio/history</code> (<code>PortfolioHandler</code>,
+bean <code>portfolio</code>, same watchlist-function jar as Section 6.4's watchlist Lambda) are the one CRUD-plus-read
+feature in this platform that is not a <code>GET</code>-only projection of ingested data: a holding is a list of
+<strong>lots</strong> the caller supplies (<code>buyDate</code>, <code>qty</code>, <code>price</code>), and the Lambda's job is to store them, revalue
+them against the latest price on every read, and tell a pure addition apart from an edit or a sell.</p>
+<blockquote>
+<p><strong>Why lots, not a single running position.</strong> A naive holding shape is one row: ticker, quantity,
+average cost. It cannot answer &quot;what changed&quot; when a caller edits or removes a prior purchase, only
+&quot;what is the number now&quot;. Storing the list of lots as submitted keeps the edit history implicit in the
+data itself, so <code>LotMutationDetector</code> can compare the old list against the new one lot-by-lot rather
+than trying to infer intent from a single delta.</p>
+</blockquote>
+<p>Weighted average cost and total quantity, computed fresh over the stored lots on every valuation read,
+never persisted:</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">/** Sum of quantities across all lots. */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-type">long</span> <span class="hljs-title function_">totalQty</span><span class="hljs-params">(List&lt;Lot&gt; lots)</span> {
+    <span class="hljs-keyword">return</span> lots.stream().mapToLong(Lot::qty).sum();
+}
+
+<span class="hljs-comment">/**
+ * Weighted average cost across all lots, at {<span class="hljs-doctag">@link</span> MoneyScale#INTERNAL} scale, HALF_UP. The
+ * division is not guaranteed to terminate (e.g. total cost 50 / total qty 3), so the scale and
+ * rounding mode must be explicit.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> BigDecimal <span class="hljs-title function_">avgCost</span><span class="hljs-params">(List&lt;Lot&gt; lots)</span> {
+    <span class="hljs-type">BigDecimal</span> <span class="hljs-variable">totalCost</span> <span class="hljs-operator">=</span> lots.stream()
+            .map(lot -&gt; lot.price().multiply(BigDecimal.valueOf(lot.qty())))
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    <span class="hljs-type">BigDecimal</span> <span class="hljs-variable">totalQty</span> <span class="hljs-operator">=</span> BigDecimal.valueOf(totalQty(lots));
+    <span class="hljs-keyword">return</span> totalCost.divide(totalQty, MoneyScale.INTERNAL, RoundingMode.HALF_UP);
+}
+</code></pre>
+<blockquote>
+<p><strong>Scale is not a detail here, it is the bug class.</strong> <code>avgCost</code> divides total cost by total quantity,
+and that division is not guaranteed to terminate (50 divided by 3 lots never resolves in decimal). A
+<code>BigDecimal.divide</code> call with no explicit scale and rounding mode throws <code>ArithmeticException</code> on
+exactly the inputs a real portfolio will eventually produce. <code>HoldingMath</code> fixes both arguments
+explicitly rather than leaving them to a caller's default.</p>
+</blockquote>
+<p>Money is computed at one scale and displayed at another, and the boundary between them is a named
+constant, not a scattered literal <code>2</code> or <code>4</code>:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> <span class="hljs-type">int</span> <span class="hljs-variable">INTERNAL</span> <span class="hljs-operator">=</span> <span class="hljs-number">4</span>;
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> <span class="hljs-type">int</span> <span class="hljs-variable">DISPLAY</span> <span class="hljs-operator">=</span> <span class="hljs-number">2</span>;
+
+<span class="hljs-keyword">private</span> <span class="hljs-title function_">MoneyScale</span><span class="hljs-params">()</span> {}
+
+<span class="hljs-comment">/** Rounds to {<span class="hljs-doctag">@link</span> #DISPLAY} scale using HALF_UP, for values crossing the API boundary. */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> BigDecimal <span class="hljs-title function_">toDisplay</span><span class="hljs-params">(BigDecimal value)</span> {
+    <span class="hljs-keyword">return</span> value.setScale(DISPLAY, RoundingMode.HALF_UP);
+}
+</code></pre>
+<blockquote>
+<p><strong>Two scales, one reason.</strong> <code>INTERNAL</code> (4 decimal places) is where <code>avgCost</code> and every intermediate
+sum live, so repeated division and multiplication do not compound rounding error across lots.
+<code>DISPLAY</code> (2 decimal places, the conventional currency precision) is applied exactly once, at the API
+response boundary, via <code>toDisplay</code>. Rounding early and reusing the rounded value in further math is
+the classic way a portfolio's totals stop reconciling with the sum of its parts; this module never
+does that.</p>
+</blockquote>
+<p>Distinguishing a pure lot addition (no mutation) from an edit or a sell (a mutation) drives whether the
+daily value curve's floor moves:</p>
+<pre><code class="hljs language-java"><span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-type">boolean</span> <span class="hljs-title function_">isExistingLotMutation</span><span class="hljs-params">(List&lt;Lot&gt; oldLots, List&lt;Lot&gt; newLots)</span> {
+    <span class="hljs-keyword">if</span> (oldLots.isEmpty()) {
+        <span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>;
+    }
+    Map&lt;Lot, Long&gt; oldCounts =
+            oldLots.stream().collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+    Map&lt;Lot, Long&gt; newCounts =
+            newLots.stream().collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+
+    <span class="hljs-keyword">return</span> oldCounts.entrySet().stream()
+            .anyMatch(entry -&gt; newCounts.getOrDefault(entry.getKey(), <span class="hljs-number">0L</span>) &lt; entry.getValue());
+}
+</code></pre>
+<blockquote>
+<p><strong>Multiset comparison, not list equality.</strong> Two lots with identical <code>(buyDate, qty, price)</code> are the
+same lot as far as this detector is concerned (<code>Lot</code> is a record, so structural equality is free,
+Section 6.4's records-as-DTOs rule). Comparing as multisets via <code>groupingBy</code>/<code>counting</code> rather than as
+ordered lists means a caller resubmitting the same lots in a different order is still a no-op, and
+a lot whose count in <code>newLots</code> drops below its count in <code>oldLots</code> (an edit that changes its price, or
+an outright removal) is what flags the mutation. A pure addition, every old lot still present at least
+as many times as before, returns <code>false</code>. This is what lets <code>PortfolioHandler</code> bump
+<code>lastLotMutation</code> (the time-machine curve floor) only on an edit or a sell, never on a routine &quot;I
+bought more&quot; addition.</p>
+</blockquote>
+<p>Every lot's <code>buyDate</code> is validated against an injectable clock, never <code>LocalDate.now()</code> with no
+argument (the same testability rule Section 13.14's flaky-clock lesson exists to enforce):</p>
+<pre><code class="hljs language-java"><span class="hljs-comment">/** Each lot&#x27;s buyDate must not be in the future (per {<span class="hljs-doctag">@code</span> clock}) and not before the NSE electronic era floor. */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title function_">validateLots</span><span class="hljs-params">(List&lt;Lot&gt; lots, Clock clock)</span> {
+    <span class="hljs-type">LocalDate</span> <span class="hljs-variable">today</span> <span class="hljs-operator">=</span> LocalDate.now(clock);
+    <span class="hljs-keyword">for</span> (Lot lot : lots) {
+        <span class="hljs-keyword">if</span> (lot.buyDate().isAfter(today)) {
+            <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">WatchlistException</span>(
+                    <span class="hljs-string">&quot;invalid request body: lot buyDate &quot;</span> + lot.buyDate() + <span class="hljs-string">&quot; must not be after &quot;</span> + today);
+        }
+        <span class="hljs-keyword">if</span> (lot.buyDate().isBefore(NSE_ELECTRONIC_ERA_FLOOR)) {
+            <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">WatchlistException</span>(<span class="hljs-string">&quot;invalid request body: lot buyDate &quot;</span> + lot.buyDate()
+                    + <span class="hljs-string">&quot; must not be before &quot;</span> + NSE_ELECTRONIC_ERA_FLOOR);
+        }
+    }
+}
+</code></pre>
+<p><strong>Run it: add a holding, read the valuation, then the daily value curve.</strong></p>
+<pre><code class="hljs language-bash">curl -s -X POST -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> -H <span class="hljs-string">&quot;Content-Type: application/json&quot;</span> \
+  -d <span class="hljs-string">&#x27;{&quot;lots&quot;:[{&quot;buyDate&quot;:&quot;2026-01-15&quot;,&quot;qty&quot;:10,&quot;price&quot;:2450.50}]}&#x27;</span> \
+  <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/portfolio/RELIANCE.NS&quot;</span> | jq <span class="hljs-string">&#x27;.portfolio&#x27;</span>
+<span class="hljs-comment"># -&gt; {&quot;status&quot;:&quot;ok&quot;, ..., &quot;portfolio&quot;:{&quot;holdings&quot;:[{&quot;ticker&quot;:&quot;RELIANCE.NS&quot;,&quot;qty&quot;:10,&quot;avgCost&quot;:2450.5,...}]}}</span>
+
+curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/portfolio&quot;</span> | jq <span class="hljs-string">&#x27;.portfolio | {asOf, totalValue, totalPnl}&#x27;</span>
+<span class="hljs-comment"># -&gt; asOf is the latest market-data timestamp behind the valuation, totalPnl is ltp-vs-avgCost summed across holdings</span>
+
+curl -s -H <span class="hljs-string">&quot;Authorization: Bearer <span class="hljs-variable">$ACCESS_TOKEN</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$API_URL</span>/portfolio/history&quot;</span> | jq <span class="hljs-string">&#x27;.history.points[-1]&#x27;</span>
+<span class="hljs-comment"># -&gt; the most recent day on the value curve; .history.markers carries one entry per buy that moved the floor</span>
+</code></pre>
+<hr>
 <h2 id="10-the-compliance-layer-dpdp">10. The compliance layer (DPDP)</h2>
 <p>The platform handles personal data (which stocks a user watches is personal), so it builds the Digital
 Personal Data Protection Act obligations in as real features, not documentation. Four pieces, each
@@ -4230,6 +4347,30 @@ plus the P2 ingestion alarms.</li>
 request or pipeline run shows as one end-to-end trace with per-hop latency. Every log line also carries
 a <code>correlationId</code> to follow one request across services (see the operator runbook).</li>
 </ul>
+<p><strong>Frontend tests (free, no AWS).</strong> <code>frontend/</code> carries its own Vitest suite covering components and
+hooks, independent of the four backend proof levels above, run with:</p>
+<pre><code class="hljs language-bash"><span class="hljs-built_in">cd</span> frontend &amp;&amp; npm <span class="hljs-built_in">test</span>
+</code></pre>
+<p>The portfolio poll test (<code>src/hooks/use-portfolio.test.ts</code>) is representative: it fakes the clock with
+<code>vi.useFakeTimers</code>, renders the hook, and asserts <code>getPortfolio</code> fires once on mount, again after
+exactly 60s, and again after another 60s, then a separate test asserts zero further calls across a full
+60s tick once <code>isMarketOpen</code> is mocked <code>false</code> — proving the poll-while-open contract without a real
+network call or a real market clock:</p>
+<pre><code class="hljs language-ts"><span class="hljs-title function_">it</span>(<span class="hljs-string">&#x27;polls every 60s while the market is open&#x27;</span>, <span class="hljs-title function_">async</span> () =&gt; {
+  vi.<span class="hljs-title function_">useFakeTimers</span>({ <span class="hljs-attr">shouldAdvanceTime</span>: <span class="hljs-literal">true</span> })
+  getPortfolio.<span class="hljs-title function_">mockResolvedValue</span>(valuation)
+  getPortfolioHistory.<span class="hljs-title function_">mockResolvedValue</span>(history)
+
+  <span class="hljs-title function_">renderHook</span>(<span class="hljs-function">() =&gt;</span> <span class="hljs-title function_">usePortfolio</span>())
+  <span class="hljs-keyword">await</span> vi.<span class="hljs-title function_">waitFor</span>(<span class="hljs-function">() =&gt;</span> <span class="hljs-title function_">expect</span>(getPortfolio).<span class="hljs-title function_">toHaveBeenCalledTimes</span>(<span class="hljs-number">1</span>))
+
+  <span class="hljs-keyword">await</span> vi.<span class="hljs-title function_">advanceTimersByTimeAsync</span>(<span class="hljs-number">60_000</span>)
+  <span class="hljs-keyword">await</span> vi.<span class="hljs-title function_">waitFor</span>(<span class="hljs-function">() =&gt;</span> <span class="hljs-title function_">expect</span>(getPortfolio).<span class="hljs-title function_">toHaveBeenCalledTimes</span>(<span class="hljs-number">2</span>))
+
+  <span class="hljs-keyword">await</span> vi.<span class="hljs-title function_">advanceTimersByTimeAsync</span>(<span class="hljs-number">60_000</span>)
+  <span class="hljs-keyword">await</span> vi.<span class="hljs-title function_">waitFor</span>(<span class="hljs-function">() =&gt;</span> <span class="hljs-title function_">expect</span>(getPortfolio).<span class="hljs-title function_">toHaveBeenCalledTimes</span>(<span class="hljs-number">3</span>))
+})
+</code></pre>
 <hr>
 <h2 id="12-guided-aws-console-tour">12. Guided AWS console tour</h2>
 <p>Do this with the console open, region set to <strong>ap-south-1 (Mumbai)</strong> in the top-right selector. It is a
@@ -4913,7 +5054,7 @@ Section 6 subsection that teaches it.</p>
 <p>The frontend (<code>frontend/</code>, Next.js 16) is deliberately not built as a CDK stack — it is a client of the
 platform, not an AWS resource defined in <code>FinancialPlatformApp.java</code> — even though it is now hosted on
 AWS (Amplify Hosting, live at https://main.db53oxbwuxc6z.amplifyapp.com; see the operator runbook's
-&quot;Amplify Hosting: LIVE&quot; section for the exact <code>aws amplify</code> command sequence, not repeated here). Five ideas explain
+&quot;Amplify Hosting: LIVE&quot; section for the exact <code>aws amplify</code> command sequence, not repeated here). Six ideas explain
 how it is put together:</p>
 <ul>
 <li><strong>Git-connected monorepo hosting.</strong> Amplify Hosting builds directly from the connected GitHub
@@ -4951,11 +5092,92 @@ enforcement).</li>
 <li><strong>60-second polling, not push.</strong> <code>useInsightPoll</code> (<code>src/hooks/use-insight-poll.ts</code>; replaced the
 retired WebSocket hook on 2026-07-19) re-fetches <code>GET /insights/{ticker}</code> for every subscribed
 ticker on a 60-second interval while the NSE session is open, matching the API Gateway 60s response
-cache so polling faster would only re-read the same cached entry. Each poll pulls a fresh access
-token via <code>fetchAuthSession()</code> rather than caching one, the same pattern as every other REST call.
-Consumers still do their own one-shot initial fetch; the poll only layers fresher insights on top
-after the first interval elapses.</li>
+cache so polling faster would only re-read the same cached entry. Each call goes through <code>getInsight</code>
+→ <code>apiFetch</code>, which pulls a fresh access token off <code>fetchAuthSession()</code> (via <code>getAccessToken</code>) on
+every request rather than caching one, the same pattern as every other REST call. Consumers still do
+their own one-shot initial fetch; the poll only layers fresher insights on top after the first
+interval elapses, and a stable, sorted, deduped key (capped at 25 tickers) means reordering the
+watchlist does not restart the interval, only a membership change does:</li>
 </ul>
+<pre><code class="hljs language-ts"><span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> useInsightPoll = (<span class="hljs-attr">tickers</span>: <span class="hljs-built_in">string</span>[]): <span class="hljs-title class_">Record</span>&lt;<span class="hljs-built_in">string</span>, <span class="hljs-title class_">Insight</span>&gt; =&gt; {
+  <span class="hljs-keyword">const</span> [insights, setInsights] = useState&lt;<span class="hljs-title class_">Record</span>&lt;<span class="hljs-built_in">string</span>, <span class="hljs-title class_">Insight</span>&gt;&gt;({})
+
+  <span class="hljs-comment">// Stable key so reordering does not restart polling, but membership changes do.</span>
+  <span class="hljs-comment">// Sorting before slicing keeps the key stable under reorder; past the cap the</span>
+  <span class="hljs-comment">// alphabetically-first 25 win.</span>
+  <span class="hljs-keyword">const</span> key = [...<span class="hljs-keyword">new</span> <span class="hljs-title class_">Set</span>(tickers)].<span class="hljs-title function_">sort</span>().<span class="hljs-title function_">slice</span>(<span class="hljs-number">0</span>, <span class="hljs-variable constant_">MAX_TICKERS</span>).<span class="hljs-title function_">join</span>(<span class="hljs-string">&#x27;,&#x27;</span>)
+
+  <span class="hljs-keyword">const</span> [lastKey, setLastKey] = <span class="hljs-title function_">useState</span>(key)
+  <span class="hljs-keyword">if</span> (lastKey !== key) {
+    <span class="hljs-title function_">setLastKey</span>(key)
+    <span class="hljs-title function_">setInsights</span>({})
+  }
+
+  <span class="hljs-title function_">useEffect</span>(<span class="hljs-function">() =&gt;</span> {
+    <span class="hljs-keyword">if</span> (key === <span class="hljs-string">&#x27;&#x27;</span>) <span class="hljs-keyword">return</span>
+
+    <span class="hljs-keyword">const</span> subscribed = key.<span class="hljs-title function_">split</span>(<span class="hljs-string">&#x27;,&#x27;</span>)
+    <span class="hljs-keyword">let</span> cancelled = <span class="hljs-literal">false</span>
+
+    <span class="hljs-keyword">const</span> poll = <span class="hljs-title function_">async</span> (): <span class="hljs-title class_">Promise</span>&lt;<span class="hljs-built_in">void</span>&gt; =&gt; {
+      <span class="hljs-keyword">if</span> (!<span class="hljs-title function_">isMarketOpen</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">Date</span>())) <span class="hljs-keyword">return</span>
+      <span class="hljs-keyword">const</span> results = <span class="hljs-keyword">await</span> <span class="hljs-title function_">mapWithConcurrency</span>(subscribed, <span class="hljs-variable constant_">FETCH_CONCURRENCY</span>, <span class="hljs-function">(<span class="hljs-params">ticker</span>) =&gt;</span>
+        <span class="hljs-title function_">getInsight</span>(ticker).<span class="hljs-title function_">catch</span>(<span class="hljs-function">() =&gt;</span> <span class="hljs-literal">null</span>),
+      )
+      <span class="hljs-keyword">if</span> (cancelled) <span class="hljs-keyword">return</span>
+      <span class="hljs-title function_">setInsights</span>(<span class="hljs-function">(<span class="hljs-params">prev</span>) =&gt;</span> {
+        <span class="hljs-keyword">const</span> next = { ...prev }
+        results.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">result, i</span>) =&gt;</span> {
+          <span class="hljs-keyword">if</span> (result?.<span class="hljs-property">found</span>) next[subscribed[i]] = result
+        })
+        <span class="hljs-keyword">return</span> next
+      })
+    }
+
+    <span class="hljs-keyword">const</span> timer = <span class="hljs-built_in">setInterval</span>(<span class="hljs-function">() =&gt;</span> <span class="hljs-built_in">void</span> <span class="hljs-title function_">poll</span>(), <span class="hljs-variable constant_">POLL_INTERVAL_MS</span>)
+    <span class="hljs-keyword">return</span> <span class="hljs-function">() =&gt;</span> {
+      cancelled = <span class="hljs-literal">true</span>
+      <span class="hljs-built_in">clearInterval</span>(timer)
+    }
+  }, [key])
+
+  <span class="hljs-keyword">return</span> insights
+}
+</code></pre>
+<ul>
+<li><strong>Client auth state lives in one small Zustand store.</strong> <code>useAuthStore</code> (<code>src/stores/auth-store.ts</code>)
+holds exactly five pieces of session state (<code>status</code>, <code>sub</code>, <code>email</code>, <code>username</code>, <code>groups</code>) and two
+actions (<code>refresh</code>, <code>markSignedOut</code>); everything else a component needs (loading spinners, gated UI)
+is derived from <code>status</code> at render time rather than stored redundantly. <code>refresh</code> is the only path
+that populates the signed-in fields, and it always goes through <code>getSessionInfo</code> (<code>lib/auth.ts</code>), so
+the store never independently decodes a token; <code>markSignedOut</code> and the <code>info === null</code> branch of
+<code>refresh</code> reset to the same signed-out shape, keeping &quot;no session&quot; a single well-defined state rather
+than two:</li>
+</ul>
+<pre><code class="hljs language-ts"><span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> useAuthStore = create&lt;<span class="hljs-title class_">AuthState</span>&gt;(<span class="hljs-function">(<span class="hljs-params">set</span>) =&gt;</span> ({
+  <span class="hljs-attr">status</span>: <span class="hljs-string">&#x27;loading&#x27;</span>,
+  <span class="hljs-attr">sub</span>: <span class="hljs-literal">null</span>,
+  <span class="hljs-attr">email</span>: <span class="hljs-literal">null</span>,
+  <span class="hljs-attr">username</span>: <span class="hljs-literal">null</span>,
+  <span class="hljs-attr">groups</span>: [],
+  <span class="hljs-attr">refresh</span>: <span class="hljs-title function_">async</span> () =&gt; {
+    <span class="hljs-keyword">const</span> info = <span class="hljs-keyword">await</span> <span class="hljs-title function_">getSessionInfo</span>()
+    <span class="hljs-keyword">if</span> (info) {
+      <span class="hljs-title function_">set</span>({
+        <span class="hljs-attr">status</span>: <span class="hljs-string">&#x27;signed-in&#x27;</span>,
+        <span class="hljs-attr">sub</span>: info.<span class="hljs-property">sub</span>,
+        <span class="hljs-attr">email</span>: info.<span class="hljs-property">email</span>,
+        <span class="hljs-attr">username</span>: info.<span class="hljs-property">username</span>,
+        <span class="hljs-attr">groups</span>: info.<span class="hljs-property">groups</span>,
+      })
+    } <span class="hljs-keyword">else</span> {
+      <span class="hljs-title function_">set</span>({ <span class="hljs-attr">status</span>: <span class="hljs-string">&#x27;signed-out&#x27;</span>, <span class="hljs-attr">sub</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">email</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">username</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">groups</span>: [] })
+    }
+  },
+  <span class="hljs-attr">markSignedOut</span>: <span class="hljs-function">() =&gt;</span>
+    <span class="hljs-title function_">set</span>({ <span class="hljs-attr">status</span>: <span class="hljs-string">&#x27;signed-out&#x27;</span>, <span class="hljs-attr">sub</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">email</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">username</span>: <span class="hljs-literal">null</span>, <span class="hljs-attr">groups</span>: [] }),
+}))
+</code></pre>
 <hr>
 <h2 id="15-glossary">15. Glossary</h2>
 <table>

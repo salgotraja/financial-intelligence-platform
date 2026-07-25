@@ -111,6 +111,7 @@ describe('usePortfolio', () => {
     expect(getPortfolioHistory).toHaveBeenCalledTimes(2)
   })
 
+  // tag::use-portfolio-poll-test[]
   it('polls every 60s while the market is open', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     getPortfolio.mockResolvedValue(valuation)
@@ -125,6 +126,7 @@ describe('usePortfolio', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     await vi.waitFor(() => expect(getPortfolio).toHaveBeenCalledTimes(3))
   })
+  // end::use-portfolio-poll-test[]
 
   it('does not poll while the market is closed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })

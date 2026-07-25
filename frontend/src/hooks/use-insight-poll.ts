@@ -18,6 +18,7 @@ const MAX_TICKERS = 25
  * interval after mount. Outside market hours nothing new can land on the 5-minute
  * ingestion schedule, and the post-ingest 35s/75s reload timers cover manual refreshes.
  */
+// tag::use-insight-poll[]
 export const useInsightPoll = (tickers: string[]): Record<string, Insight> => {
   const [insights, setInsights] = useState<Record<string, Insight>>({})
 
@@ -62,3 +63,4 @@ export const useInsightPoll = (tickers: string[]): Record<string, Insight> => {
 
   return insights
 }
+// end::use-insight-poll[]
